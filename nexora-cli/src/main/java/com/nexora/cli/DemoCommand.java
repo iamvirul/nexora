@@ -26,7 +26,6 @@ import java.util.concurrent.Callable;
 
 @Command(
         name = "demo",
-        description = "Run a built-in order-processing demo showcasing DAG execution.",
         mixinStandardHelpOptions = true
 )
 public class DemoCommand implements Callable<Integer> {
@@ -38,13 +37,13 @@ public class DemoCommand implements Callable<Integer> {
     @Override
     public Integer call() throws Exception {
         System.out.println("╔══════════════════════════════════════════╗");
-        System.out.println("║        Nexora — DAG Execution Demo        ║");
+        System.out.println("║        Nexora — DAG Execution Demo       ║");
         System.out.println("╚══════════════════════════════════════════╝");
         System.out.println();
         System.out.println("Plan:");
-        System.out.println("  validate_order ──┐");
-        System.out.println("                   ├─► charge_card ─► send_receipt");
-        System.out.println("  fetch_inventory ─┘");
+        System.out.println("  validate_order --+");
+        System.out.println("                   +--> charge_card --> send_receipt");
+        System.out.println("  fetch_inventory -+");
         System.out.println();
 
         NexoraPlugin plugin = buildOrderPlugin();

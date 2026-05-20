@@ -1,0 +1,25 @@
+Show the execution plan for a goal without running anything.
+
+  Resolves the goal against the configured step definitions and prints
+  the resulting DAG as a table. No capabilities are invoked.
+  Useful for verifying your config before a live run.
+
+  The DEPENDS ON column shows which steps must complete before this step
+  starts. Steps with '(none)' run immediately (potentially in parallel).
+
+  Examples
+  ────────
+  Preview a plan:
+    nexora plan -g "process order payment"
+
+  With a custom config:
+    nexora --config ./staging.json plan -g "process order"
+
+  Output format
+  ─────────────
+  STEP ID                   CAPABILITY                DEPENDS ON
+  ──────────────────────────────────────────────────────────────
+  validate_order            validate_order            (none)
+  fetch_inventory           fetch_inventory           (none)
+  charge_card               charge_card               validate_order
+  send_receipt              send_receipt              charge_card, fetch_inventory

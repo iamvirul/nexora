@@ -60,11 +60,17 @@ public final class NexoraEngine {
     private final ExecutionEngine engine;
     private final PluginManager pluginManager;
     private final ExecutionEventBus eventBus;
+    private final com.nexora.spi.CapabilityRegistry capabilityRegistry;
 
-    private NexoraEngine(ExecutionEngine engine, PluginManager pluginManager, ExecutionEventBus eventBus) {
+    private NexoraEngine(
+            ExecutionEngine engine,
+            PluginManager pluginManager,
+            ExecutionEventBus eventBus,
+            com.nexora.spi.CapabilityRegistry capabilityRegistry) {
         this.engine = engine;
         this.pluginManager = pluginManager;
         this.eventBus = eventBus;
+        this.capabilityRegistry = capabilityRegistry;
     }
 
     public CompletableFuture<ExecutionResult> execute(Intent intent) {
@@ -84,6 +90,14 @@ public final class NexoraEngine {
     public void loadPlugin(Path pluginJar, String pluginId) {
         pluginManager.loadPlugin(pluginJar);
         pluginManager.activatePlugin(pluginId);
+    }
+
+    public List<com.nexora.spi.CapabilityDescriptor> listCapabilities() {
+        return capabilityRegistry.listAll();
+    }
+
+    public List<String> activePluginIds() {
+        return pluginManager.activePluginIds();
     }
 
     public static Builder builder() {
@@ -153,9 +167,6 @@ public final class NexoraEngine {
             // Load JAR-based plugins (id read from descriptor after loading)
             for (Path jar : pluginJars) {
                 pluginManager.loadPlugin(jar);
-                // Plugin ID is embedded in the JAR's NexoraPlugin.descriptor() — loaded lazily
-                // Callers must call engine.loadPlugin(jar, id) explicitly for JAR-based plugins
-                // to avoid reading the JAR twice here
             }
 
             // Retry policies
@@ -184,7 +195,7 @@ public final class NexoraEngine {
             // Engine
             ExecutionEngine engine = new ExecutionEngine(plannerEngine, scheduler, eventBus);
 
-            return new NexoraEngine(engine, pluginManager, eventBus);
+            return new NexoraEngine(engine, pluginManager, eventBus, capabilityRegistry);
         }
     }
 }

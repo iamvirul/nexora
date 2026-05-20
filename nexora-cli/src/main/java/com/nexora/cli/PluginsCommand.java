@@ -1,6 +1,5 @@
 package com.nexora.cli;
 
-import com.nexora.api.NexoraEngine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.ParentCommand;
 
@@ -9,13 +8,9 @@ import java.util.concurrent.Callable;
 
 @Command(
         name = "plugins",
-        description = "List active plugins.",
         mixinStandardHelpOptions = true
 )
 public class PluginsCommand implements Callable<Integer> {
-
-    @ParentCommand
-    private NexoraEngine engine;
 
     @ParentCommand
     private NexoraCli parent;

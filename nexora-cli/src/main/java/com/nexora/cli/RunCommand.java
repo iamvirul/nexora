@@ -17,7 +17,6 @@ import java.util.concurrent.Callable;
 
 @Command(
         name = "run",
-        description = "Execute an intent and print the result.",
         mixinStandardHelpOptions = true
 )
 public class RunCommand implements Callable<Integer> {

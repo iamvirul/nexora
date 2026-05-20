@@ -1,0 +1,20 @@
+List all capabilities currently registered in the engine.
+
+  Capabilities are contributed by plugins. If no plugins are active
+  (i.e. none are declared in your config), this list will be empty.
+
+  The IDEMPOTENT column indicates whether the capability is safe to
+  retry without side effects. This drives the default retry policy:
+  non-idempotent capabilities use NoRetryPolicy unless overridden.
+
+  Examples
+  ────────
+    nexora caps
+    nexora --config /etc/nexora/prod.json caps
+
+  Output format
+  ─────────────
+  CAPABILITY ID                 IDEMPOTENT  DESCRIPTION
+  ──────────────────────────────────────────────────────
+  validate_order                yes         ...
+  charge_card                   no          ...

@@ -1,0 +1,13 @@
+List all plugins that are currently active in the engine.
+
+  Plugins are the unit of capability delivery. Each plugin registers
+  one or more capabilities when it activates. If no plugins are active,
+  the capability registry will be empty and no steps can execute.
+
+  Plugins are loaded from JAR files via nexora.loadPlugin() or wired
+  programmatically in your application code.
+
+  Examples
+  ────────
+    nexora plugins
+    nexora --config /etc/nexora/prod.json plugins

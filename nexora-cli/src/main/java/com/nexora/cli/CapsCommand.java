@@ -10,7 +10,6 @@ import java.util.concurrent.Callable;
 
 @Command(
         name = "caps",
-        description = "List all registered capabilities.",
         mixinStandardHelpOptions = true
 )
 public class CapsCommand implements Callable<Integer> {

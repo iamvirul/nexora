@@ -1,0 +1,27 @@
+Execute an intent and stream step results to stdout.
+
+  The engine resolves the goal against the registered step definitions,
+  builds a DAG plan, and executes it. Independent steps run in parallel.
+  Exit code is 0 on COMPLETED, 1 on FAILED.
+
+  Examples
+  ────────
+  Basic run:
+    nexora run -g "process order"
+
+  With context values:
+    nexora run -g "process order payment" -c '{"orderId":"ORD-99","amount":49.99}'
+
+  Suppress per-step events (only final result):
+    nexora run -g "process order" --no-events
+
+  Custom config file:
+    nexora --config /etc/nexora/prod.json run -g "process order"
+
+  Output format
+  ─────────────
+  Each completed step prints:
+    ✓ <step-id>    <elapsed-ms>ms
+
+  Each failed step prints:
+    ✗ <step-id>    [FAILURE_CODE] message

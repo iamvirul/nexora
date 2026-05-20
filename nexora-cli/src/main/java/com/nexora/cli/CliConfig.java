@@ -2,7 +2,7 @@ package com.nexora.cli;
 
 import java.util.List;
 
-/** Deserialised from nexora.json in the working directory, or from --config. */
+/** Deserialize from nexora.json in the working directory, or from --config. */
 public class CliConfig {
 
     public List<StepConfig> steps = List.of();

@@ -1,0 +1,22 @@
+Run the built-in order-processing DAG demo. No config file needed.
+
+  Wires four inline capabilities and executes them as a DAG:
+
+    validate_order --+
+                     +--> charge_card --> send_receipt
+    fetch_inventory -+
+
+  validate_order and fetch_inventory execute in parallel.
+  charge_card starts only after validate_order completes.
+  send_receipt starts only after both charge_card and fetch_inventory complete.
+
+  This demonstrates the core scheduler without requiring a plugin JAR
+  or a nexora.json config file.
+
+  Examples
+  ────────
+  Run with the default order ID (ORD-42):
+    nexora demo
+
+  Run with a custom order ID:
+    nexora demo --order-id ORD-789

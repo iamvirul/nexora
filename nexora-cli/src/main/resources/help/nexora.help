@@ -1,0 +1,30 @@
+Nexora: intent-driven execution engine.
+
+  Translate a high-level goal into a capability execution plan and run it.
+  Steps that have no declared dependencies execute in parallel automatically.
+
+  Configuration
+  ─────────────
+  Nexora reads nexora.json from the current directory by default.
+  Use --config <file> to point to a different location.
+
+  Quick start (no config needed):
+    nexora demo
+
+  With a config file:
+    nexora run -g "process order payment" -c '{"orderId":"ORD-1"}'
+
+  Config file format (nexora.json):
+    {
+      "steps": [
+        { "id": "validate_order",
+          "capabilityId": "validate_order",
+          "matchesGoalContains": "order" }
+      ],
+      "retry": {
+        "maxAttempts": 3,
+        "initialDelayMs": 200,
+        "multiplier": 2.0,
+        "maxDelayMs": 10000
+      }
+    }

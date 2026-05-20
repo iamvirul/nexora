@@ -15,7 +15,6 @@ import java.util.concurrent.Callable;
 
 @Command(
         name = "plan",
-        description = "Show the execution plan for a goal without running it.",
         mixinStandardHelpOptions = true
 )
 public class PlanCommand implements Callable<Integer> {
