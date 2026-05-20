@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -42,8 +43,10 @@ public final class CapabilityContractMonitor {
         if (contract.hasErrorRateSla()) {
             double errorRate = w.errorRate();
             if (errorRate > contract.maxErrorRate()) {
-                log.warn("Capability {} breached error rate contract: {:.1f}% > {:.1f}%",
-                        capabilityId, errorRate * 100, contract.maxErrorRate() * 100);
+                log.warn("Capability {} breached error rate contract: {}% > {}%",
+                        capabilityId,
+                        String.format(Locale.ROOT, "%.1f", errorRate * 100),
+                        String.format(Locale.ROOT, "%.1f", contract.maxErrorRate() * 100));
                 return false;
             }
         }

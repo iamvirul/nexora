@@ -40,6 +40,7 @@ public final class PluginManager {
     private final ExecutionEventBus eventBus;
     private final ConcurrentHashMap<String, PluginState> plugins = new ConcurrentHashMap<>();
     private final List<Planner> registeredPlanners = Collections.synchronizedList(new ArrayList<>());
+    private final ConcurrentHashMap<String, List<Planner>> plannersByPlugin = new ConcurrentHashMap<>();
 
     public PluginManager(CapabilityRegistry capabilityRegistry, ExecutionEventBus eventBus) {
         this.capabilityRegistry = Objects.requireNonNull(capabilityRegistry);
@@ -126,11 +127,14 @@ public final class PluginManager {
             log.info("Registered capability id={} from plugin={}", provider.descriptor().id(), pluginId);
         }
 
+        List<Planner> pluginPlanners = new ArrayList<>();
         for (PlannerProvider provider : state.plugin().plannerProviders()) {
             Planner planner = provider.create(ctx);
             registeredPlanners.add(planner);
+            pluginPlanners.add(planner);
             log.info("Registered planner id={} from plugin={}", provider.descriptor().id(), pluginId);
         }
+        plannersByPlugin.put(pluginId, List.copyOf(pluginPlanners));
 
         state.transition(PluginLifecycle.ACTIVE);
         eventBus.publish(new PluginActivatedEvent(pluginId, state.plugin().descriptor().version(), Instant.now()));
@@ -151,6 +155,11 @@ public final class PluginManager {
 
         for (CapabilityProvider provider : state.plugin().capabilityProviders()) {
             capabilityRegistry.deregister(provider.descriptor().id());
+        }
+
+        List<Planner> pluginPlanners = plannersByPlugin.remove(pluginId);
+        if (pluginPlanners != null && !pluginPlanners.isEmpty()) {
+            registeredPlanners.removeAll(pluginPlanners);
         }
 
         try {
