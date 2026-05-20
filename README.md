@@ -4,17 +4,24 @@ Nexora is a Java execution engine that turns a high-level goal into a set of ste
 
 The idea is that you shouldn't have to hard-code execution logic. You declare capabilities (things the system can do), define which steps map to which goal keywords, and Nexora handles the rest: planning, scheduling, retrying on failure, and tracing what happened.
 
+Three things set it apart from every other workflow engine:
+
+- **Pluggable planner SPI** - the planner itself is a plugin. Swap in an LLM, a constraint solver, or your own rule engine. The built-in keyword matcher is just the default.
+- **Reactive plan amendment** - a step can reshape the remaining plan based on what it produced. Inject new steps, skip pending ones, or override inputs for downstream steps, all at runtime without touching the planner.
+- **Capability contracts with automatic fallback** - capabilities declare their expected latency and error rate. The engine monitors live call metrics and silently reroutes to a fallback capability when the primary starts breaching its contract.
+
 ## How it works
 
 When you call `engine.execute("process order payment", context)`:
 
-1. The **planner** matches the goal string against your registered step definitions and builds a DAG
+1. The **planner** matches the goal against registered step definitions and builds a DAG
 2. The **scheduler** walks the DAG and starts every step whose dependencies are already done; independent steps run in parallel on virtual threads
-3. Each step flows through an **interceptor pipeline** (tracing → retry → timeout) before hitting the actual capability
-4. Results from one step can be passed as inputs to the next using output bindings
-5. Events fire as steps start, complete, or fail; you can subscribe to any of them
+3. Each step flows through an **interceptor pipeline** (tracing -> retry -> timeout) before hitting the actual capability
+4. If a step returns **plan amendments**, the scheduler applies them before any dependent step begins
+5. The **contract monitor** tracks every call outcome; if a capability breaches its declared SLA, traffic is rerouted to its fallback
+6. Events fire as steps start, complete, fail, or when the plan is amended; you can subscribe to any of them
 
-A concrete example: four steps, two of them run in parallel, wall time is less than running them sequentially.
+A concrete example: four steps, two run in parallel.
 
 ```
 validate_order --+
@@ -22,7 +29,9 @@ validate_order --+
 fetch_inventory -+
 ```
 
-`validate_order` and `fetch_inventory` start at the same time. `charge_card` waits for `validate_order`. `send_receipt` waits for both `charge_card` and `fetch_inventory`. Nexora works all of this out from the `dependsOn` declarations. You don't schedule anything manually.
+`validate_order` and `fetch_inventory` start at the same time. `charge_card` waits for `validate_order`. `send_receipt` waits for both. Nexora works all of this out from the `dependsOn` declarations. You don't schedule anything manually.
+
+At runtime, `validate_order` can inject a new `audit_log` step into that DAG without the planner being involved at all.
 
 ## Requirements
 
@@ -39,27 +48,46 @@ The CLI fat JAR ends up at `nexora-cli/target/nexora.jar`.
 
 ## Try it immediately
 
-No config file needed. The `demo` command wires four in-memory capabilities and runs the order-processing DAG shown above:
+No config file needed. The `demo` command showcases all three differentiating features in a single run:
 
 ```bash
 java -jar nexora-cli/target/nexora.jar demo
 ```
 
 ```
-Plan:
+Nexora Feature Demo
+===================
+
+Features demonstrated:
+  1. Pluggable planner SPI  - rule-based planner wired via CompositePlanner
+  2. Reactive plan amendment - validate_order injects audit_log at runtime
+  3. Capability contracts    - charge_card declares p99 SLA + fallback
+
+Initial DAG (from planner):
   validate_order --+
                    +--> charge_card --> send_receipt
   fetch_inventory -+
 
-Execution:
-  ✓ validate_order        31ms
-  ✓ fetch_inventory       51ms
-  ✓ charge_card           81ms
-  ✓ send_receipt          21ms
+  validate_order will amend the plan at runtime, injecting:
+  --> audit_log (runs after validate_order, before send_receipt)
 
-Result:  COMPLETED
-Trace:   a3f1c2d4-...
+Execution:
+  ✓ validate_order          37ms
+  ~ plan amended: ADD_STEP   -> audit_log
+  ~ plan amended: MODIFY_INPUT -> send_receipt
+  ✓ fetch_inventory         54ms
+  ✓ audit_log               16ms
+  ✓ charge_card             86ms
+  ✓ send_receipt            22ms
+
+Result:   COMPLETED
+Steps:    5 executed
+
+Contract health (charge_card):
+  samples=1  error-rate=0%  p99=86ms
 ```
+
+The plan started with 4 steps and finished with 5. `validate_order` injected `audit_log` mid-run. `charge_card` was monitored against its declared p99=200ms SLA throughout.
 
 ## CLI
 
@@ -73,7 +101,7 @@ nexora [--config <file>] <command>
 | `nexora plan -g "<goal>"` | Dry run: show the DAG without executing anything |
 | `nexora caps` | List all registered capabilities |
 | `nexora plugins` | List active plugins |
-| `nexora demo` | Run the built-in order-processing demo |
+| `nexora demo` | Run the built-in feature demo |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 
@@ -125,6 +153,92 @@ ExecutionResult result = engine
     .get();
 ```
 
+## Pluggable planner
+
+The planner that converts a goal string into a DAG is itself a plugin. Implement `Planner` and return it from `plannerProviders()` in your `NexoraPlugin`:
+
+```java
+public class MySmartPlanner implements Planner {
+
+    @Override
+    public PlannerDescriptor descriptor() {
+        return new PlannerDescriptor("my-planner", "LLM-backed planner", 100);
+    }
+
+    @Override
+    public boolean canPlan(Intent intent, PlanningContext context) {
+        return intent.getGoal().length() > 20; // handle complex goals
+    }
+
+    @Override
+    public Plan plan(Intent intent, PlanningContext context) {
+        // use context.availableCapabilities() to see what's registered
+        // build and return a Plan
+    }
+}
+```
+
+The engine tries planners in descending priority order. The built-in rule-based planner always sits last as the fallback. Registering a planner with priority 100 means it runs first; if `canPlan()` returns false, the next one is tried.
+
+You can also register a planner directly without a plugin:
+
+```java
+NexoraEngine.builder()
+    .withPlanner(new MySmartPlanner())
+    .build();
+```
+
+## Reactive plan amendment
+
+A capability can reshape the remaining plan by returning amendments alongside its result:
+
+```java
+return CapabilityResult.success(
+    Map.of("valid", true),
+    List.of(
+        // inject a new step that runs after this one
+        new AddStepAmendment(new Step("audit_log", "audit_log",
+            Map.of("orderId", InputBinding.literal(orderId)),
+            null, Set.of("validate_order"), null, null)),
+
+        // override an input for a downstream step
+        new ModifyInputAmendment("send_receipt", "audited", true),
+
+        // cancel a step that is no longer needed
+        new SkipStepAmendment("legacy_check")
+    )
+);
+```
+
+Amendments are applied by the scheduler before any dependent step begins. A `PlanAmendedEvent` fires for each one so you can observe every mutation.
+
+## Capability contracts
+
+Capabilities declare their expected operational behaviour. The engine monitors every call and reroutes traffic when a capability breaches its contract:
+
+```java
+new CapabilityDescriptor(
+    "charge_card", "Charges the customer card",
+    List.of(), List.of(), false, false,
+    CapabilityContract.builder()
+        .p99Latency(Duration.ofMillis(200))
+        .maxErrorRate(0.05)
+        .windowSize(20)
+        .fallback("charge_card_fallback")
+        .build()
+)
+```
+
+If `charge_card` starts exceeding 200ms p99 or failing more than 5% of the time over the last 20 calls, the engine silently routes new calls to `charge_card_fallback`. When the primary recovers, traffic returns automatically. The caller sees a normal result either way.
+
+Query live health at any time:
+
+```java
+NexoraEngine.HealthSnapshot health = NexoraEngine.HealthSnapshot.from(
+    engine.capabilityHealth("charge_card"));
+// health.sampleCount(), health.errorRate(), health.p99Latency()
+```
+
 ## Writing a plugin
 
 A plugin is a JAR that implements `NexoraPlugin` and declares itself in `META-INF/services/com.nexora.spi.NexoraPlugin`.
@@ -138,9 +252,7 @@ public class MyPlugin implements NexoraPlugin {
     }
 
     @Override
-    public void initialize(PluginContext ctx) {
-        // acquire resources, read config from ctx.getConfig()
-    }
+    public void initialize(PluginContext ctx) {}
 
     @Override
     public List<CapabilityProvider> capabilityProviders() {
@@ -153,19 +265,14 @@ public class MyPlugin implements NexoraPlugin {
                     );
                 }
                 public Capability create(PluginContext ctx) {
-                    return request -> {
-                        // do the work
-                        return CapabilityResult.success(Map.of("result", "ok"));
-                    };
+                    return request -> CapabilityResult.success(Map.of("result", "ok"));
                 }
             }
         );
     }
 
     @Override
-    public void shutdown() {
-        // release resources
-    }
+    public void shutdown() {}
 }
 ```
 
@@ -181,25 +288,6 @@ Or wire it directly without a JAR (useful in tests):
 NexoraEngine.builder().withPlugin(new MyPlugin()).build();
 ```
 
-## Module layout
-
-```
-nexora-core           Domain types: Intent, Plan, Step, ExecutionContext
-nexora-plugin-spi     Plugin contract: NexoraPlugin, Capability, CapabilityRegistry
-nexora-registry       DefaultCapabilityRegistry (thread-safe)
-nexora-tracing        Tracer/Span interfaces + no-op implementation
-nexora-retry          RetryPolicy, ExponentialBackoffPolicy with jitter
-nexora-event          ExecutionEvent hierarchy, InProcessEventBus
-nexora-executor       DAG scheduler, interceptor pipeline
-nexora-plugin-loader  PluginClassLoader, PluginManager, lifecycle FSM
-nexora-planner        PlannerEngine, StepDefinition, PlanRegistry
-nexora-runtime        ExecutionEngine (ties planner + scheduler together)
-nexora-api            NexoraEngine public facade and builder
-nexora-cli            PicoCLI command-line interface
-```
-
-Dependencies always point inward. `nexora-cli` knows about `nexora-api`. `nexora-api` knows about `nexora-runtime`. Neither knows anything about the CLI.
-
 ## Events
 
 Subscribe to any event type:
@@ -208,14 +296,15 @@ Subscribe to any event type:
 engine.subscribe(StepStartedEvent.class,   e -> log.info("started: {}", e.stepId()));
 engine.subscribe(StepCompletedEvent.class, e -> log.info("done: {}", e.stepId()));
 engine.subscribe(StepFailedEvent.class,    e -> log.error("failed: {} {}", e.stepId(), e.failureMessage()));
+engine.subscribe(PlanAmendedEvent.class,   e -> log.info("plan mutated: {} -> {}", e.amendmentType(), e.targetStepId()));
 engine.subscribe(PlanCompletedEvent.class, e -> metrics.record(e.elapsed()));
 ```
 
-Event handlers run on the engine's executor, not the caller's thread. A handler that throws does not affect the execution or other handlers.
+Event handlers run on the engine's executor, not the caller's thread. A handler that throws does not affect execution or other handlers.
 
 ## Retry
 
-The default retry policy is no retry. Override it globally or per step:
+The default retry policy is no retry. Override it globally:
 
 ```java
 NexoraEngine.builder()
@@ -231,3 +320,22 @@ NexoraEngine.builder()
 ```
 
 Backoff includes ±25% jitter to avoid thundering herd on simultaneous failures.
+
+## Module layout
+
+```
+nexora-core           Domain types: Intent, Plan, Step, PlanAmendment, ExecutionContext
+nexora-plugin-spi     Plugin contract: NexoraPlugin, Capability, Planner, CapabilityRegistry
+nexora-registry       DefaultCapabilityRegistry (thread-safe, read-write locked)
+nexora-tracing        Tracer/Span interfaces + no-op implementation
+nexora-retry          RetryPolicy, ExponentialBackoffPolicy with jitter
+nexora-event          ExecutionEvent sealed hierarchy, InProcessEventBus
+nexora-executor       DAG scheduler with amendment support, interceptor pipeline, contract monitor
+nexora-plugin-loader  PluginClassLoader, PluginManager, lifecycle FSM
+nexora-planner        CompositePlanner, RulePlanner, StepDefinition, PlanRegistry
+nexora-runtime        ExecutionEngine (ties planner + scheduler together)
+nexora-api            NexoraEngine public facade and builder
+nexora-cli            PicoCLI command-line interface
+```
+
+Dependencies always point inward. `nexora-cli` knows about `nexora-api`. `nexora-api` knows about `nexora-runtime`. Neither knows anything about the CLI.
