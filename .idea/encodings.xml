@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="Encoding">
+    <file url="file://$PROJECT_DIR$/nexora-api/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-api/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-capabilities/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-capabilities/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-cli/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-cli/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-common/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-common/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-core/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-core/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-persistence/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-persistence/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-planner/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-planner/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-runtime/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/nexora-runtime/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/src/main/resources" charset="UTF-8" />
+  </component>
+</project>
