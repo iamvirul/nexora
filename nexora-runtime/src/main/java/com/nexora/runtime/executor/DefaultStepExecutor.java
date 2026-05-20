@@ -3,7 +3,7 @@ package com.nexora.runtime.executor;
 import com.nexora.core.execution.ExecutionStatus;
 import com.nexora.core.execution.StepResult;
 import com.nexora.core.plan.Step;
-import com.nexora.runtime.context.ExecutionContext;
+import com.nexora.core.context.ExecutionContext;
 
 public class DefaultStepExecutor implements StepExecutor{
 

@@ -5,28 +5,22 @@ import com.nexora.core.execution.ExecutionStatus;
 import com.nexora.core.execution.StepResult;
 import com.nexora.core.plan.Plan;
 import com.nexora.core.plan.Step;
-import com.nexora.runtime.context.ExecutionContext;
+import com.nexora.core.context.ExecutionContext;
 import com.nexora.runtime.executor.StepExecutor;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public class ExecutionEngine {
+public record ExecutionEngine(StepExecutor stepExecutor) {
 
-    private final StepExecutor stepExecutor;
-
-    public ExecutionEngine(StepExecutor stepExecutor) {
-        this.stepExecutor = stepExecutor;
-    }
-
-    public ExecutionResult execute(Plan plan, ExecutionContext context){
+    public ExecutionResult execute(Plan plan, ExecutionContext context) {
         List<StepResult> results = new ArrayList<>();
 
-        for (Step step : plan.getSteps()){
-            StepResult result = stepExecutor.execute(step,context);
+        for (Step step : plan.getSteps()) {
+            StepResult result = stepExecutor.execute(step, context);
             results.add(result);
 
-            if (result.getStatus() == ExecutionStatus.FAILED){
+            if (result.getStatus() == ExecutionStatus.FAILED) {
                 return new ExecutionResult(
                         ExecutionStatus.FAILED,
                         results

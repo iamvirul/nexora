@@ -1,9 +1,9 @@
+import com.nexora.core.context.ExecutionContext;
 import com.nexora.core.intent.Intent;
 import com.nexora.core.plan.Plan;
 import com.nexora.planner.engine.PlannerEngine;
 import com.nexora.planner.model.StepDefinition;
 import com.nexora.planner.registry.PlanRegistry;
-import com.nexora.runtime.context.ExecutionContext;
 import com.nexora.runtime.engine.ExecutionEngine;
 import com.nexora.runtime.executor.DefaultStepExecutor;
 
@@ -18,7 +18,7 @@ public class Demo {
         // -------------------------
         Intent intent = new Intent(
                 "process order payment notification",
-                Map.of("orderId", 123)
+                Map.of("orderId", "123")
         );
 
         // -------------------------

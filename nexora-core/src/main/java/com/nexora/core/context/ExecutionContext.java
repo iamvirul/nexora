@@ -1,4 +1,4 @@
-package com.nexora.runtime.context;
+package com.nexora.core.context;
 
 import com.nexora.core.intent.Intent;
 
@@ -20,6 +20,10 @@ public class ExecutionContext {
 
     public void put(String key, Object value){
         data.put(key,value);
+    }
+
+    public <T> T get(String key,Class<T> type) {
+        return type.cast(data.get(key));
     }
 
     public Map<String, Object> getAll() {
