@@ -9,6 +9,7 @@ public sealed interface ExecutionEvent permits
         PlanStartedEvent,
         PlanCompletedEvent,
         PlanFailedEvent,
+        PlanAmendedEvent,
         StepStartedEvent,
         StepCompletedEvent,
         StepFailedEvent,

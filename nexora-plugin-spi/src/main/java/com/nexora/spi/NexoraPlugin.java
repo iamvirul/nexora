@@ -28,6 +28,15 @@ public interface NexoraPlugin {
     List<CapabilityProvider> capabilityProviders();
 
     /**
+     * Returns planner providers this plugin contributes.
+     * Plugin planners are tried before the built-in rule-based planner.
+     * Higher-priority planners (PlannerDescriptor.priority) are tried first.
+     */
+    default List<PlannerProvider> plannerProviders() {
+        return List.of();
+    }
+
+    /**
      * Called before the plugin ClassLoader is closed.
      * Implementations must release resources, flush buffers, and close connections.
      * Must not throw — log and suppress any errors.

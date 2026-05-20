@@ -7,6 +7,7 @@ import com.nexora.event.EventHandler;
 import com.nexora.event.ExecutionEvent;
 import com.nexora.event.InProcessEventBus;
 import com.nexora.event.Subscription;
+import com.nexora.executor.CapabilityContractMonitor;
 import com.nexora.executor.CapabilityInvoker;
 import com.nexora.executor.DagStepScheduler;
 import com.nexora.executor.ExecutionInterceptor;
@@ -15,7 +16,9 @@ import com.nexora.executor.interceptor.RetryInterceptor;
 import com.nexora.executor.interceptor.TimeoutInterceptor;
 import com.nexora.executor.interceptor.TracingInterceptor;
 import com.nexora.loader.PluginManager;
+import com.nexora.planner.engine.CompositePlanner;
 import com.nexora.planner.engine.PlannerEngine;
+import com.nexora.planner.engine.RulePlanner;
 import com.nexora.planner.model.StepDefinition;
 import com.nexora.planner.registry.PlanRegistry;
 import com.nexora.registry.DefaultCapabilityRegistry;
@@ -25,6 +28,7 @@ import com.nexora.retry.RetryPolicyRegistry;
 import com.nexora.runtime.engine.ExecutionEngine;
 import com.nexora.spi.CapabilityRegistry;
 import com.nexora.spi.NexoraPlugin;
+import com.nexora.spi.Planner;
 import com.nexora.tracing.NoopTracer;
 import com.nexora.tracing.Tracer;
 
@@ -60,24 +64,26 @@ public final class NexoraEngine {
     private final ExecutionEngine engine;
     private final PluginManager pluginManager;
     private final ExecutionEventBus eventBus;
-    private final com.nexora.spi.CapabilityRegistry capabilityRegistry;
+    private final CapabilityRegistry capabilityRegistry;
+    private final CapabilityContractMonitor contractMonitor;
 
     private NexoraEngine(
             ExecutionEngine engine,
             PluginManager pluginManager,
             ExecutionEventBus eventBus,
-            com.nexora.spi.CapabilityRegistry capabilityRegistry) {
+            CapabilityRegistry capabilityRegistry,
+            CapabilityContractMonitor contractMonitor) {
         this.engine = engine;
         this.pluginManager = pluginManager;
         this.eventBus = eventBus;
         this.capabilityRegistry = capabilityRegistry;
+        this.contractMonitor = contractMonitor;
     }
 
     public CompletableFuture<ExecutionResult> execute(Intent intent) {
         return engine.execute(intent);
     }
 
-    /** Convenience overload for quick use without constructing an Intent manually. */
     public CompletableFuture<ExecutionResult> execute(String goal, Map<String, Object> context) {
         return engine.execute(new Intent(goal, context));
     }
@@ -86,7 +92,6 @@ public final class NexoraEngine {
         return eventBus.subscribe(eventType, handler);
     }
 
-    /** Load and activate a plugin JAR at runtime. */
     public void loadPlugin(Path pluginJar, String pluginId) {
         pluginManager.loadPlugin(pluginJar);
         pluginManager.activatePlugin(pluginId);
@@ -98,6 +103,16 @@ public final class NexoraEngine {
 
     public List<String> activePluginIds() {
         return pluginManager.activePluginIds();
+    }
+
+    public CapabilityContractMonitor.HealthSnapshot capabilityHealth(String capabilityId) {
+        return contractMonitor.snapshot(capabilityId);
+    }
+
+    public record HealthSnapshot(String capabilityId, int sampleCount, double errorRate, Duration p99Latency) {
+        public static HealthSnapshot from(CapabilityContractMonitor.HealthSnapshot s) {
+            return new HealthSnapshot(s.capabilityId(), s.sampleCount(), s.errorRate(), s.p99Latency());
+        }
     }
 
     public static Builder builder() {
@@ -114,6 +129,7 @@ public final class NexoraEngine {
         private final List<NexoraPlugin> plugins = new ArrayList<>();
         private final List<Path> pluginJars = new ArrayList<>();
         private final List<StepDefinition> stepDefinitions = new ArrayList<>();
+        private final List<Planner> extraPlanners = new ArrayList<>();
 
         public Builder withExecutor(Executor e) {
             this.executor = Objects.requireNonNull(e);
@@ -135,13 +151,11 @@ public final class NexoraEngine {
             return this;
         }
 
-        /** Register a plugin instance directly (no JAR needed — useful for tests). */
         public Builder withPlugin(NexoraPlugin plugin) {
             plugins.add(Objects.requireNonNull(plugin));
             return this;
         }
 
-        /** Load a plugin from a JAR file. */
         public Builder withPluginJar(Path jar) {
             pluginJars.add(Objects.requireNonNull(jar));
             return this;
@@ -152,26 +166,32 @@ public final class NexoraEngine {
             return this;
         }
 
+        /** Register a custom planner. Plugin planners are registered automatically via withPlugin(). */
+        public Builder withPlanner(Planner planner) {
+            extraPlanners.add(Objects.requireNonNull(planner));
+            return this;
+        }
+
         public NexoraEngine build() {
-            // Infrastructure
             CapabilityRegistry capabilityRegistry = new DefaultCapabilityRegistry();
             InProcessEventBus eventBus = new InProcessEventBus(executor);
             PluginManager pluginManager = new PluginManager(capabilityRegistry, eventBus);
 
-            // Register inline plugins
             for (NexoraPlugin plugin : plugins) {
                 pluginManager.registerPlugin(plugin);
                 pluginManager.activatePlugin(plugin.descriptor().id());
             }
 
-            // Load JAR-based plugins (id read from descriptor after loading)
             for (Path jar : pluginJars) {
                 pluginManager.loadPlugin(jar);
             }
 
-            // Retry policies
+            // Retry
             RetryPolicyRegistry retryPolicyRegistry = new DefaultRetryPolicyRegistry();
             retryPolicyRegistry.setDefault(defaultRetryPolicy);
+
+            // Contract monitor
+            CapabilityContractMonitor contractMonitor = new CapabilityContractMonitor();
 
             // Interceptor pipeline
             List<ExecutionInterceptor> interceptors = List.of(
@@ -181,21 +201,28 @@ public final class NexoraEngine {
             );
             InterceptorPipeline pipeline = new InterceptorPipeline(
                     interceptors,
-                    new CapabilityInvoker(capabilityRegistry)
+                    new CapabilityInvoker(capabilityRegistry, contractMonitor)
             );
 
             // DAG scheduler
             DagStepScheduler scheduler = new DagStepScheduler(pipeline, retryPolicyRegistry, eventBus, executor);
 
-            // Planner
+            // Planner — composite of plugin planners + rule planner as fallback
             PlanRegistry planRegistry = new PlanRegistry();
             stepDefinitions.forEach(planRegistry::register);
             PlannerEngine plannerEngine = new PlannerEngine(planRegistry);
+            RulePlanner rulePlanner = new RulePlanner(plannerEngine);
+
+            List<Planner> allPlanners = new ArrayList<>();
+            allPlanners.addAll(extraPlanners);
+            allPlanners.addAll(pluginManager.registeredPlanners());
+            CompositePlanner compositePlanner = new CompositePlanner(allPlanners, rulePlanner);
 
             // Engine
-            ExecutionEngine engine = new ExecutionEngine(plannerEngine, scheduler, eventBus);
+            ExecutionEngine engine = new ExecutionEngine(
+                    compositePlanner, capabilityRegistry, scheduler, eventBus);
 
-            return new NexoraEngine(engine, pluginManager, eventBus, capabilityRegistry);
+            return new NexoraEngine(engine, pluginManager, eventBus, capabilityRegistry, contractMonitor);
         }
     }
 }

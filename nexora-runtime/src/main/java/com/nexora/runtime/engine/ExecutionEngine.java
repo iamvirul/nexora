@@ -10,12 +10,16 @@ import com.nexora.event.PlanCompletedEvent;
 import com.nexora.event.PlanFailedEvent;
 import com.nexora.event.PlanStartedEvent;
 import com.nexora.executor.DagStepScheduler;
-import com.nexora.planner.engine.PlannerEngine;
+import com.nexora.planner.engine.DefaultPlanningContext;
+import com.nexora.spi.Planner;
+import com.nexora.spi.PlanningContext;
+import com.nexora.spi.CapabilityRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
@@ -23,12 +27,18 @@ public final class ExecutionEngine {
 
     private static final Logger log = LoggerFactory.getLogger(ExecutionEngine.class);
 
-    private final PlannerEngine plannerEngine;
+    private final Planner planner;
+    private final CapabilityRegistry capabilityRegistry;
     private final DagStepScheduler scheduler;
     private final ExecutionEventBus eventBus;
 
-    public ExecutionEngine(PlannerEngine plannerEngine, DagStepScheduler scheduler, ExecutionEventBus eventBus) {
-        this.plannerEngine = Objects.requireNonNull(plannerEngine);
+    public ExecutionEngine(
+            Planner planner,
+            CapabilityRegistry capabilityRegistry,
+            DagStepScheduler scheduler,
+            ExecutionEventBus eventBus) {
+        this.planner = Objects.requireNonNull(planner);
+        this.capabilityRegistry = Objects.requireNonNull(capabilityRegistry);
         this.scheduler = Objects.requireNonNull(scheduler);
         this.eventBus = Objects.requireNonNull(eventBus);
     }
@@ -37,7 +47,8 @@ public final class ExecutionEngine {
         TraceContext traceContext = TraceContext.root();
         ExecutionContext ctx = new ExecutionContext(intent, traceContext);
 
-        Plan plan = plannerEngine.createPlan(intent);
+        PlanningContext planningContext = new DefaultPlanningContext(capabilityRegistry, Map.of());
+        Plan plan = planner.plan(intent, planningContext);
         Instant planStart = Instant.now();
 
         log.info("Starting execution executionId={} traceId={} goal={}",

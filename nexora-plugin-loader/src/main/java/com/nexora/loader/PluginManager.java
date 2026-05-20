@@ -7,6 +7,8 @@ import com.nexora.spi.Capability;
 import com.nexora.spi.CapabilityProvider;
 import com.nexora.spi.CapabilityRegistry;
 import com.nexora.spi.NexoraPlugin;
+import com.nexora.spi.Planner;
+import com.nexora.spi.PlannerProvider;
 import com.nexora.spi.PluginInitializationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +39,7 @@ public final class PluginManager {
     private final CapabilityRegistry capabilityRegistry;
     private final ExecutionEventBus eventBus;
     private final ConcurrentHashMap<String, PluginState> plugins = new ConcurrentHashMap<>();
+    private final List<Planner> registeredPlanners = Collections.synchronizedList(new ArrayList<>());
 
     public PluginManager(CapabilityRegistry capabilityRegistry, ExecutionEventBus eventBus) {
         this.capabilityRegistry = Objects.requireNonNull(capabilityRegistry);
@@ -123,6 +126,12 @@ public final class PluginManager {
             log.info("Registered capability id={} from plugin={}", provider.descriptor().id(), pluginId);
         }
 
+        for (PlannerProvider provider : state.plugin().plannerProviders()) {
+            Planner planner = provider.create(ctx);
+            registeredPlanners.add(planner);
+            log.info("Registered planner id={} from plugin={}", provider.descriptor().id(), pluginId);
+        }
+
         state.transition(PluginLifecycle.ACTIVE);
         eventBus.publish(new PluginActivatedEvent(pluginId, state.plugin().descriptor().version(), Instant.now()));
         log.info("Plugin active id={}", pluginId);
@@ -167,6 +176,10 @@ public final class PluginManager {
     public PluginLifecycle getLifecycle(String pluginId) {
         PluginState state = plugins.get(pluginId);
         return state != null ? state.lifecycle() : PluginLifecycle.UNLOADED;
+    }
+
+    public List<Planner> registeredPlanners() {
+        return Collections.unmodifiableList(registeredPlanners);
     }
 
     public List<String> activePluginIds() {

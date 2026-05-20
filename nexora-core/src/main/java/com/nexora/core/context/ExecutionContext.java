@@ -15,6 +15,8 @@ public final class ExecutionContext {
     private final TraceContext traceContext;
     private final ConcurrentHashMap<String, Object> data = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Object> stepOutputs = new ConcurrentHashMap<>();
+    // stepId -> (inputKey -> overrideValue), populated by ModifyInputAmendment
+    private final ConcurrentHashMap<String, ConcurrentHashMap<String, Object>> inputOverrides = new ConcurrentHashMap<>();
 
     public ExecutionContext(Intent intent, TraceContext traceContext) {
         this.executionId = UUID.randomUUID().toString();
@@ -73,6 +75,15 @@ public final class ExecutionContext {
                     : intent.getContext();
             default -> null;
         };
+    }
+
+    public void putInputOverride(String stepId, String inputKey, Object value) {
+        inputOverrides.computeIfAbsent(stepId, k -> new ConcurrentHashMap<>()).put(inputKey, value);
+    }
+
+    public Map<String, Object> getInputOverrides(String stepId) {
+        ConcurrentHashMap<String, Object> overrides = inputOverrides.get(stepId);
+        return overrides != null ? Map.copyOf(overrides) : Map.of();
     }
 
     public String getExecutionId() { return executionId; }

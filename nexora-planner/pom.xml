@@ -21,7 +21,11 @@
             <groupId>com.nexora</groupId>
             <artifactId>nexora-core</artifactId>
             <version>1.0-SNAPSHOT</version>
-            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.nexora</groupId>
+            <artifactId>nexora-plugin-spi</artifactId>
+            <version>1.0-SNAPSHOT</version>
         </dependency>
     </dependencies>
 

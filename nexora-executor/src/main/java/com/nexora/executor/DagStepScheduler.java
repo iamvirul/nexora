@@ -6,10 +6,15 @@ import com.nexora.core.context.ExecutionContext;
 import com.nexora.core.execution.ExecutionResult;
 import com.nexora.core.execution.ExecutionStatus;
 import com.nexora.core.execution.StepResult;
+import com.nexora.core.plan.AddStepAmendment;
 import com.nexora.core.plan.InputBinding;
+import com.nexora.core.plan.ModifyInputAmendment;
 import com.nexora.core.plan.Plan;
+import com.nexora.core.plan.PlanAmendment;
+import com.nexora.core.plan.SkipStepAmendment;
 import com.nexora.core.plan.Step;
 import com.nexora.event.ExecutionEventBus;
+import com.nexora.event.PlanAmendedEvent;
 import com.nexora.event.StepCompletedEvent;
 import com.nexora.event.StepFailedEvent;
 import com.nexora.event.StepStartedEvent;
@@ -24,17 +29,24 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Schedules plan steps as a DAG, executing independent steps in parallel.
  *
- * Dependency resolution: each Step.dependsOn() set declares which step IDs
- * must complete before this step may start. The scheduler builds a
- * CompletableFuture per step and chains them according to declared dependencies.
- * Steps with no dependencies start immediately and run concurrently.
+ * Supports reactive plan amendment: when a step's CapabilityResult carries
+ * PlanAmendment entries, the scheduler applies them before dependent steps start:
+ *   - AddStepAmendment  — injects a new step into the live DAG
+ *   - SkipStepAmendment — marks a pending step as skipped
+ *   - ModifyInputAmendment — overrides an input for a pending step
+ *
+ * Amendment processing is atomic with respect to the parent step's completion
+ * counter, so there is no window in which a newly added step can be missed by
+ * the final result collector.
  */
 public final class DagStepScheduler {
 
@@ -59,23 +71,99 @@ public final class DagStepScheduler {
     public CompletableFuture<ExecutionResult> schedule(Plan plan, ExecutionContext ctx) {
         validateNoCycles(plan);
 
-        Map<String, CompletableFuture<StepResult>> futures = new HashMap<>();
+        // Mutable futures map — grows as AddStepAmendments inject new steps
+        ConcurrentHashMap<String, CompletableFuture<StepResult>> futures = new ConcurrentHashMap<>();
         ConcurrentHashMap<String, StepResult> completedResults = new ConcurrentHashMap<>();
+        Set<String> skippedSteps = ConcurrentHashMap.newKeySet();
+
+        CompletableFuture<ExecutionResult> done = new CompletableFuture<>();
+        AtomicInteger pending = new AtomicInteger(plan.getSteps().size());
+
+        Runnable onStepDone = () -> {
+            if (pending.decrementAndGet() == 0) {
+                done.complete(collectResults(ctx.getExecutionId(), completedResults, futures.keySet()));
+            }
+        };
 
         for (Step step : plan.getSteps()) {
-            CompletableFuture<Void> prerequisite = buildPrerequisite(step, futures);
-
-            CompletableFuture<StepResult> stepFuture = prerequisite
-                    .thenApplyAsync(ignored -> executeStep(step, ctx), executor)
-                    .whenComplete((result, ex) -> {
-                        if (result != null) completedResults.put(step.id(), result);
-                    });
-
-            futures.put(step.id(), stepFuture);
+            submitStep(step, futures, completedResults, skippedSteps, pending, onStepDone, ctx);
         }
 
-        return CompletableFuture.allOf(futures.values().toArray(new CompletableFuture[0]))
-                .handle((ignored, ex) -> collectResults(ctx.getExecutionId(), completedResults, plan));
+        return done;
+    }
+
+    private void submitStep(
+            Step step,
+            ConcurrentHashMap<String, CompletableFuture<StepResult>> futures,
+            ConcurrentHashMap<String, StepResult> completedResults,
+            Set<String> skippedSteps,
+            AtomicInteger pending,
+            Runnable onStepDone,
+            ExecutionContext ctx) {
+
+        CompletableFuture<Void> prerequisite = buildPrerequisite(step, futures);
+
+        CompletableFuture<StepResult> stepFuture = prerequisite
+                .thenApplyAsync(ignored -> {
+                    if (skippedSteps.contains(step.id())) {
+                        log.info("Step skipped by amendment id={}", step.id());
+                        return new StepResult(step.id(),
+                                CapabilityResult.failure("SKIPPED", "Step skipped by plan amendment"));
+                    }
+                    return executeStep(step, ctx);
+                }, executor)
+                .whenComplete((result, ex) -> {
+                    if (result != null) {
+                        completedResults.put(step.id(), result);
+                        // Process amendments before decrementing — keeps pending count consistent
+                        applyAmendments(result.capabilityResult().amendments(),
+                                futures, completedResults, skippedSteps, pending, onStepDone, ctx);
+                    }
+                    onStepDone.run();
+                });
+
+        futures.put(step.id(), stepFuture);
+    }
+
+    private void applyAmendments(
+            List<PlanAmendment> amendments,
+            ConcurrentHashMap<String, CompletableFuture<StepResult>> futures,
+            ConcurrentHashMap<String, StepResult> completedResults,
+            Set<String> skippedSteps,
+            AtomicInteger pending,
+            Runnable onStepDone,
+            ExecutionContext ctx) {
+
+        for (PlanAmendment amendment : amendments) {
+            switch (amendment) {
+                case AddStepAmendment add -> {
+                    if (futures.containsKey(add.step().id())) {
+                        log.warn("AddStepAmendment ignored — step id already exists: {}", add.step().id());
+                        continue;
+                    }
+                    log.info("Plan amendment: adding step id={}", add.step().id());
+                    pending.incrementAndGet();
+                    eventBus.publish(new PlanAmendedEvent(
+                            ctx.getExecutionId(), ctx.getTraceContext().traceId(),
+                            "ADD_STEP", add.step().id(), Instant.now()));
+                    submitStep(add.step(), futures, completedResults, skippedSteps, pending, onStepDone, ctx);
+                }
+                case SkipStepAmendment skip -> {
+                    log.info("Plan amendment: skipping step id={}", skip.stepId());
+                    skippedSteps.add(skip.stepId());
+                    eventBus.publish(new PlanAmendedEvent(
+                            ctx.getExecutionId(), ctx.getTraceContext().traceId(),
+                            "SKIP_STEP", skip.stepId(), Instant.now()));
+                }
+                case ModifyInputAmendment modify -> {
+                    log.info("Plan amendment: modifying input stepId={} key={}", modify.stepId(), modify.inputKey());
+                    ctx.putInputOverride(modify.stepId(), modify.inputKey(), modify.value());
+                    eventBus.publish(new PlanAmendedEvent(
+                            ctx.getExecutionId(), ctx.getTraceContext().traceId(),
+                            "MODIFY_INPUT", modify.stepId(), Instant.now()));
+                }
+            }
+        }
     }
 
     private StepResult executeStep(Step step, ExecutionContext ctx) {
@@ -129,15 +217,21 @@ public final class DagStepScheduler {
 
     private Map<String, Object> resolveInputs(Step step, ExecutionContext ctx) {
         Map<String, Object> resolved = new HashMap<>();
+        // ModifyInputAmendment overrides take priority over declared bindings
+        Map<String, Object> overrides = ctx.getInputOverrides(step.id());
         for (Map.Entry<String, InputBinding> entry : step.inputs().entrySet()) {
-            resolved.put(entry.getKey(), entry.getValue().resolve(ctx));
+            String key = entry.getKey();
+            resolved.put(key, overrides.containsKey(key)
+                    ? overrides.get(key)
+                    : entry.getValue().resolve(ctx));
         }
+        overrides.forEach(resolved::putIfAbsent);
         return resolved;
     }
 
     private CompletableFuture<Void> buildPrerequisite(
             Step step,
-            Map<String, CompletableFuture<StepResult>> futures) {
+            ConcurrentHashMap<String, CompletableFuture<StepResult>> futures) {
 
         if (step.dependsOn().isEmpty()) {
             return CompletableFuture.completedFuture(null);
@@ -149,9 +243,8 @@ public final class DagStepScheduler {
             if (dep == null) {
                 throw new IllegalStateException(
                         "Step '" + step.id() + "' declares dependency on '" + depId +
-                        "' but that step does not appear earlier in the plan. " +
-                        "Steps must be ordered so dependencies come first."
-                );
+                        "' but that step is not in the plan. " +
+                        "AddStepAmendment dependencies must reference existing steps.");
             }
             deps.add(dep);
         }
@@ -162,34 +255,31 @@ public final class DagStepScheduler {
     private ExecutionResult collectResults(
             String executionId,
             ConcurrentHashMap<String, StepResult> completedResults,
-            Plan plan) {
+            Set<String> allStepIds) {
 
-        List<StepResult> ordered = new ArrayList<>();
+        List<StepResult> results = new ArrayList<>(completedResults.values());
         ExecutionStatus overallStatus = ExecutionStatus.COMPLETED;
 
-        for (Step step : plan.getSteps()) {
-            StepResult result = completedResults.get(step.id());
-            if (result != null) {
-                ordered.add(result);
-                if (!result.succeeded()) {
-                    overallStatus = ExecutionStatus.FAILED;
-                }
+        for (StepResult result : results) {
+            if (!result.succeeded() && !isSkipped(result)) {
+                overallStatus = ExecutionStatus.FAILED;
+                break;
             }
         }
 
-        return new ExecutionResult(executionId, overallStatus, ordered);
+        return new ExecutionResult(executionId, overallStatus, results);
     }
 
-    /**
-     * Validates the plan's dependency graph is a DAG (no cycles).
-     * Uses iterative DFS with coloring: WHITE=unvisited, GRAY=in-stack, BLACK=done.
-     */
+    private boolean isSkipped(StepResult result) {
+        return result.capabilityResult().failureCode() != null &&
+                result.capabilityResult().failureCode().equals("SKIPPED");
+    }
+
     private void validateNoCycles(Plan plan) {
         Map<String, Step> stepById = new HashMap<>();
         for (Step step : plan.getSteps()) {
             stepById.put(step.id(), step);
         }
-
         Map<String, Integer> color = new HashMap<>();
         for (Step step : plan.getSteps()) {
             if (!color.containsKey(step.id())) {
@@ -199,7 +289,7 @@ public final class DagStepScheduler {
     }
 
     private void dfsCheckCycle(String stepId, Map<String, Step> stepById, Map<String, Integer> color) {
-        color.put(stepId, 1); // GRAY — in current DFS path
+        color.put(stepId, 1);
         Step step = stepById.get(stepId);
         if (step != null) {
             for (String dep : step.dependsOn()) {
@@ -213,6 +303,6 @@ public final class DagStepScheduler {
                 }
             }
         }
-        color.put(stepId, 2); // BLACK — fully processed
+        color.put(stepId, 2);
     }
 }

@@ -121,7 +121,7 @@ public class Demo {
         );
         InterceptorPipeline pipeline = new InterceptorPipeline(
                 interceptors,
-                new CapabilityInvoker(capabilityRegistry)
+                new CapabilityInvoker(capabilityRegistry, new com.nexora.executor.CapabilityContractMonitor())
         );
         DagStepScheduler scheduler = new DagStepScheduler(pipeline, retryPolicyRegistry, eventBus, executor);
 
@@ -165,9 +165,12 @@ public class Demo {
         ));
 
         PlannerEngine plannerEngine = new PlannerEngine(planRegistry);
+        com.nexora.planner.engine.RulePlanner rulePlanner = new com.nexora.planner.engine.RulePlanner(plannerEngine);
+        com.nexora.planner.engine.CompositePlanner compositePlanner =
+                new com.nexora.planner.engine.CompositePlanner(List.of(), rulePlanner);
 
         // 6. EXECUTION ENGINE
-        ExecutionEngine engine = new ExecutionEngine(plannerEngine, scheduler, eventBus);
+        ExecutionEngine engine = new ExecutionEngine(compositePlanner, capabilityRegistry, scheduler, eventBus);
 
         // 7. RUN
         Intent intent = new Intent(
