@@ -1,7 +1,5 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<?xml version='1.0' encoding='utf-8'?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>com.nexora</groupId>
@@ -21,28 +19,23 @@
         <dependency>
             <groupId>com.nexora</groupId>
             <artifactId>nexora-core</artifactId>
-            <version>1.0-SNAPSHOT</version>
-        </dependency>
+            </dependency>
         <dependency>
             <groupId>com.nexora</groupId>
             <artifactId>nexora-plugin-spi</artifactId>
-            <version>1.0-SNAPSHOT</version>
-        </dependency>
+            </dependency>
         <dependency>
             <groupId>com.nexora</groupId>
             <artifactId>nexora-tracing</artifactId>
-            <version>1.0-SNAPSHOT</version>
-        </dependency>
+            </dependency>
         <dependency>
             <groupId>com.nexora</groupId>
             <artifactId>nexora-retry</artifactId>
-            <version>1.0-SNAPSHOT</version>
-        </dependency>
+            </dependency>
         <dependency>
             <groupId>com.nexora</groupId>
             <artifactId>nexora-event</artifactId>
-            <version>1.0-SNAPSHOT</version>
-        </dependency>
+            </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
@@ -50,13 +43,11 @@
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
-            <version>5.10.2</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>com.nexora</groupId>
             <artifactId>nexora-registry</artifactId>
-            <version>1.0-SNAPSHOT</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
