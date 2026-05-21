@@ -92,7 +92,7 @@ public final class DagStepScheduler {
 
         Runnable onStepDone = () -> {
             if (pending.decrementAndGet() == 0) {
-                done.complete(collectResults(ctx.getExecutionId(), completedResults, futures.keySet()));
+                done.complete(collectResults(ctx.getExecutionId(), completedResults));
             }
         };
 
@@ -289,8 +289,7 @@ public final class DagStepScheduler {
 
     private ExecutionResult collectResults(
             String executionId,
-            ConcurrentHashMap<String, StepResult> completedResults,
-            Set<String> allStepIds) {
+            ConcurrentHashMap<String, StepResult> completedResults) {
 
         List<StepResult> results = new ArrayList<>(completedResults.values());
         ExecutionStatus overallStatus = ExecutionStatus.COMPLETED;

@@ -6,5 +6,6 @@ package com.nexora.spi;
  */
 public interface PlannerProvider {
     PlannerDescriptor descriptor();
+    @SuppressWarnings("unused")
     Planner create(PluginContext context);
 }

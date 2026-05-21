@@ -21,6 +21,7 @@ public interface Planner {
      * Returns true if this planner is capable of handling the given intent.
      * Called before plan() — must be fast and side-effect-free.
      */
+    @SuppressWarnings("unused")
     boolean canPlan(Intent intent, PlanningContext context);
 
     /**
@@ -28,5 +29,6 @@ public interface Planner {
      *
      * @throws PlanningException if planning fails unrecoverably.
      */
+    @SuppressWarnings("unused")
     Plan plan(Intent intent, PlanningContext context);
 }

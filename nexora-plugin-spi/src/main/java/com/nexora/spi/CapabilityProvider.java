@@ -10,5 +10,6 @@ public interface CapabilityProvider {
     CapabilityDescriptor descriptor();
 
     /** Called once during plugin activation. May cache the result. */
+    @SuppressWarnings("unused")
     Capability create(PluginContext context);
 }

@@ -8,5 +8,6 @@ import com.nexora.core.context.TraceContext;
  * implementation without touching any call sites.
  */
 public interface Tracer {
+    @SuppressWarnings("unused")
     Span startSpan(String operationName, TraceContext parent);
 }
