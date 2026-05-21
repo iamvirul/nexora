@@ -146,7 +146,7 @@ public class PaymentPipelineApp {
         System.out.println("DAG (8 steps):");
         System.out.println("  validate_request ──────────────────────────────────────────────┐");
         System.out.println("                                                                    ├──> process_payment ──┬──> send_confirmation");
-        System.out.println("  enrich_user_data ─┐                                            │                       │");
+        System.out.println("  enrich_user_data ─┐                                             │                       │");
         System.out.println("                    ├──> run_fraud_check ─────────────────────────┘                       └──> update_ledger");
         System.out.println("  check_velocity ───┤");
         System.out.println("                    │");
@@ -400,7 +400,7 @@ public class PaymentPipelineApp {
                         return CapabilityResult.success(Map.of("flagged", true, "queue", "fraud-review"));
                     }),
 
-                    // ── Compensate capabilities (saga rollback) ────────────────────────
+                    // Compensate capabilities (saga rollback)
 
                     cap("validate_request_compensate", CapabilityContract.none(), req -> {
                         sleep(10);
