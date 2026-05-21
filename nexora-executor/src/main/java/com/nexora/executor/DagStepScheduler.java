@@ -71,6 +71,12 @@ public final class DagStepScheduler {
     public CompletableFuture<ExecutionResult> schedule(Plan plan, ExecutionContext ctx) {
         validateNoCycles(plan);
 
+        if (plan.getSteps().isEmpty()) {
+            return CompletableFuture.completedFuture(
+                    new ExecutionResult(ctx.getExecutionId(), ExecutionStatus.COMPLETED, List.of())
+            );
+        }
+
         // Mutable futures map — grows as AddStepAmendments inject new steps
         ConcurrentHashMap<String, CompletableFuture<StepResult>> futures = new ConcurrentHashMap<>();
         ConcurrentHashMap<String, StepResult> completedResults = new ConcurrentHashMap<>();

@@ -1,0 +1,33 @@
+groups:
+  - name: nexora-alerts
+    interval: 15s
+    rules:
+      - alert: NexoraHighPlanFailureRate
+        expr: (sum(rate(nexora_plan_failed_total[5m])) / clamp_min(sum(rate(nexora_plan_started_total[5m])), 0.001)) > 0.20
+        for: 2m
+        labels:
+          severity: warning
+          service: nexora
+        annotations:
+          summary: "Nexora plan failure rate is high"
+          description: "More than 20% of plans are failing over the last 5 minutes."
+
+      - alert: NexoraStepLatencyP95High
+        expr: histogram_quantile(0.95, sum by (le) (rate(nexora_step_duration_seconds_bucket[5m]))) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: nexora
+        annotations:
+          summary: "Nexora p95 step latency is high"
+          description: "p95 step latency has been above 2 seconds for at least 5 minutes."
+
+      - alert: NexoraExecutionsStuck
+        expr: min_over_time(nexora_active_executions[10m]) > 0
+        for: 10m
+        labels:
+          severity: critical
+          service: nexora
+        annotations:
+          summary: "Nexora has executions continuously active"
+          description: "Active executions have stayed above 0 for 10 minutes and may be stuck."

@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: nexora
+    orgId: 1
+    folder: Nexora
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

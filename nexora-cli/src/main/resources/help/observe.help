@@ -1,0 +1,23 @@
+Start a local observability server for Nexora.
+
+  Exposes:
+    /metrics      Prometheus scrape endpoint
+    /api/process  Live execution process snapshot JSON
+    /api/execute  Trigger execution via HTTP POST
+    /             Browser UI for live process view
+
+  Examples
+  ────────
+  Start observability server on default port 9464:
+    nexora observe
+
+  Bind to a custom host/port:
+    nexora observe --host 127.0.0.1 --port 8080
+
+  Retain more history for UI:
+    nexora observe --max-executions 300 --max-events 500
+
+  Trigger an execution from another terminal:
+    curl -X POST http://localhost:9464/api/execute \
+      -H "content-type: application/json" \
+      -d '{"goal":"process order payment notification","context":{"orderId":"ORD-99"}}'

@@ -11,6 +11,9 @@ Nexora: intent-driven execution engine.
   Quick start (no config needed):
     nexora demo
 
+  Live observability (UI + metrics):
+    nexora observe
+
   With a config file:
     nexora run -g "process order payment" -c '{"orderId":"ORD-1"}'
 

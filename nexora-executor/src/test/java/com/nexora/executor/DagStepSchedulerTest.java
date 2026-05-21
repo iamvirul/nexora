@@ -150,6 +150,20 @@ class DagStepSchedulerTest {
         }
     }
 
+    @Test
+    void completesImmediatelyWhenPlanHasNoSteps() {
+        CapabilityRegistry registry = new DefaultCapabilityRegistry();
+
+        try (TestHarness harness = new TestHarness(registry)) {
+            ExecutionResult result = harness.scheduler
+                    .schedule(new Plan(List.of()), context())
+                    .join();
+
+            assertEquals(ExecutionStatus.COMPLETED, result.status());
+            assertTrue(result.stepResults().isEmpty());
+        }
+    }
+
     private static ExecutionContext context() {
         return new ExecutionContext(new Intent("goal", Map.of()), TraceContext.root());
     }

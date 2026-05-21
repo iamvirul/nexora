@@ -9,19 +9,18 @@ import picocli.CommandLine.Spec;
 import picocli.CommandLine.Model.CommandSpec;
 
 import java.io.File;
-import java.nio.file.Path;
 import java.util.concurrent.Callable;
 
 @Command(
         name = "nexora",
         mixinStandardHelpOptions = true,
         version = "Nexora 1.0-SNAPSHOT",
-        // description loaded from help/nexora.help at startup via HelpLoader
         subcommands = {
                 RunCommand.class,
                 PlanCommand.class,
                 CapsCommand.class,
                 PluginsCommand.class,
+                ObserveCommand.class,
                 DemoCommand.class,
                 CommandLine.HelpCommand.class
         }

@@ -101,6 +101,7 @@ nexora [--config <file>] <command>
 | `nexora plan -g "<goal>"` | Dry run: show the DAG without executing anything |
 | `nexora caps` | List all registered capabilities |
 | `nexora plugins` | List active plugins |
+| `nexora observe` | Start UI/API/metrics server for live process observability |
 | `nexora demo` | Run the built-in feature demo |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
@@ -321,6 +322,69 @@ NexoraEngine.builder()
 
 Backoff includes ±25% jitter to avoid thundering herd on simultaneous failures.
 
+## Observability UI + Prometheus + Grafana
+
+Start Nexora's built-in observability server:
+
+```bash
+java -jar nexora-cli/target/nexora.jar observe --port 9464
+```
+
+This exposes four endpoints with no external dependencies:
+
+| Endpoint | What it serves |
+|----------|---------------|
+| `GET /` | Live process UI showing active executions, step timelines, and plan amendments |
+| `GET /metrics` | Prometheus text format scrape endpoint |
+| `GET /api/process` | Raw process snapshot as JSON |
+| `POST /api/execute` | Trigger an execution remotely |
+
+Example execute request:
+
+```bash
+curl -X POST http://localhost:9464/api/execute \
+  -H "content-type: application/json" \
+  -d '{"goal":"process order payment notification","context":{"orderId":"ORD-99"}}'
+```
+
+Metrics exposed include:
+
+- `nexora_plan_started_total`, `nexora_plan_completed_total`, `nexora_plan_failed_total`
+- `nexora_plan_duration_seconds` — histogram by status (completed/failed)
+- `nexora_step_started_total`, `nexora_step_completed_total`, `nexora_step_failed_total` — all by capability ID
+- `nexora_step_duration_seconds` — histogram by capability ID and terminal status
+- `nexora_plan_amendments_total` — by amendment type (ADD_STEP, SKIP_STEP, MODIFY_INPUT)
+- `nexora_active_executions` — current in-flight count
+
+Bring up Prometheus, Grafana, and Alertmanager with the prebuilt stack:
+
+```bash
+cd observability
+docker compose up -d
+```
+
+- Prometheus: `http://localhost:9090`
+- Alertmanager: `http://localhost:9093`
+- Grafana: `http://localhost:3000` (login: `admin` / `admin`)
+
+The Grafana dashboard and alert rules are provisioned automatically. Provisioned assets:
+
+- `observability/prometheus/prometheus.yml`
+- `observability/prometheus/alerts.yml`
+- `observability/grafana/dashboards/nexora-overview.json`
+
+You can also attach observability to an engine in your own application without the HTTP server:
+
+```java
+NexoraEngine engine = NexoraEngine.builder()...build();
+
+try (NexoraObservability obs = NexoraObservability.attach(engine)) {
+    engine.execute("process order", context).get();
+    String metrics = obs.scrapePrometheus();           // Prometheus text format
+    ProcessSnapshot snapshot = obs.processSnapshot();  // live execution state
+}
+```
+
 ## Module layout
 
 ```
@@ -334,8 +398,8 @@ nexora-executor       DAG scheduler with amendment support, interceptor pipeline
 nexora-plugin-loader  PluginClassLoader, PluginManager, lifecycle FSM
 nexora-planner        CompositePlanner, RulePlanner, StepDefinition, PlanRegistry
 nexora-runtime        ExecutionEngine (ties planner + scheduler together)
-nexora-api            NexoraEngine public facade and builder
-nexora-cli            PicoCLI command-line interface
+nexora-api            NexoraEngine public facade, builder, NexoraObservability
+nexora-cli            PicoCLI command-line interface + ObserveCommand HTTP server
 ```
 
 Dependencies always point inward. `nexora-cli` knows about `nexora-api`. `nexora-api` knows about `nexora-runtime`. Neither knows anything about the CLI.
