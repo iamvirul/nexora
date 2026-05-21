@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -38,9 +39,15 @@ public final class NexoraObservability implements AutoCloseable {
     private static final int DEFAULT_MAX_EXECUTIONS = 100;
     private static final int DEFAULT_MAX_TIMELINE_EVENTS = 200;
 
+    @FunctionalInterface
+    public interface SnapshotListener {
+        void onSnapshot(ProcessSnapshot snapshot);
+    }
+
     private final CollectorRegistry registry;
     private final ProcessTracker processTracker;
     private final List<Subscription> subscriptions;
+    private final List<SnapshotListener> snapshotListeners = new CopyOnWriteArrayList<>();
 
     private final Counter planStartedTotal;
     private final Counter planCompletedTotal;
@@ -161,6 +168,21 @@ public final class NexoraObservability implements AutoCloseable {
         return registry;
     }
 
+    public void addSnapshotListener(SnapshotListener listener) {
+        snapshotListeners.add(Objects.requireNonNull(listener));
+    }
+
+    private void broadcastSnapshot() {
+        if (snapshotListeners.isEmpty()) return;
+        ProcessSnapshot snap = processSnapshot();
+        for (SnapshotListener listener : snapshotListeners) {
+            try {
+                listener.onSnapshot(snap);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
     @Override
     public void close() {
         for (Subscription subscription : subscriptions) {
@@ -177,6 +199,7 @@ public final class NexoraObservability implements AutoCloseable {
         planStartedTotal.inc();
         activeExecutionsGauge.set(activeExecutions.incrementAndGet());
         processTracker.onPlanStarted(event);
+        broadcastSnapshot();
     }
 
     private void onPlanCompleted(PlanCompletedEvent event) {
@@ -184,6 +207,7 @@ public final class NexoraObservability implements AutoCloseable {
         planDurationSeconds.labels("completed").observe(seconds(event.elapsed().toNanos()));
         activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
         processTracker.onPlanCompleted(event);
+        broadcastSnapshot();
     }
 
     private void onPlanFailed(PlanFailedEvent event) {
@@ -191,16 +215,19 @@ public final class NexoraObservability implements AutoCloseable {
         planDurationSeconds.labels("failed").observe(seconds(event.elapsed().toNanos()));
         activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
         processTracker.onPlanFailed(event);
+        broadcastSnapshot();
     }
 
     private void onPlanAmended(PlanAmendedEvent event) {
         planAmendmentsTotal.labels(safeLabel(event.amendmentType())).inc();
         processTracker.onPlanAmended(event);
+        broadcastSnapshot();
     }
 
     private void onStepStarted(StepStartedEvent event) {
         stepStartedTotal.labels(safeLabel(event.capabilityId())).inc();
         processTracker.onStepStarted(event);
+        broadcastSnapshot();
     }
 
     private void onStepCompleted(StepCompletedEvent event) {
@@ -208,6 +235,7 @@ public final class NexoraObservability implements AutoCloseable {
         stepDurationSeconds.labels(safeLabel(event.capabilityId()), "completed")
                 .observe(seconds(event.elapsed().toNanos()));
         processTracker.onStepCompleted(event);
+        broadcastSnapshot();
     }
 
     private void onStepFailed(StepFailedEvent event) {
@@ -217,6 +245,7 @@ public final class NexoraObservability implements AutoCloseable {
         stepFailedTotal.labels(capabilityId, failureCode).inc();
         stepDurationSeconds.labels(capabilityId, status).observe(seconds(event.elapsed().toNanos()));
         processTracker.onStepFailed(event);
+        broadcastSnapshot();
     }
 
     private static String safeLabel(String value) {
