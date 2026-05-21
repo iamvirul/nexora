@@ -10,26 +10,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-#### Distribution
-- `nexora-all` - new shaded bundle module that aggregates all library modules (`nexora-api`, `nexora-common`, `nexora-core`, `nexora-plugin-spi`, `nexora-registry`, `nexora-tracing`, `nexora-retry`, `nexora-event`, `nexora-executor`, `nexora-plugin-loader`, `nexora-planner`, `nexora-capabilities`, `nexora-saga`, `nexora-runtime`, `nexora-persistence`) into a single deployable artifact; external transitive dependencies are promoted via `promoteTransitiveDependencies`; individual modules continue to be published as separate Maven packages to GitHub Packages alongside the bundle
-
-#### Samples
-- `screen_sanctions` step added to the payment pipeline 8-step DAG between `check_velocity` and `run_fraud_check`; fails with `SANCTIONS_HIT` when `forceBlockedUser=true`
-- `screen_sanctions_compensate` capability added to the saga rollback chain
-- Scenario 4 of the payment pipeline demo updated from a validation failure to a sanctions blocklist hit (`forceBlockedUser=true`) demonstrating early failure with partial saga compensation across the full 8-step DAG
-
-### Fixed
-
-- **`CapabilityRequest` rejects null inputs** - optional context bindings (e.g. `forceFailure`, `forceVelocityFail`, `forceBlockedUser`) resolve to `null` when the caller omits them from the execution context; `Map.copyOf()` throws `NullPointerException` on null values, causing all steps that declared those bindings to fail with an internal error and leaving dependent steps permanently pending. Null-valued entries are now stripped from the resolved inputs map before the immutable copy is taken; capabilities should use `getOrDefault()` or `Boolean.TRUE.equals()` to test absent flags.
-- **`DagStepScheduler` leaves dependent steps permanently pending on unexpected exceptions** - when a step's `thenApplyAsync` threw an unchecked exception the future completed exceptionally, propagating through `CompletableFuture.allOf` and blocking all downstream steps indefinitely. A `.handle()` stage now intercepts any unchecked exception, publishes a `StepFailedEvent` with code `INTERNAL_ERROR`, and returns a failure `StepResult` so the pending counter decrements correctly and the execution terminates.
-- **`run_fraud_check` demo capability embedded a null-prone `forceFailure` flag in its `Map.of()` output** - removed the flag from the success output map; it was a control input, not a produced output, and placing it in `Map.of()` caused `NullPointerException` on every execution that did not pass `forceFailure=true`.
-
----
-
-## [0.1.0] - 2026-05-21
-
-### Added
-
 #### Core Engine
 - Initial implementation of the **Intent-Based Execution Engine (IBEE)**
 - `nexora-core` - `Intent`, `Plan`, `Step`, `InputBinding`, `CapabilityRequest`, `CapabilityResult`, `ExecutionContext`, `TraceContext`
@@ -74,12 +54,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Orchestration-based saga** - `SagaOrchestrator` runs compensating capabilities in reverse topological order on partial execution failure; `Step.compensateCapabilityId` declares the rollback capability; opt in via `.withSagaEnabled(true)`
 - `CompensationStartedEvent`, `CompensationCompletedEvent`, `CompensationFailedEvent` added to the sealed `ExecutionEvent` hierarchy
 
+#### Distribution
+- `nexora-all` - shaded bundle module aggregating all library modules (`nexora-api`, `nexora-common`, `nexora-core`, `nexora-plugin-spi`, `nexora-registry`, `nexora-tracing`, `nexora-retry`, `nexora-event`, `nexora-executor`, `nexora-plugin-loader`, `nexora-planner`, `nexora-capabilities`, `nexora-saga`, `nexora-runtime`, `nexora-persistence`) into a single deployable artifact; external transitive dependencies are promoted; individual modules are published separately alongside the bundle
+
 #### Samples
-- `tests/payment-pipeline` - standalone Maven sample with a realistic fraud-detection DAG: `validate_request`, `enrich_user_data`, `check_velocity` → `run_fraud_check` → `process_payment` → `send_confirmation` + `update_ledger`; demonstrates plan amendments, capability contracts, and fallback routing
+- `tests/payment-pipeline` - standalone 8-step fraud-detection DAG (`validate_request`, `enrich_user_data`, `check_velocity`, `screen_sanctions` → `run_fraud_check` → `process_payment` → `send_confirmation` + `update_ledger`) demonstrating plan amendments, capability contracts, fallback routing, and orchestration-based saga compensation
+- `screen_sanctions` step added between `check_velocity` and `run_fraud_check`; fails with `SANCTIONS_HIT` when `forceBlockedUser=true`; `screen_sanctions_compensate` included in the saga rollback chain
+- Four startup scenarios: happy path, high-risk fraud review, gateway failure with saga, and sanctions blocklist hit with partial compensation
 
 #### CI/CD
 - `ci.yml` - builds and runs all tests on every push and pull request; uploads Surefire reports on failure
-- `publish.yml` - publishes all modules to GitHub Packages and creates a versioned GitHub Release on `v*` tag push; pre-release flag set automatically for tags containing `-`
+- `publish.yml` - publishes each Maven module individually to GitHub Packages in dependency order, then creates a versioned GitHub Release on `v*` tag push; pre-release flag set automatically for tags containing `-`
+- `bump-version.yml` - triggered automatically after a release is published; computes the next SNAPSHOT version, updates all `pom.xml` files via `mvn versions:set`, and opens a pull request to merge the version bump back to the default branch
 
-[Unreleased]: https://github.com/iamvirul/nexora/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/iamvirul/nexora/releases/tag/v0.1.0
+### Fixed
+
+- **`CapabilityRequest` rejects null inputs** - optional context bindings (e.g. `forceFailure`, `forceVelocityFail`, `forceBlockedUser`) resolve to `null` when the caller omits them; `Map.copyOf()` throws `NullPointerException` on null values, causing steps to fail with an internal error and leaving dependent steps permanently pending. Null-valued entries are now stripped before the immutable copy is taken; capabilities should use `getOrDefault()` or `Boolean.TRUE.equals()` to test absent flags.
+- **`DagStepScheduler` leaves dependent steps permanently pending on unexpected exceptions** - when a step's `thenApplyAsync` threw an unchecked exception the future completed exceptionally, propagating through `CompletableFuture.allOf` and blocking all downstream steps indefinitely. A `.handle()` stage now intercepts any exception, publishes a `StepFailedEvent` with code `INTERNAL_ERROR`, and returns a failure `StepResult` so the pending counter decrements correctly and the execution terminates.
+- **`run_fraud_check` embedded a null-prone `forceFailure` flag in its `Map.of()` output** - removed; it was a control input, not a produced output.
+
+---
+
+[Unreleased]: https://github.com/iamvirul/nexora/commits/advance-implementation

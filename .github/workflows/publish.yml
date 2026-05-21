@@ -5,14 +5,20 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: false
+        default: ""
 
 jobs:
   publish:
-    name: Publish to GitHub Packages
+    name: Publish modules to GitHub Packages
     runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v4
@@ -29,24 +35,111 @@ jobs:
           server-username: GITHUB_ACTOR
           server-password: GITHUB_TOKEN
 
-      - name: Build & test
+      - name: Build & test all modules
         run: mvn verify --no-transfer-progress
-
-      - name: Publish packages
-        run: mvn deploy -DskipTests --no-transfer-progress
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # ── Publish each module individually in dependency order ─────────────────
+      - name: Publish nexora-core
+        run: mvn deploy -pl nexora-core -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-plugin-spi
+        run: mvn deploy -pl nexora-plugin-spi -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-common
+        run: mvn deploy -pl nexora-common -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-registry
+        run: mvn deploy -pl nexora-registry -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-tracing
+        run: mvn deploy -pl nexora-tracing -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-retry
+        run: mvn deploy -pl nexora-retry -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-event
+        run: mvn deploy -pl nexora-event -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-executor
+        run: mvn deploy -pl nexora-executor -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-plugin-loader
+        run: mvn deploy -pl nexora-plugin-loader -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-planner
+        run: mvn deploy -pl nexora-planner -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-capabilities
+        run: mvn deploy -pl nexora-capabilities -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-saga
+        run: mvn deploy -pl nexora-saga -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-persistence
+        run: mvn deploy -pl nexora-persistence -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-runtime
+        run: mvn deploy -pl nexora-runtime -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-api
+        run: mvn deploy -pl nexora-api -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-cli
+        run: mvn deploy -pl nexora-cli -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nexora-all (shaded bundle)
+        run: mvn deploy -pl nexora-all -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── GitHub Release ───────────────────────────────────────────────────────
       - name: Extract release notes from CHANGELOG.md
         id: changelog
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          # Extract the block between this tag heading and the next
-          NOTES=$(awk "/^## \[?${TAG//v/}\]?/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md 2>/dev/null || true)
+          TAG="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
+          VERSION="${TAG#v}"
+          NOTES=$(awk "/^## \\[${VERSION}\\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md 2>/dev/null || true)
+          if [ -z "$NOTES" ]; then
+            # Fall back to the [Unreleased] block
+            NOTES=$(awk '/^## \[Unreleased\]/{found=1; next} found && /^## /{exit} found{print}' CHANGELOG.md 2>/dev/null || true)
+          fi
           if [ -z "$NOTES" ]; then
             NOTES="Release ${TAG}"
           fi
-          # Write to a file to preserve newlines
           echo "$NOTES" > release-notes.txt
 
       - name: Create GitHub Release
@@ -58,3 +151,26 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Post-release: open version-bump PR ──────────────────────────────────────
+  trigger-version-bump:
+    name: Trigger next SNAPSHOT version bump PR
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Invoke bump-version workflow
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'bump-version.yml',
+              ref: context.ref,
+              inputs: {
+                released_tag: context.ref.replace('refs/tags/', '')
+              }
+            });
