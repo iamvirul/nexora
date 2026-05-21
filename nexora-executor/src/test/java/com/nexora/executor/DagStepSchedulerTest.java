@@ -43,12 +43,12 @@ class DagStepSchedulerTest {
         AtomicBoolean auditExecuted = new AtomicBoolean(false);
         AtomicReference<String> finalMessage = new AtomicReference<>();
 
-        Step auditStep = new Step(
-                "audit",
+        Step auditStep = new Step("audit",
                 "audit",
                 Map.of("source", InputBinding.fromStep("first")),
                 null,
                 Set.of("first"),
+                null,
                 null,
                 null
         );
@@ -77,6 +77,7 @@ class DagStepSchedulerTest {
                             Map.of("message", InputBinding.literal("original")),
                             null,
                             Set.of("first"),
+                            null,
                             null,
                             null
                     )
@@ -111,8 +112,8 @@ class DagStepSchedulerTest {
         try (TestHarness harness = new TestHarness(registry)) {
             Plan plan = new Plan(List.of(
                     Step.of("first", "first"),
-                    new Step("legacy", "legacy", Map.of(), null, Set.of("first"), null, null),
-                    new Step("final", "final", Map.of(), null, Set.of("first"), null, null)
+                    new Step("legacy", "legacy", Map.of(), null, Set.of("first"), null, null, null),
+                    new Step("final", "final", Map.of(), null, Set.of("first"), null, null, null)
             ));
 
             ExecutionResult result = harness.scheduler.schedule(plan, context()).join();
@@ -138,8 +139,8 @@ class DagStepSchedulerTest {
 
         try (TestHarness harness = new TestHarness(registry)) {
             Plan cyclicPlan = new Plan(List.of(
-                    new Step("a", "a", Map.of(), null, Set.of("b"), null, null),
-                    new Step("b", "b", Map.of(), null, Set.of("a"), null, null)
+                    new Step("a", "a", Map.of(), null, Set.of("b"), null, null, null),
+                    new Step("b", "b", Map.of(), null, Set.of("a"), null, null, null)
             ));
 
             IllegalStateException ex = assertThrows(
@@ -190,7 +191,8 @@ class DagStepSchedulerTest {
                     pipeline,
                     new DefaultRetryPolicyRegistry(),
                     new InProcessEventBus(executor),
-                    executor
+                    executor,
+                    registry
             );
         }
 

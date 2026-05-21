@@ -6,6 +6,7 @@ public record StepStartedEvent(
         String executionId,
         String stepId,
         String capabilityId,
+        String idempotencyKey,
         String traceId,
         String spanId,
         Instant occurredAt

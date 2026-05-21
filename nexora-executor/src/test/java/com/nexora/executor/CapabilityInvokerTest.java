@@ -82,6 +82,7 @@ class CapabilityInvokerTest {
         return new CapabilityRequest(
                 capabilityId,
                 "step-1",
+                java.util.UUID.randomUUID().toString(),
                 Map.of(),
                 TraceContext.root(),
                 Duration.ofSeconds(1)

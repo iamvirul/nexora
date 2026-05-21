@@ -19,6 +19,7 @@ import com.nexora.event.StepCompletedEvent;
 import com.nexora.event.StepFailedEvent;
 import com.nexora.event.StepStartedEvent;
 import com.nexora.retry.RetryPolicyRegistry;
+import com.nexora.spi.CapabilityRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
@@ -56,16 +58,19 @@ public final class DagStepScheduler {
     private final RetryPolicyRegistry retryPolicyRegistry;
     private final ExecutionEventBus eventBus;
     private final Executor executor;
+    private final CapabilityRegistry capabilityRegistry;
 
     public DagStepScheduler(
             InterceptorPipeline pipeline,
             RetryPolicyRegistry retryPolicyRegistry,
             ExecutionEventBus eventBus,
-            Executor executor) {
+            Executor executor,
+            CapabilityRegistry capabilityRegistry) {
         this.pipeline = Objects.requireNonNull(pipeline);
         this.retryPolicyRegistry = Objects.requireNonNull(retryPolicyRegistry);
         this.eventBus = Objects.requireNonNull(eventBus);
         this.executor = Objects.requireNonNull(executor);
+        this.capabilityRegistry = Objects.requireNonNull(capabilityRegistry);
     }
 
     public CompletableFuture<ExecutionResult> schedule(Plan plan, ExecutionContext ctx) {
@@ -178,16 +183,24 @@ public final class DagStepScheduler {
 
         Map<String, Object> resolvedInputs = resolveInputs(step, ctx);
 
+        Duration effectiveTimeout = step.timeout() != null ? step.timeout()
+                : capabilityRegistry.findDescriptor(step.capabilityId())
+                        .filter(d -> d.contract().hasLatencySla())
+                        .map(d -> d.contract().expectedP99Latency())
+                        .orElse(null);
+
         CapabilityRequest request = new CapabilityRequest(
                 step.capabilityId(),
                 step.id(),
+                UUID.randomUUID().toString(),
                 resolvedInputs,
                 ctx.getTraceContext().childSpan(),
-                step.timeout()
+                effectiveTimeout
         );
 
         eventBus.publish(new StepStartedEvent(
                 ctx.getExecutionId(), step.id(), step.capabilityId(),
+                request.idempotencyKey(),
                 request.traceContext().traceId(), request.traceContext().spanId(),
                 Instant.now()
         ));
