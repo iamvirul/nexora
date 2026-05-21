@@ -252,7 +252,7 @@ public class PaymentPipelineApp {
                                 Map.of("risk", InputBinding.literal(risk)),
                                 null,
                                 Set.of("run_fraud_check"),
-                                null, null);
+                                null, null, null);
 
                         return CapabilityResult.success(
                                 Map.of("riskScore", risk, "decision", risk > 0.5 ? "REVIEW" : "PASS"),

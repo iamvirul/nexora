@@ -69,7 +69,7 @@ final class DemoCapabilities {
                         Step auditStep = new Step(
                                 "audit_log", "audit_log",
                                 Map.of("orderId", InputBinding.literal(req.inputs().get("orderId"))),
-                                null, Set.of("validate_order"), null, null);
+                                null, Set.of("validate_order"), null, null, null);
                         return CapabilityResult.success(
                                 Map.of("valid", true),
                                 List.of(

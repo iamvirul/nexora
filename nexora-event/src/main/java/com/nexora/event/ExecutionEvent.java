@@ -13,6 +13,9 @@ public sealed interface ExecutionEvent permits
         StepStartedEvent,
         StepCompletedEvent,
         StepFailedEvent,
+        CompensationStartedEvent,
+        CompensationCompletedEvent,
+        CompensationFailedEvent,
         PluginActivatedEvent,
         PluginDeactivatedEvent {
 }

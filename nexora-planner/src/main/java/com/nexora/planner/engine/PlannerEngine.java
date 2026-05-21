@@ -35,7 +35,8 @@ public class PlannerEngine {
                 def.getOutputKey(),
                 def.getDependsOn(),
                 def.getRetryPolicyId(),
-                def.getTimeout()
+                def.getTimeout(),
+                def.getCompensateCapabilityId()
         );
     }
 }
