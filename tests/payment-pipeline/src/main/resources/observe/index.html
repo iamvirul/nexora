@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nexora</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d1117;
+      --surface:  #161b22;
+      --surface2: #1c2128;
+      --border:   #30363d;
+      --border2:  #21262d;
+      --text:     #e6edf3;
+      --muted:    #7d8590;
+      --blue:     #58a6ff;
+      --green:    #3fb950;
+      --red:      #f85149;
+      --yellow:   #d29922;
+      --orange:   #f0883e;
+      --mono:     ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      --sans:     -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      font-family: var(--sans);
+      font-size: 13px;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.5;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Nav ── */
+    .nav {
+      flex-shrink: 0;
+      height: 48px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      z-index: 10;
+    }
+
+    .nav-brand { font-size: 14px; font-weight: 600; color: var(--text); }
+    .nav-brand span { color: var(--muted); font-weight: 400; margin-left: 6px; font-size: 12px; }
+
+    .conn { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+    .conn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+    .conn.live .conn-dot    { background: var(--green); }
+    .conn.live .conn-label  { color: var(--green); }
+    .conn.error .conn-dot   { background: var(--red); }
+    .conn.error .conn-label { color: var(--red); }
+
+    /* ── Viewport layout ── */
+    .viewport {
+      flex: 1;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .layout {
+      flex: 1;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 16px 20px;
+      max-width: 1200px;
+      width: 100%;
+      margin: 0 auto;
+      min-height: 0;
+    }
+
+    /* ── Stats ── */
+    .stats {
+      flex-shrink: 0;
+      display: flex;
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .stat { flex: 1; background: var(--surface); padding: 9px 12px; min-width: 0; }
+    .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+    .stat-value { font-size: 18px; font-weight: 600; font-family: var(--mono); margin-top: 2px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Run form ── */
+    .run-form {
+      flex-shrink: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .run-form label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+    .run-form input,
+    .run-form textarea {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 13px;
+      padding: 5px 9px;
+      outline: none;
+      min-width: 0;
+    }
+
+    .run-form input    { flex: 1; min-width: 140px; }
+    .run-form textarea { width: 200px; resize: none; font-family: var(--mono); font-size: 12px; height: 29px; overflow: hidden; flex-shrink: 0; }
+    .run-form input:focus, .run-form textarea:focus { border-color: var(--blue); }
+
+    .run-btn {
+      flex-shrink: 0;
+      background: #238636;
+      border: 1px solid #2ea043;
+      border-radius: 4px;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 5px 14px;
+      height: 29px;
+      cursor: pointer;
+      white-space: nowrap;
+      font-family: var(--sans);
+    }
+
+    .run-btn:hover    { background: #2ea043; }
+    .run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .flash { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+    /* ── Exec section (scrollable) ── */
+    .exec-section {
+      flex: 1;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .section-header {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .section-title { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+
+    .exec-scroll {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
+      padding-bottom: 4px;
+    }
+
+    .exec-scroll::-webkit-scrollbar { width: 6px; }
+    .exec-scroll::-webkit-scrollbar-track { background: transparent; }
+    .exec-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .exec-list { display: grid; gap: 8px; }
+
+    .empty {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 40px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    /* ── Footer ── */
+    footer {
+      flex-shrink: 0;
+      text-align: center;
+      padding: 10px 20px;
+      font-size: 11px;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    /* ── Execution card ── */
+    .exec {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .exec-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border2);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .exec-header:hover { background: var(--surface2); }
+
+    .badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 1px 7px;
+      border-radius: 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      flex-shrink: 0;
+    }
+
+    .badge.running   { background: rgba(88,166,255,0.15);  color: var(--blue);   }
+    .badge.completed { background: rgba(63,185,80,0.15);   color: var(--green);  }
+    .badge.failed    { background: rgba(248,81,73,0.15);   color: var(--red);    }
+    .badge.skipped   { background: rgba(210,153,34,0.15);  color: var(--yellow); }
+    .badge.pending   { background: rgba(125,133,144,0.15); color: var(--muted);  }
+
+    .exec-id {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted);
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .exec-meta {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-shrink: 0;
+    }
+
+    .exec-meta span { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+    .exec-meta .dur { color: var(--text); font-weight: 500; }
+
+    .chevron { color: var(--muted); font-size: 10px; flex-shrink: 0; transition: transform 150ms; }
+    .exec.open .chevron { transform: rotate(90deg); }
+
+    .exec-body { display: none; }
+    .exec.open .exec-body { display: block; }
+
+    /* ── KPI row ── */
+    .kpi-row {
+      display: flex;
+      gap: 1px;
+      background: var(--border2);
+      border-bottom: 1px solid var(--border2);
+      overflow-x: auto;
+    }
+
+    .kpi { flex: 1; background: var(--surface); padding: 6px 12px; text-align: center; min-width: 70px; }
+    .kpi-k { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .kpi-v { font-family: var(--mono); font-size: 14px; font-weight: 600; margin-top: 1px; }
+
+    /* ── Gantt ── */
+    .gantt-wrap { padding: 12px 14px; border-bottom: 1px solid var(--border2); overflow-x: auto; }
+    .gantt-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+    .gantt { display: grid; gap: 4px; min-width: 400px; }
+
+    .gantt-row { display: flex; align-items: center; height: 22px; }
+
+    .gantt-label {
+      width: 130px;
+      flex-shrink: 0;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding-right: 10px;
+    }
+
+    .gantt-track {
+      flex: 1;
+      position: relative;
+      height: 100%;
+      background: var(--bg);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .gantt-track::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(90deg, transparent 0%, transparent calc(25% - 1px), var(--border2) calc(25% - 1px), var(--border2) 25%);
+      pointer-events: none;
+    }
+
+    .gantt-bar {
+      position: absolute;
+      top: 3px;
+      height: calc(100% - 6px);
+      border-radius: 2px;
+      min-width: 3px;
+      display: flex;
+      align-items: center;
+      padding: 0 4px;
+      font-family: var(--mono);
+      font-size: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      z-index: 1;
+    }
+
+    .gantt-bar.completed { background: rgba(63,185,80,0.45);  color: #9be5a0; }
+    .gantt-bar.running   { background: rgba(88,166,255,0.40); color: #a5c8ff; }
+    .gantt-bar.failed    { background: rgba(248,81,73,0.40);  color: #ffaeab; }
+    .gantt-bar.skipped   { background: rgba(210,153,34,0.30); color: #e3b341; }
+    .gantt-bar.pending   { background: rgba(125,133,144,0.2); color: var(--muted); }
+
+    .gantt-marker { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--orange); opacity: 0.7; z-index: 2; }
+
+    /* ── Steps table ── */
+    .steps-wrap { padding: 10px 14px 12px; overflow-x: auto; }
+    .steps-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 400px; }
+
+    thead th {
+      font-size: 11px;
+      color: var(--muted);
+      text-align: left;
+      padding: 4px 8px;
+      border-bottom: 1px solid var(--border2);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+
+    tbody tr { border-bottom: 1px solid var(--border2); }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--surface2); }
+
+    td { padding: 5px 8px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+    td.name { color: var(--text); font-weight: 500; }
+    td.dur  { color: var(--text); }
+    td.err  { color: var(--red); font-size: 11px; }
+
+    /* ── Mobile ── */
+    @media (max-width: 600px) {
+      .layout { padding: 10px 12px; gap: 8px; }
+
+      .stats { flex-wrap: wrap; }
+      .stat  { flex: 1 1 30%; }
+
+      .run-form { flex-direction: column; align-items: stretch; }
+      .run-form label  { display: none; }
+      .run-form input  { width: 100%; }
+      .run-form textarea { width: 100%; }
+      .run-form .run-btn { width: 100%; height: 34px; }
+
+      .exec-meta .ts { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-brand">Nexora <span>Process Observer</span></div>
+  <div class="conn connecting" id="conn">
+    <div class="conn-dot"></div>
+    <span class="conn-label" id="conn-label">Connecting</span>
+  </div>
+</nav>
+
+<div class="viewport">
+  <div class="layout">
+
+    <div class="stats" id="stats"></div>
+
+    <form class="run-form" id="run-form">
+      <label>Goal</label>
+      <input id="goal" type="text" placeholder="process payment" required>
+      <label>Context</label>
+      <textarea id="ctx">{"requestId":"REQ-1","amount":450,"userId":"USR-99"}</textarea>
+      <button class="run-btn" id="run-btn" type="submit">Run</button>
+      <span class="flash" id="flash"></span>
+    </form>
+
+    <div class="exec-section">
+      <div class="section-header">
+        <div class="section-title" id="exec-count">Executions</div>
+      </div>
+      <div class="exec-scroll">
+        <div id="exec-list"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<footer>&copy; 2026 Nexora. All rights reserved.</footer>
+
+<script>
+const WS_PORT = {{WS_PORT}};
+
+const connEl    = document.getElementById('conn');
+const connLabel = document.getElementById('conn-label');
+const statsEl   = document.getElementById('stats');
+const execCount = document.getElementById('exec-count');
+const execList  = document.getElementById('exec-list');
+const runForm   = document.getElementById('run-form');
+const goalEl    = document.getElementById('goal');
+const ctxEl     = document.getElementById('ctx');
+const runBtn    = document.getElementById('run-btn');
+const flashEl   = document.getElementById('flash');
+
+let data = { activeExecutions: 0, executions: [], generatedAtMs: 0 };
+let openIds = new Set();
+let ws, reconnectDelay = 500;
+
+// ── Connection ─────────────────────────────────────────────────────────────────
+
+function setConn(state, label) {
+  connEl.className = 'conn ' + state;
+  connLabel.textContent = label;
+}
+
+function connect() {
+  setConn('connecting', 'Connecting');
+  ws = new WebSocket(`ws://${location.hostname}:${WS_PORT}/`);
+
+  ws.onopen = () => {
+    reconnectDelay = 500;
+    setConn('live', 'Live');
+    fetch('/api/process', { cache: 'no-store' })
+      .then(r => r.json()).then(d => { data = d; render(); }).catch(() => {});
+  };
+
+  ws.onmessage = e => {
+    try { data = JSON.parse(e.data); render(); } catch (_) {}
+  };
+
+  ws.onclose = () => {
+    setConn('error', 'Disconnected');
+    setTimeout(connect, Math.min(reconnectDelay, 16000));
+    reconnectDelay = Math.min(reconnectDelay * 2, 16000);
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+connect();
+
+// Live stats tick — keeps "Updated" counter ticking even when no WS messages
+setInterval(renderStats, 1000);
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function esc(v) {
+  return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function sc(s) {
+  s = (s||'').toLowerCase();
+  return ['running','completed','failed','skipped','pending'].includes(s) ? s : 'pending';
+}
+
+function fmtDur(ms) {
+  if (!ms && ms !== 0) return '—';
+  if (ms >= 60000) return (ms/60000).toFixed(1) + 'm';
+  if (ms >= 1000)  return (ms/1000).toFixed(2) + 's';
+  return ms + 'ms';
+}
+
+function fmtAgo(ts) {
+  if (!ts) return '—';
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 2)  return 'just now';
+  if (s < 60) return s + 's ago';
+  return Math.floor(s / 60) + 'm ago';
+}
+
+function fmtTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return d.getHours().toString().padStart(2,'0') + ':' +
+         d.getMinutes().toString().padStart(2,'0') + ':' +
+         d.getSeconds().toString().padStart(2,'0');
+}
+
+function flash(msg, ok) {
+  flashEl.textContent = msg;
+  flashEl.style.color = ok ? 'var(--green)' : (ok === false ? 'var(--red)' : 'var(--muted)');
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────────
+
+function render() {
+  renderStats();
+  renderExecs();
+}
+
+function renderStats() {
+  const execs = data.executions || [];
+  const items = [
+    ['Active',    data.activeExecutions ?? 0],
+    ['Running',   execs.filter(e => e.status === 'RUNNING').length],
+    ['Completed', execs.filter(e => e.status === 'COMPLETED').length],
+    ['Failed',    execs.filter(e => e.status === 'FAILED').length],
+    ['Tracked',   execs.length],
+    ['Updated',   fmtAgo(data.generatedAtMs)]
+  ];
+  statsEl.innerHTML = items.map(([l,v]) =>
+    `<div class="stat"><div class="stat-label">${l}</div><div class="stat-value">${esc(v)}</div></div>`
+  ).join('');
+}
+
+function renderExecs() {
+  const execs = data.executions || [];
+  execCount.textContent = `Executions (${execs.length})`;
+
+  if (!execs.length) {
+    execList.innerHTML = '<div class="empty">No executions yet. Submit a goal above to start.</div>';
+    return;
+  }
+
+  if (execs.length === 1) openIds.add(execs[0].executionId);
+
+  execList.className = 'exec-list';
+  execList.innerHTML = execs.map(exec => buildExec(exec, openIds.has(exec.executionId))).join('');
+
+  execList.querySelectorAll('.exec-header').forEach(hdr => {
+    hdr.addEventListener('click', () => {
+      const id = hdr.dataset.id;
+      if (openIds.has(id)) openIds.delete(id); else openIds.add(id);
+      render();
+    });
+  });
+}
+
+function buildExec(exec, open) {
+  const now   = Date.now();
+  const end   = exec.finishedAtMs > 0 ? exec.finishedAtMs : now;
+  const durMs = end - exec.startedAtMs;
+  const cls   = sc(exec.status);
+  const sid   = exec.executionId.length > 36 ? exec.executionId.slice(0, 36) + '…' : exec.executionId;
+
+  const header = `
+    <div class="exec-header" data-id="${esc(exec.executionId)}">
+      <span class="badge ${cls}">${esc(exec.status)}</span>
+      <span class="exec-id">${esc(sid)}</span>
+      <div class="exec-meta">
+        <span class="ts">${fmtTime(exec.startedAtMs)}${exec.finishedAtMs ? ' → ' + fmtTime(exec.finishedAtMs) : ''}</span>
+        <span class="dur">${fmtDur(durMs)}</span>
+        <span>${exec.totalSteps} steps</span>
+      </div>
+      <span class="chevron">▶</span>
+    </div>`;
+
+  if (!open) return `<div class="exec" id="exec-${esc(exec.executionId)}">${header}<div class="exec-body"></div></div>`;
+
+  const kpis = `
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-k">Duration</div><div class="kpi-v">${fmtDur(durMs)}</div></div>
+      <div class="kpi"><div class="kpi-k">Total</div><div class="kpi-v">${exec.totalSteps}</div></div>
+      <div class="kpi"><div class="kpi-k">Running</div><div class="kpi-v" style="color:var(--blue)">${exec.runningSteps}</div></div>
+      <div class="kpi"><div class="kpi-k">Completed</div><div class="kpi-v" style="color:var(--green)">${exec.completedSteps}</div></div>
+      <div class="kpi"><div class="kpi-k">Failed</div><div class="kpi-v" style="color:${exec.failedSteps>0?'var(--red)':'var(--text)'}">${exec.failedSteps}</div></div>
+      <div class="kpi"><div class="kpi-k">Skipped</div><div class="kpi-v">${exec.skippedSteps}</div></div>
+    </div>`;
+
+  const totalMs    = Math.max(durMs, 1);
+  const amendments = (exec.timeline||[]).filter(t => t.type === 'plan_amended');
+
+  const markers = amendments.map(a => {
+    const pct = Math.max(0, Math.min(100, (a.occurredAtMs - exec.startedAtMs) / totalMs * 100));
+    return `<div class="gantt-marker" style="left:calc(130px + (100% - 130px)*${(pct/100).toFixed(4)})"></div>`;
+  }).join('');
+
+  const bars = (exec.steps||[]).map(step => {
+    const s0    = step.startedAtMs > 0 ? step.startedAtMs - exec.startedAtMs : 0;
+    const s1    = step.finishedAtMs > 0 ? step.finishedAtMs - exec.startedAtMs
+                : step.elapsedMs > 0    ? s0 + step.elapsedMs
+                : step.status === 'RUNNING' ? now - exec.startedAtMs : s0 + 1;
+    const left  = Math.max(0, Math.min(100, s0 / totalMs * 100));
+    const width = Math.max(0.5, Math.min(100 - left, (s1 - s0) / totalMs * 100));
+    return `
+      <div class="gantt-row">
+        <div class="gantt-label" title="${esc(step.stepId)}">${esc(step.stepId)}</div>
+        <div class="gantt-track">
+          <div class="gantt-bar ${sc(step.status)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%">${step.elapsedMs > 0 ? fmtDur(step.elapsedMs) : ''}</div>
+        </div>
+      </div>`;
+  }).join('');
+
+  const gantt = exec.steps.length > 0 ? `
+    <div class="gantt-wrap">
+      <div class="gantt-title">Timeline</div>
+      <div class="gantt" style="position:relative">${markers}${bars}</div>
+    </div>` : '';
+
+  const rows = (exec.steps||[]).map(step => {
+    const errCell = (step.failureCode && step.status !== 'SKIPPED')
+      ? `<td class="err">${esc(step.failureCode)}${step.failureMessage ? ': ' + esc(step.failureMessage) : ''}</td>`
+      : '<td>—</td>';
+    return `<tr>
+      <td class="name">${esc(step.stepId)}</td>
+      <td>${esc(step.capabilityId)}</td>
+      <td><span class="badge ${sc(step.status)}">${esc(step.status)}</span></td>
+      <td class="dur">${step.elapsedMs ? fmtDur(step.elapsedMs) : '—'}</td>
+      <td>${fmtTime(step.startedAtMs)}</td>
+      ${errCell}
+    </tr>`;
+  }).join('');
+
+  const stepsTable = `
+    <div class="steps-wrap">
+      <div class="steps-title">Steps</div>
+      <table>
+        <thead><tr><th>Step</th><th>Capability</th><th>Status</th><th>Duration</th><th>Started</th><th>Error</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="6" style="color:var(--muted);padding:8px">No steps yet.</td></tr>'}</tbody>
+      </table>
+    </div>`;
+
+  return `<div class="exec open" id="exec-${esc(exec.executionId)}">${header}<div class="exec-body">${kpis}${gantt}${stepsTable}</div></div>`;
+}
+
+// ── Form ───────────────────────────────────────────────────────────────────────
+
+runForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  const goal = goalEl.value.trim();
+  if (!goal) { flash('Goal is required.', false); return; }
+  let ctx = {};
+  const raw = ctxEl.value.trim();
+  if (raw) {
+    try { ctx = JSON.parse(raw); }
+    catch (ex) { flash('Invalid JSON: ' + ex.message, false); return; }
+  }
+  runBtn.disabled = true;
+  flash('Submitting...', null);
+  try {
+    const r = await fetch('/api/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal, context: ctx })
+    });
+    const p = await r.json();
+    if (!r.ok || !p.accepted) throw new Error(p.error || 'HTTP ' + r.status);
+    flash('Accepted', true);
+  } catch (ex) {
+    flash(ex.message, false);
+  } finally {
+    runBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
