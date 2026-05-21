@@ -123,6 +123,22 @@ public final class DagStepScheduler {
                     }
                     return executeStep(step, ctx);
                 }, executor)
+                .handle((result, ex) -> {
+                    if (ex != null) {
+                        Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                        log.error("Step threw unexpectedly id={} capability={}",
+                                step.id(), step.capabilityId(), cause);
+                        eventBus.publish(new StepFailedEvent(
+                                ctx.getExecutionId(), step.id(), step.capabilityId(),
+                                ctx.getTraceContext().traceId(),
+                                "INTERNAL_ERROR", cause.getMessage(),
+                                java.time.Duration.ZERO, java.time.Instant.now()
+                        ));
+                        return new StepResult(step.id(),
+                                CapabilityResult.failure("INTERNAL_ERROR", cause.getMessage()));
+                    }
+                    return result;
+                })
                 .whenComplete((result, ex) -> {
                     if (result != null) {
                         completedResults.put(step.id(), result);
