@@ -5,6 +5,9 @@ import com.nexora.api.NexoraEngine;
 import com.nexora.api.observability.NexoraObservability;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import org.java_websocket.WebSocket;
+import org.java_websocket.handshake.ClientHandshake;
+import org.java_websocket.server.WebSocketServer;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
@@ -13,6 +16,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Callable;
@@ -49,10 +53,24 @@ public class ObserveCommand implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
+        int wsPort = port + 1;
+
         NexoraEngine engine = parent.engine();
         NexoraObservability observability = NexoraObservability.attach(engine, maxExecutions, maxEvents);
-        byte[] indexHtml = loadUiHtml();
+        byte[] indexHtml = loadUiHtml(wsPort);
 
+        // WebSocket broadcast server
+        SnapshotBroadcaster broadcaster = new SnapshotBroadcaster(host, wsPort);
+        observability.addSnapshotListener(snap -> {
+            try {
+                String json = JSON.writeValueAsString(snap);
+                broadcaster.broadcastSnapshot(json);
+            } catch (Exception ignored) {
+            }
+        });
+        broadcaster.start();
+
+        // HTTP server
         HttpServer server = HttpServer.create(new InetSocketAddress(host, port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
@@ -128,6 +146,7 @@ public class ObserveCommand implements Callable<Integer> {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
                 server.stop(0);
+                try { broadcaster.stop(500); } catch (InterruptedException ignored) {}
                 observability.close();
             } finally {
                 shutdownLatch.countDown();
@@ -137,9 +156,10 @@ public class ObserveCommand implements Callable<Integer> {
         server.start();
         System.out.println("Nexora Observability Server");
         System.out.println("===========================");
-        System.out.printf("UI:       http://%s:%d/%n", hostForDisplay(host), port);
-        System.out.printf("Metrics:  http://%s:%d/metrics%n", hostForDisplay(host), port);
-        System.out.printf("Process:  http://%s:%d/api/process%n", hostForDisplay(host), port);
+        System.out.printf("UI:        http://%s:%d/%n", hostForDisplay(host), port);
+        System.out.printf("Metrics:   http://%s:%d/metrics%n", hostForDisplay(host), port);
+        System.out.printf("Process:   http://%s:%d/api/process%n", hostForDisplay(host), port);
+        System.out.printf("WebSocket: ws://%s:%d/%n", hostForDisplay(host), wsPort);
         System.out.println();
         System.out.println("Press Ctrl+C to stop.");
 
@@ -171,13 +191,15 @@ public class ObserveCommand implements Callable<Integer> {
         }
     }
 
-    private static byte[] loadUiHtml() {
+    private static byte[] loadUiHtml(int wsPort) {
         String resource = "observe/index.html";
         try (InputStream is = ObserveCommand.class.getClassLoader().getResourceAsStream(resource)) {
             if (is == null) {
                 return "<h1>Missing observe/index.html resource</h1>".getBytes(StandardCharsets.UTF_8);
             }
-            return is.readAllBytes();
+            String html = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            html = html.replace("{{WS_PORT}}", String.valueOf(wsPort));
+            return html.getBytes(StandardCharsets.UTF_8);
         } catch (IOException e) {
             return ("<h1>Failed to load UI resource</h1><pre>" + e.getMessage() + "</pre>")
                     .getBytes(StandardCharsets.UTF_8);
@@ -185,4 +207,37 @@ public class ObserveCommand implements Callable<Integer> {
     }
 
     private record ExecuteRequest(String goal, Map<String, Object> context) {}
+
+    private static final class SnapshotBroadcaster extends WebSocketServer {
+
+        SnapshotBroadcaster(String host, int port) {
+            super(new InetSocketAddress("0.0.0.0".equals(host) ? "0.0.0.0" : host, port));
+            setReuseAddr(true);
+        }
+
+        @Override
+        public void onOpen(WebSocket conn, ClientHandshake handshake) {}
+
+        @Override
+        public void onClose(WebSocket conn, int code, String reason, boolean remote) {}
+
+        @Override
+        public void onMessage(WebSocket conn, String message) {}
+
+        @Override
+        public void onError(WebSocket conn, Exception ex) {}
+
+        @Override
+        public void onStart() {}
+
+        void broadcastSnapshot(String json) {
+            Collection<WebSocket> connections = getConnections();
+            if (connections.isEmpty()) return;
+            for (WebSocket ws : connections) {
+                if (ws.isOpen()) {
+                    ws.send(json);
+                }
+            }
+        }
+    }
 }
