@@ -52,7 +52,7 @@
         <surefire.version>3.2.5</surefire.version>
         <maven.shade.version>3.6.0</maven.shade.version>
         <maven.compiler.version>3.13.0</maven.compiler.version>
-        <slf4j.version>2.0.13</slf4j.version>
+        <slf4j.version>2.0.18</slf4j.version>
         <picocli.version>4.7.6</picocli.version>
         <jackson.version>2.17.2</jackson.version>
         <websocket.version>1.5.7</websocket.version>
