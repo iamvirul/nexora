@@ -334,7 +334,6 @@ public class PaymentPipelineApp {
                     cap("run_fraud_check", CapabilityContract.none(), req -> {
                         sleep(90);
                         double amount = ((Number) req.inputs().getOrDefault("amount", 0)).doubleValue();
-                        boolean forceFailure = Boolean.TRUE.equals(req.inputs().get("forceFailure"));
                         double risk = amount > 1000 ? 0.85 : 0.12;
                         System.out.printf("  [run_fraud_check] amount=%.2f risk=%.2f%n", amount, risk);
 
@@ -345,10 +344,11 @@ public class PaymentPipelineApp {
                                 Set.of("run_fraud_check"),
                                 null, null, null);
 
+                        // Note: Map.of() prohibits null values — do NOT include optional
+                        // flags here; they are read directly from the request context.
                         return CapabilityResult.success(
                                 Map.of("riskScore", risk,
-                                       "decision", risk > 0.5 ? "REVIEW" : "PASS",
-                                       "forceFailure", forceFailure),
+                                       "decision", risk > 0.5 ? "REVIEW" : "PASS"),
                                 List.of(new AddStepAmendment(flagStep))
                         );
                     }),
