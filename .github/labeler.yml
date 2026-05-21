@@ -1,20 +1,20 @@
 # Add 'module: core' label to any changes within 'nexora-core'
-module\: core:
+"module: core":
   - changed-files:
     - any-glob-to-any-file: 'nexora-core/**/*'
 
 # Add 'module: api' label to any changes within 'nexora-api'
-module\: api:
+"module: api":
   - changed-files:
     - any-glob-to-any-file: 'nexora-api/**/*'
 
 # Add 'module: runtime' label to any changes within 'nexora-runtime'
-module\: runtime:
+"module: runtime":
   - changed-files:
     - any-glob-to-any-file: 'nexora-runtime/**/*'
 
 # Add 'module: cli' label to any changes within 'nexora-cli'
-module\: cli:
+"module: cli":
   - changed-files:
     - any-glob-to-any-file: 'nexora-cli/**/*'
 
