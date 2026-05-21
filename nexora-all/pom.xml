@@ -25,11 +25,6 @@
         </dependency>
         <dependency>
             <groupId>com.nexora</groupId>
-            <artifactId>nexora-common</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.nexora</groupId>
             <artifactId>nexora-core</artifactId>
             <version>${project.version}</version>
         </dependency>
