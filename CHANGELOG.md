@@ -8,6 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+#### Distribution
+- `nexora-all` - new shaded bundle module that aggregates all library modules (`nexora-api`, `nexora-common`, `nexora-core`, `nexora-plugin-spi`, `nexora-registry`, `nexora-tracing`, `nexora-retry`, `nexora-event`, `nexora-executor`, `nexora-plugin-loader`, `nexora-planner`, `nexora-capabilities`, `nexora-saga`, `nexora-runtime`, `nexora-persistence`) into a single deployable artifact; external transitive dependencies are promoted via `promoteTransitiveDependencies`; individual modules continue to be published as separate Maven packages to GitHub Packages alongside the bundle
+
+#### Samples
+- `screen_sanctions` step added to the payment pipeline 8-step DAG between `check_velocity` and `run_fraud_check`; fails with `SANCTIONS_HIT` when `forceBlockedUser=true`
+- `screen_sanctions_compensate` capability added to the saga rollback chain
+- Scenario 4 of the payment pipeline demo updated from a validation failure to a sanctions blocklist hit (`forceBlockedUser=true`) demonstrating early failure with partial saga compensation across the full 8-step DAG
+
+### Fixed
+
+- **`CapabilityRequest` rejects null inputs** - optional context bindings (e.g. `forceFailure`, `forceVelocityFail`, `forceBlockedUser`) resolve to `null` when the caller omits them from the execution context; `Map.copyOf()` throws `NullPointerException` on null values, causing all steps that declared those bindings to fail with an internal error and leaving dependent steps permanently pending. Null-valued entries are now stripped from the resolved inputs map before the immutable copy is taken; capabilities should use `getOrDefault()` or `Boolean.TRUE.equals()` to test absent flags.
+- **`DagStepScheduler` leaves dependent steps permanently pending on unexpected exceptions** - when a step's `thenApplyAsync` threw an unchecked exception the future completed exceptionally, propagating through `CompletableFuture.allOf` and blocking all downstream steps indefinitely. A `.handle()` stage now intercepts any unchecked exception, publishes a `StepFailedEvent` with code `INTERNAL_ERROR`, and returns a failure `StepResult` so the pending counter decrements correctly and the execution terminates.
+- **`run_fraud_check` demo capability embedded a null-prone `forceFailure` flag in its `Map.of()` output** - removed the flag from the success output map; it was a control input, not a produced output, and placing it in `Map.of()` caused `NullPointerException` on every execution that did not pass `forceFailure=true`.
+
 ---
 
 ## [0.1.0] - 2026-05-21
