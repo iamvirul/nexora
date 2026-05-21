@@ -1,5 +1,11 @@
 # Nexora
 
+[![CI](https://github.com/iamvirul/nexora/actions/workflows/ci.yml/badge.svg)](https://github.com/iamvirul/nexora/actions/workflows/ci.yml)
+[![Trivy Scan](https://github.com/iamvirul/nexora/actions/workflows/trivy.yml/badge.svg)](https://github.com/iamvirul/nexora/actions/workflows/trivy.yml)
+[![Java](https://img.shields.io/badge/Java-21%2B-blue.svg)](https://www.oracle.com/java/)
+[![License](https://img.shields.io/github/license/iamvirul/nexora)](https://github.com/iamvirul/nexora/blob/main/LICENSE)
+[![GitHub last commit](https://img.shields.io/github/last-commit/iamvirul/nexora)](https://github.com/iamvirul/nexora/commits/main)
+
 Nexora is a Java execution engine that turns a high-level goal into a set of steps and runs them. You tell it what you want to happen, and it figures out the order, runs independent steps in parallel, and gives you back a result.
 
 <img width="1346" height="1162" alt="image" src="https://github.com/user-attachments/assets/96b64472-26a5-42cf-93dd-990062c9ba23" />
