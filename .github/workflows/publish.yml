@@ -36,11 +36,16 @@ jobs:
           server-password: GITHUB_TOKEN
 
       - name: Build & test all modules
-        run: mvn verify --no-transfer-progress
+        run: mvn install --no-transfer-progress
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ── Publish each module individually in dependency order ─────────────────
+      - name: Publish root POM
+        run: mvn deploy -N -DskipTests --no-transfer-progress
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Publish nexora-core
         run: mvn deploy -pl nexora-core -DskipTests --no-transfer-progress
         env:
