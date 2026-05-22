@@ -58,10 +58,16 @@ jobs:
 
       - name: Set next SNAPSHOT version in all POMs
         run: |
+          NEXT_VER="${{ steps.version.outputs.next }}"
           mvn versions:set \
-            -DnewVersion="${{ steps.version.outputs.next }}" \
+            -DnewVersion="$NEXT_VER" \
             -DgenerateBackupPoms=false \
             --no-transfer-progress
+            
+          # Update all internal module version properties to match
+          for prop in $(grep '<nexora-.*\.version>' pom.xml | sed -E 's/.*<(nexora-[^>]+)>.*/\1/'); do
+            mvn versions:set-property -Dproperty="$prop" -DnewVersion="$NEXT_VER" -DgenerateBackupPoms=false --no-transfer-progress
+          done
 
       - name: Update CHANGELOG [Unreleased] link
         run: |

@@ -56,10 +56,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish nexora-common
-        run: mvn deploy -pl nexora-common -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish nexora-registry
         run: mvn deploy -pl nexora-registry -DskipTests --no-transfer-progress
