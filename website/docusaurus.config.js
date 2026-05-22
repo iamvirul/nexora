@@ -5,7 +5,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 const config = {
   title: 'Nexora',
   tagline: 'Reactive, intent-based Java execution engine',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/logo.png',
 
   url: 'https://iamvirul.github.io',
   baseUrl: '/nexora/',
