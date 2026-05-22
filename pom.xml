@@ -46,19 +46,19 @@
 
     <properties>
         <java.version>21</java.version>
-        <junit.version>5.10.2</junit.version>
+        <junit.version>5.14.4</junit.version>
         <mockito.version>5.11.0</mockito.version>
-        <assertj.version>3.25.3</assertj.version>
-        <surefire.version>3.5.5</surefire.version>
+        <assertj.version>3.27.7</assertj.version>
+        <surefire.version>3.2.5</surefire.version>
         <maven.shade.version>3.6.0</maven.shade.version>
-        <maven.compiler.version>3.13.0</maven.compiler.version>
-        <slf4j.version>2.0.13</slf4j.version>
-        <picocli.version>4.7.6</picocli.version>
+        <maven.compiler.version>3.15.0</maven.compiler.version>
+        <slf4j.version>2.0.18</slf4j.version>
+        <picocli.version>4.7.7</picocli.version>
         <jackson.version>2.17.2</jackson.version>
-        <websocket.version>1.5.7</websocket.version>
-        <logback.version>1.5.6</logback.version>
+        <websocket.version>1.6.0</websocket.version>
+        <logback.version>1.5.32</logback.version>
         <prometheus.version>0.16.0</prometheus.version>
-        <h2.version>2.2.224</h2.version>
+        <h2.version>2.4.240</h2.version>
         
         <!-- Internal Module Versions -->
         <nexora-core.version>0.1.0</nexora-core.version>
