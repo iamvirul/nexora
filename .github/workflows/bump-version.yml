@@ -92,7 +92,7 @@ jobs:
               repo: context.repo.repo,
               title: `chore: bump version to ${{ steps.version.outputs.next }}`,
               head: '${{ steps.version.outputs.branch }}',
-              base: '${{ github.ref_name }}',
+              base: 'main',
               body: [
                 '## Post-release version bump',
                 '',
