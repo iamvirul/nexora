@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-cli</artifactId>
+    <description>Command-line interface and built-in observability HTTP server.</description>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>

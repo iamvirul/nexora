@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-retry</artifactId>
+    <description>Retry policies and exponential backoff implementation.</description>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>

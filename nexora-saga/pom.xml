@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-saga</artifactId>
+    <description>Orchestration-based saga compensation for partial execution failures.</description>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>

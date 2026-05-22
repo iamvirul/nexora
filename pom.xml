@@ -6,6 +6,7 @@
 
     <groupId>com.nexora</groupId>
     <artifactId>nexora</artifactId>
+    <description>Nexora is a reactive, intent-based Java execution engine.</description>
     <version>0.1.0</version>
     <packaging>pom</packaging>
     <modules>

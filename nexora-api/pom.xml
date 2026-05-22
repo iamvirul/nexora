@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-api</artifactId>
+    <description>Public API facade, engine builder, and observability integration.</description>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>

@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-planner</artifactId>
+    <description>Rule-based planner and step definition matching.</description>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>

@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-capabilities</artifactId>
+    <description>Built-in capabilities for the Nexora engine.</description>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>

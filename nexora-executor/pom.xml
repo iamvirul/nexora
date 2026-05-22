@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-executor</artifactId>
+    <description>DAG scheduler, capability invoker, and contract monitor.</description>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>

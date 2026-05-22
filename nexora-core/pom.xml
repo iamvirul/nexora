@@ -10,6 +10,7 @@
     </parent>
 
     <artifactId>nexora-core</artifactId>
+    <description>Core domain types and abstractions for the Nexora engine.</description>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>

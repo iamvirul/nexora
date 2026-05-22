@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-all</artifactId>
+    <description>Shaded bundle aggregating all Nexora library modules.</description>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>

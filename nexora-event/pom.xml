@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-event</artifactId>
+    <description>Event bus and execution lifecycle events.</description>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
