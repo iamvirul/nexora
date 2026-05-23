@@ -165,6 +165,33 @@ class DagStepSchedulerTest {
         }
     }
 
+    @Test
+    void suppressesPendingStepsWhenHalted() {
+        CapabilityRegistry registry = new DefaultCapabilityRegistry();
+        AtomicInteger finalCalls = new AtomicInteger();
+
+        registry.register(descriptor("first"), request -> CapabilityResult.success("first"));
+        registry.register(descriptor("final"), request -> {
+            finalCalls.incrementAndGet();
+            return CapabilityResult.success("final");
+        });
+
+        try (TestHarness harness = new TestHarness(registry)) {
+            Plan plan = new Plan(List.of(
+                    Step.of("first", "first"),
+                    new Step("final", "final", Map.of(), null, Set.of("first"), null, null, null)
+            ));
+
+            AtomicBoolean halted = new AtomicBoolean(true);
+            DagStepScheduler.ScheduleSession session = harness.scheduler.schedule(plan, context(), halted);
+            ExecutionResult result = session.future().join();
+
+            // When halted is true from the start, steps return TIMED_OUT immediately
+            assertEquals(ExecutionStatus.TIMED_OUT, result.status());
+            assertEquals(0, finalCalls.get());
+        }
+    }
+
     private static ExecutionContext context() {
         return new ExecutionContext(new Intent("goal", Map.of()), TraceContext.root());
     }

@@ -21,4 +21,8 @@ public record ExecutionResult(
     public static ExecutionResult failed(String executionId, List<StepResult> stepResults) {
         return new ExecutionResult(executionId, ExecutionStatus.FAILED, stepResults);
     }
+
+    public static ExecutionResult timedOut(String executionId, List<StepResult> stepResults) {
+        return new ExecutionResult(executionId, ExecutionStatus.TIMED_OUT, stepResults);
+    }
 }

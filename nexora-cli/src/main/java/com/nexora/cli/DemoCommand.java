@@ -8,6 +8,9 @@ import com.nexora.event.StepCompletedEvent;
 import com.nexora.event.StepFailedEvent;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
+import picocli.CommandLine.Spec;
+import picocli.CommandLine.Model.CommandSpec;
+import picocli.CommandLine.ParameterException;
 
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -19,9 +22,16 @@ import java.util.concurrent.Callable;
 )
 public class DemoCommand implements Callable<Integer> {
 
+    @Spec
+    private CommandSpec spec;
+
     @Option(names = {"--order-id"}, defaultValue = "ORD-42",
             description = "Order ID to use in the demo. Default: ${DEFAULT-VALUE}")
     private String orderId;
+
+    @Option(names = {"--timeout"},
+            description = "Optional plan-level deadline timeout (in milliseconds) to trigger execution timeout")
+    private Long timeoutMs;
 
     @Override
     public Integer call() throws Exception {
@@ -33,6 +43,7 @@ public class DemoCommand implements Callable<Integer> {
         System.out.println("  1. Pluggable planner SPI  - rule-based planner wired via CompositePlanner");
         System.out.println("  2. Reactive plan amendment - validate_order injects audit_log at runtime");
         System.out.println("  3. Capability contracts    - charge_card declares p99 SLA + fallback");
+        System.out.println("  4. Plan-level deadline     - cancels execution when deadline is exceeded");
         System.out.println();
 
         System.out.println("Initial DAG (from planner):");
@@ -56,9 +67,17 @@ public class DemoCommand implements Callable<Integer> {
                 System.out.printf("  ~ plan amended: %-10s -> %s%n", e.amendmentType(), e.targetStepId()));
 
         System.out.println("Execution:");
-        ExecutionResult result = engine
-                .execute("process order payment notification", Map.of("orderId", orderId))
-                .get();
+        java.util.concurrent.CompletableFuture<ExecutionResult> future;
+        if (timeoutMs != null) {
+            if (timeoutMs <= 0) {
+                throw new ParameterException(spec.commandLine(),
+                        "Timeout specified via --timeout (timeoutMs=" + timeoutMs + ") must be greater than zero.");
+            }
+            future = engine.execute("process order payment notification", Map.of("orderId", orderId), java.time.Duration.ofMillis(timeoutMs));
+        } else {
+            future = engine.execute("process order payment notification", Map.of("orderId", orderId));
+        }
+        ExecutionResult result = future.get();
 
         System.out.println();
         System.out.printf("Result:   %s%n", result.status());

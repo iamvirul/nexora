@@ -35,18 +35,27 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 /**
  * Schedules plan steps as a DAG, executing independent steps in parallel.
  *
- * Supports reactive plan amendment: when a step's CapabilityResult carries
+ * <p>Supports reactive plan amendment: when a step's CapabilityResult carries
  * PlanAmendment entries, the scheduler applies them before dependent steps start:
- *   - AddStepAmendment  — injects a new step into the live DAG
- *   - SkipStepAmendment — marks a pending step as skipped
- *   - ModifyInputAmendment — overrides an input for a pending step
+ * <ul>
+ *   <li>AddStepAmendment  — injects a new step into the live DAG</li>
+ *   <li>SkipStepAmendment — marks a pending step as skipped</li>
+ *   <li>ModifyInputAmendment — overrides an input for a pending step</li>
+ * </ul>
  *
- * Amendment processing is atomic with respect to the parent step's completion
+ * <p>Supports plan-level deadline cancellation via the {@code halted} flag passed
+ * to {@link #schedule(Plan, ExecutionContext, AtomicBoolean)}.  When the flag is
+ * set to {@code true} by an external watchdog, steps that have not yet started are
+ * suppressed and the returned future is completed with {@link ExecutionStatus#TIMED_OUT}.
+ *
+ * <p>Amendment processing is atomic with respect to the parent step's completion
  * counter, so there is no window in which a newly added step can be missed by
  * the final result collector.
  */
@@ -73,18 +82,57 @@ public final class DagStepScheduler {
         this.capabilityRegistry = Objects.requireNonNull(capabilityRegistry);
     }
 
+    /**
+     * Holds the result of a schedule invocation.
+     *
+     * <p>{@code future} resolves when all steps have finished or the {@code halted}
+     * flag has been set and the result has been collected.
+     *
+     * <p>{@code partialResults} is a thread-safe snapshot supplier that the caller
+     * (e.g. an external deadline watchdog in {@code ExecutionEngine}) can invoke at
+     * any time to obtain the results of steps that have already completed. This is
+     * used to populate the {@link ExecutionResult} when the deadline fires before
+     * all steps finish.
+     */
+    public record ScheduleSession(
+            CompletableFuture<ExecutionResult> future,
+            Supplier<List<StepResult>> partialResults
+    ) {}
+
+    /**
+     * Backward-compatible overload — no cancellation signal.
+     * Equivalent to {@code schedule(plan, ctx, new AtomicBoolean(false))}.
+     */
     public CompletableFuture<ExecutionResult> schedule(Plan plan, ExecutionContext ctx) {
+        return schedule(plan, ctx, new AtomicBoolean(false)).future();
+    }
+
+    /**
+     * Schedules all steps in the plan as a DAG with optional cancellation support.
+     *
+     * @param plan   the execution plan (DAG of steps)
+     * @param ctx    the live execution context
+     * @param halted external cancellation signal; when set to {@code true} the watchdog
+     *               has fired. Steps not yet started will be suppressed and the returned
+     *               future will be completed with {@link ExecutionStatus#TIMED_OUT} status.
+     * @return a {@link ScheduleSession} containing the future and a partial-results snapshot
+     */
+    public ScheduleSession schedule(Plan plan, ExecutionContext ctx, AtomicBoolean halted) {
         validateNoCycles(plan);
 
+        ConcurrentHashMap<String, StepResult> completedResults = new ConcurrentHashMap<>();
+        Supplier<List<StepResult>> partialSnapshot = () -> List.copyOf(completedResults.values());
+
         if (plan.getSteps().isEmpty()) {
-            return CompletableFuture.completedFuture(
-                    new ExecutionResult(ctx.getExecutionId(), ExecutionStatus.COMPLETED, List.of())
+            return new ScheduleSession(
+                    CompletableFuture.completedFuture(
+                            new ExecutionResult(ctx.getExecutionId(), ExecutionStatus.COMPLETED, List.of())),
+                    partialSnapshot
             );
         }
 
         // Mutable futures map — grows as AddStepAmendments inject new steps
         ConcurrentHashMap<String, CompletableFuture<StepResult>> futures = new ConcurrentHashMap<>();
-        ConcurrentHashMap<String, StepResult> completedResults = new ConcurrentHashMap<>();
         Set<String> skippedSteps = ConcurrentHashMap.newKeySet();
 
         CompletableFuture<ExecutionResult> done = new CompletableFuture<>();
@@ -92,15 +140,20 @@ public final class DagStepScheduler {
 
         Runnable onStepDone = () -> {
             if (pending.decrementAndGet() == 0) {
-                done.complete(collectResults(ctx.getExecutionId(), completedResults));
+                // If the watchdog already completed `done`, this call is silently ignored
+                // (CompletableFuture.complete is idempotent — first caller wins).
+                ExecutionResult result = halted.get()
+                        ? ExecutionResult.timedOut(ctx.getExecutionId(), partialSnapshot.get())
+                        : collectResults(ctx.getExecutionId(), completedResults);
+                done.complete(result);
             }
         };
 
         for (Step step : plan.getSteps()) {
-            submitStep(step, futures, completedResults, skippedSteps, pending, onStepDone, ctx);
+            submitStep(step, futures, completedResults, skippedSteps, pending, onStepDone, ctx, halted);
         }
 
-        return done;
+        return new ScheduleSession(done, partialSnapshot);
     }
 
     private void submitStep(
@@ -110,12 +163,19 @@ public final class DagStepScheduler {
             Set<String> skippedSteps,
             AtomicInteger pending,
             Runnable onStepDone,
-            ExecutionContext ctx) {
+            ExecutionContext ctx,
+            AtomicBoolean halted) {
 
         CompletableFuture<Void> prerequisite = buildPrerequisite(step, futures);
 
         CompletableFuture<StepResult> stepFuture = prerequisite
                 .thenApplyAsync(ignored -> {
+                    // Guard: do not start step if execution has been halted by the deadline watchdog
+                    if (halted.get()) {
+                        log.debug("Step suppressed by deadline halt id={}", step.id());
+                        return new StepResult(step.id(),
+                                CapabilityResult.failure("TIMED_OUT", "Execution deadline expired before step started"));
+                    }
                     if (skippedSteps.contains(step.id())) {
                         log.info("Step skipped by amendment id={}", step.id());
                         return new StepResult(step.id(),
@@ -144,7 +204,7 @@ public final class DagStepScheduler {
                         completedResults.put(step.id(), result);
                         // Process amendments before decrementing — keeps pending count consistent
                         applyAmendments(result.capabilityResult().amendments(),
-                                futures, completedResults, skippedSteps, pending, onStepDone, ctx);
+                                futures, completedResults, skippedSteps, pending, onStepDone, ctx, halted);
                     }
                     onStepDone.run();
                 });
@@ -159,7 +219,8 @@ public final class DagStepScheduler {
             Set<String> skippedSteps,
             AtomicInteger pending,
             Runnable onStepDone,
-            ExecutionContext ctx) {
+            ExecutionContext ctx,
+            AtomicBoolean halted) {
 
         for (PlanAmendment amendment : amendments) {
             switch (amendment) {
@@ -173,7 +234,7 @@ public final class DagStepScheduler {
                     eventBus.publish(new PlanAmendedEvent(
                             ctx.getExecutionId(), ctx.getTraceContext().traceId(),
                             "ADD_STEP", add.step().id(), Instant.now()));
-                    submitStep(add.step(), futures, completedResults, skippedSteps, pending, onStepDone, ctx);
+                    submitStep(add.step(), futures, completedResults, skippedSteps, pending, onStepDone, ctx, halted);
                 }
                 case SkipStepAmendment skip -> {
                     log.info("Plan amendment: skipping step id={}", skip.stepId());

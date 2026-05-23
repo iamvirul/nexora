@@ -331,6 +331,34 @@ NexoraEngine.builder()
 
 Backoff includes ±25% jitter to avoid thundering herd on simultaneous failures.
 
+## Execution Deadline (Unreleased version)
+
+Nexora allows you to set a plan-level wall-clock execution deadline. If the execution exceeds this duration, the entire plan is cancelled: running steps continue, but not-yet-started steps are suppressed, the terminal execution status is set to `TIMED_OUT`, and saga compensation is triggered for all successfully completed steps.
+
+You can configure a global engine-wide default deadline using the builder:
+
+```java
+NexoraEngine engine = NexoraEngine.builder()
+    .withDefaultPlanDeadline(Duration.ofSeconds(5))
+    .build();
+```
+
+You can also override the deadline per execution request:
+
+```java
+// Sets a 2-second deadline specifically for this execution
+CompletableFuture<ExecutionResult> future = engine.execute(
+    "process order payment notification", 
+    Map.of("orderId", "ORD-42"), 
+    Duration.ofSeconds(2)
+);
+```
+
+When a plan times out:
+1. The execution status resolves to `TIMED_OUT`.
+2. A `PlanTimedOutEvent` is published.
+3. Saga compensation runs for completed steps if saga is enabled.
+
 ## Observability UI + Prometheus + Grafana
 
 Start Nexora's built-in observability server:

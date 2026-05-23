@@ -9,6 +9,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Plan-level execution deadline / timeout** - wall-clock deadline that cancels an entire plan execution when the limit is exceeded, returning `TIMED_OUT` execution status and triggering full saga compensation; overridable per `Intent` or globally via `NexoraEngine.Builder.withDefaultPlanDeadline()` ([#35](https://github.com/iamvirul/nexora/issues/35))
+
+---
+
+## [0.1.0] - 2026-05-22
+
+### Added
 
 #### Core Engine
 - Initial implementation of the **Intent-Based Execution Engine (IBEE)**
@@ -75,4 +82,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-[Unreleased]: https://github.com/iamvirul/nexora/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/iamvirul/nexora/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/iamvirul/nexora/releases/tag/v0.1.0

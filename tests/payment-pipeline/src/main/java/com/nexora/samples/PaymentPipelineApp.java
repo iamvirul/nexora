@@ -157,12 +157,13 @@ public class PaymentPipelineApp {
         System.out.println("  2  High risk         amount=1500, fraud review amendment");
         System.out.println("  3  Gateway failure   forceFailure=true, saga compensates");
         System.out.println("  4  Sanctions hit     forceBlockedUser=true, early failure + partial compensation");
+        System.out.println("  5  Execution timeout deadline=100ms, watchdog cancels execution + saga compensates");
         System.out.println();
         System.out.println("Firing test scenarios...");
         System.out.println();
 
         // Scenario 1 — happy path, low risk
-        System.out.println("  [1/4] Happy path — amount=450, low risk");
+        System.out.println("  [1/5] Happy path — amount=450, low risk");
         engine.execute("process payment",
                 Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
                        "amount", 450.00,
@@ -170,7 +171,7 @@ public class PaymentPipelineApp {
         sleep(200);
 
         // Scenario 2 — high risk, triggers flag_for_review amendment
-        System.out.println("  [2/4] High risk — amount=1500, fraud review path");
+        System.out.println("  [2/5] High risk — amount=1500, fraud review path");
         engine.execute("process payment",
                 Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
                        "amount", 1500.00,
@@ -178,7 +179,7 @@ public class PaymentPipelineApp {
         sleep(200);
 
         // Scenario 3 — payment gateway rejects, saga compensates completed steps
-        System.out.println("  [3/4] Gateway failure — process_payment fails, saga compensates");
+        System.out.println("  [3/5] Gateway failure — process_payment fails, saga compensates");
         engine.execute("process payment",
                 Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
                        "amount", 250.00,
@@ -187,12 +188,21 @@ public class PaymentPipelineApp {
         sleep(200);
 
         // Scenario 4 — sanctions blocklist hit, screen_sanctions fails early, partial compensation
-        System.out.println("  [4/4] Sanctions hit — forceBlockedUser=true, early failure + partial compensation");
+        System.out.println("  [4/5] Sanctions hit — forceBlockedUser=true, early failure + partial compensation");
         engine.execute("process payment",
                 Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
                        "amount", 200.00,
                        "userId", "USR-BLOCKED",
                        "forceBlockedUser", true));
+        sleep(200);
+
+        // Scenario 5 — execution timeout, cancels plan execution and triggers compensation
+        System.out.println("  [5/5] Execution timeout — 100ms deadline, watchdog cancels execution and triggers saga compensation");
+        engine.execute("process payment",
+                Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
+                       "amount", 300.00,
+                       "userId", "USR-TIMEOUT"),
+                Duration.ofMillis(100));
 
         System.out.println();
         System.out.println("Ready. Open http://localhost:9464/ in your browser.");

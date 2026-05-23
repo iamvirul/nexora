@@ -43,6 +43,7 @@
         <module>nexora-persistence</module>
         <module>nexora-cli</module>
         <module>nexora-all</module>
+        <module>tests/payment-pipeline</module>
     </modules>
 
     <properties>

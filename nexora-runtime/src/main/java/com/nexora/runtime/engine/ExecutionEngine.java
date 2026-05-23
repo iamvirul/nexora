@@ -3,26 +3,27 @@ package com.nexora.runtime.engine;
 import com.nexora.core.context.ExecutionContext;
 import com.nexora.core.context.TraceContext;
 import com.nexora.core.execution.ExecutionResult;
+import com.nexora.core.execution.ExecutionStatus;
 import com.nexora.core.intent.Intent;
 import com.nexora.core.plan.Plan;
 import com.nexora.event.ExecutionEventBus;
 import com.nexora.event.PlanCompletedEvent;
 import com.nexora.event.PlanFailedEvent;
 import com.nexora.event.PlanStartedEvent;
+import com.nexora.event.PlanTimedOutEvent;
 import com.nexora.event.StepCompletedEvent;
 import com.nexora.event.StepFailedEvent;
 import com.nexora.event.StepStartedEvent;
 import com.nexora.executor.DagStepScheduler;
 import com.nexora.persistence.ExecutionRecord;
-import com.nexora.saga.SagaOrchestrator;
 import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.ExecutionStore;
 import com.nexora.persistence.StepRecord;
-import com.nexora.persistence.StepState;
 import com.nexora.planner.engine.DefaultPlanningContext;
+import com.nexora.saga.SagaOrchestrator;
+import com.nexora.spi.CapabilityRegistry;
 import com.nexora.spi.Planner;
 import com.nexora.spi.PlanningContext;
-import com.nexora.spi.CapabilityRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,6 +32,9 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ExecutionEngine {
 
@@ -40,15 +44,17 @@ public final class ExecutionEngine {
     private final CapabilityRegistry capabilityRegistry;
     private final DagStepScheduler scheduler;
     private final ExecutionEventBus eventBus;
-    private final ExecutionStore store;           // null = persistence disabled
+    private final ExecutionStore store;              // null = persistence disabled
     private final SagaOrchestrator sagaOrchestrator; // null = saga disabled
+    private final Duration defaultPlanDeadline;      // null = no engine-wide deadline
+    private final Executor executor;
 
     public ExecutionEngine(
             Planner planner,
             CapabilityRegistry capabilityRegistry,
             DagStepScheduler scheduler,
             ExecutionEventBus eventBus) {
-        this(planner, capabilityRegistry, scheduler, eventBus, null, null);
+        this(planner, capabilityRegistry, scheduler, eventBus, null, null, null, null);
     }
 
     public ExecutionEngine(
@@ -57,7 +63,7 @@ public final class ExecutionEngine {
             DagStepScheduler scheduler,
             ExecutionEventBus eventBus,
             ExecutionStore store) {
-        this(planner, capabilityRegistry, scheduler, eventBus, store, null);
+        this(planner, capabilityRegistry, scheduler, eventBus, store, null, null, null);
     }
 
     public ExecutionEngine(
@@ -67,12 +73,32 @@ public final class ExecutionEngine {
             ExecutionEventBus eventBus,
             ExecutionStore store,
             SagaOrchestrator sagaOrchestrator) {
+        this(planner, capabilityRegistry, scheduler, eventBus, store, sagaOrchestrator, null, null);
+    }
+
+    /**
+     * Full constructor — includes plan deadline and the executor used to schedule the watchdog.
+     *
+     * @param defaultPlanDeadline engine-wide fallback deadline; {@code null} means no default
+     * @param executor            the executor to schedule the delayed watchdog task on
+     */
+    public ExecutionEngine(
+            Planner planner,
+            CapabilityRegistry capabilityRegistry,
+            DagStepScheduler scheduler,
+            ExecutionEventBus eventBus,
+            ExecutionStore store,
+            SagaOrchestrator sagaOrchestrator,
+            Duration defaultPlanDeadline,
+            Executor executor) {
         this.planner = Objects.requireNonNull(planner);
         this.capabilityRegistry = Objects.requireNonNull(capabilityRegistry);
         this.scheduler = Objects.requireNonNull(scheduler);
         this.eventBus = Objects.requireNonNull(eventBus);
         this.store = store;
         this.sagaOrchestrator = sagaOrchestrator;
+        this.defaultPlanDeadline = defaultPlanDeadline;
+        this.executor = executor;
         if (store != null) {
             wireStoreSubscriptions();
         }
@@ -125,6 +151,19 @@ public final class ExecutionEngine {
         Plan plan = planner.plan(intent, planningContext);
         Instant planStart = Instant.now();
 
+        // Per-intent deadline takes priority; fall back to engine-wide default.
+        Duration effectiveDeadline = intent.getDeadline() != null
+                ? intent.getDeadline()
+                : defaultPlanDeadline;
+
+        if (effectiveDeadline != null) {
+            log.info("Execution deadline set executionId={} deadline={}",
+                    ctx.getExecutionId(), effectiveDeadline);
+        }
+
+        // Shared flag between the watchdog (writer) and the scheduler (reader).
+        AtomicBoolean halted = new AtomicBoolean(false);
+
         log.info("Starting execution executionId={} traceId={} goal={}",
                 ctx.getExecutionId(), traceContext.traceId(), intent.getGoal());
 
@@ -140,46 +179,89 @@ public final class ExecutionEngine {
 
         eventBus.publish(new PlanStartedEvent(ctx.getExecutionId(), traceContext.traceId(), planStart));
 
-        return scheduler.schedule(plan, ctx)
-                .whenComplete((result, ex) -> {
-                    Instant now = Instant.now();
-                    Duration elapsed = Duration.between(planStart, now);
-                    if (ex != null) {
-                        log.error("Execution threw unexpectedly executionId={}", ctx.getExecutionId(), ex);
-                        persistExecutionState(ctx.getExecutionId(), ExecutionState.FAILED, now);
-                        eventBus.publish(new PlanFailedEvent(
-                                ctx.getExecutionId(), traceContext.traceId(),
-                                null, "UNEXPECTED_ERROR", elapsed, now
-                        ));
-                    } else if (result.status().name().equals("FAILED")) {
-                        String failedStep = result.stepResults().stream()
-                                .filter(sr -> !sr.succeeded())
-                                .map(sr -> sr.stepId())
-                                .findFirst().orElse(null);
-                        persistExecutionState(ctx.getExecutionId(), ExecutionState.FAILED, now);
-                        eventBus.publish(new PlanFailedEvent(
-                                ctx.getExecutionId(), traceContext.traceId(),
-                                failedStep, "STEP_FAILED", elapsed, now
-                        ));
-                        log.warn("Execution failed executionId={} failedStep={}", ctx.getExecutionId(), failedStep);
-                        if (sagaOrchestrator != null) {
-                            persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPENSATING, now);
-                            sagaOrchestrator.compensate(plan, result, ctx)
-                                    .whenComplete((v, err) -> {
-                                        if (err != null) {
-                                            log.error("Saga compensation threw executionId={}", ctx.getExecutionId(), err);
-                                        }
-                                        persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPENSATED, Instant.now());
-                                    });
-                        }
-                    } else {
-                        persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPLETED, now);
-                        eventBus.publish(new PlanCompletedEvent(
-                                ctx.getExecutionId(), traceContext.traceId(), elapsed, now
-                        ));
-                        log.info("Execution completed executionId={} elapsed={}ms",
-                                ctx.getExecutionId(), elapsed.toMillis());
-                    }
-                });
+        DagStepScheduler.ScheduleSession session = scheduler.schedule(plan, ctx, halted);
+        CompletableFuture<ExecutionResult> scheduledFuture = session.future();
+
+        if (effectiveDeadline != null && executor != null) {
+            // Run the watchdog on the existing executor after the deadline duration.
+            // CompletableFuture.delayedExecutor requires no dedicated ScheduledExecutorService.
+            Executor watchdogExecutor = CompletableFuture.delayedExecutor(
+                    effectiveDeadline.toMillis(), TimeUnit.MILLISECONDS, executor);
+
+            Duration capturedDeadline = effectiveDeadline; // effectively final for lambda
+            CompletableFuture.runAsync(() -> {
+                // Short-circuit: if the execution already finished naturally, nothing to do.
+                if (scheduledFuture.isDone()) return;
+
+                log.warn("Plan deadline expired executionId={} deadline={}",
+                        ctx.getExecutionId(), capturedDeadline);
+
+                halted.set(true);
+            }, watchdogExecutor);
+        }
+
+        return scheduledFuture.whenComplete((result, ex) -> {
+            Instant now = Instant.now();
+            Duration elapsed = Duration.between(planStart, now);
+
+            if (ex != null) {
+                log.error("Execution threw unexpectedly executionId={}", ctx.getExecutionId(), ex);
+                persistExecutionState(ctx.getExecutionId(), ExecutionState.FAILED, now);
+                eventBus.publish(new PlanFailedEvent(
+                        ctx.getExecutionId(), traceContext.traceId(),
+                        null, "UNEXPECTED_ERROR", elapsed, now
+                ));
+
+            } else if (result.status() == ExecutionStatus.TIMED_OUT) {
+                persistExecutionState(ctx.getExecutionId(), ExecutionState.TIMED_OUT, now);
+                eventBus.publish(new PlanTimedOutEvent(
+                        ctx.getExecutionId(), traceContext.traceId(),
+                        effectiveDeadline, elapsed, now));
+                log.warn("Execution timed out executionId={} elapsed={}ms deadline={}",
+                        ctx.getExecutionId(), elapsed.toMillis(), effectiveDeadline);
+
+                if (sagaOrchestrator != null) {
+                    persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPENSATING, now);
+                    sagaOrchestrator.compensate(plan, result, ctx)
+                            .whenComplete((v, err) -> {
+                                if (err != null) {
+                                    log.error("Saga compensation threw on timeout executionId={}",
+                                            ctx.getExecutionId(), err);
+                                }
+                                persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPENSATED, Instant.now());
+                            });
+                }
+
+            } else if (result.status() == ExecutionStatus.FAILED) {
+                String failedStep = result.stepResults().stream()
+                        .filter(sr -> !sr.succeeded())
+                        .map(sr -> sr.stepId())
+                        .findFirst().orElse(null);
+                persistExecutionState(ctx.getExecutionId(), ExecutionState.FAILED, now);
+                eventBus.publish(new PlanFailedEvent(
+                        ctx.getExecutionId(), traceContext.traceId(),
+                        failedStep, "STEP_FAILED", elapsed, now
+                ));
+                log.warn("Execution failed executionId={} failedStep={}", ctx.getExecutionId(), failedStep);
+                if (sagaOrchestrator != null) {
+                    persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPENSATING, now);
+                    sagaOrchestrator.compensate(plan, result, ctx)
+                            .whenComplete((v, err) -> {
+                                if (err != null) {
+                                    log.error("Saga compensation threw executionId={}", ctx.getExecutionId(), err);
+                                }
+                                persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPENSATED, Instant.now());
+                            });
+                }
+
+            } else {
+                persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPLETED, now);
+                eventBus.publish(new PlanCompletedEvent(
+                        ctx.getExecutionId(), traceContext.traceId(), elapsed, now
+                ));
+                log.info("Execution completed executionId={} elapsed={}ms",
+                        ctx.getExecutionId(), elapsed.toMillis());
+            }
+        });
     }
 }

@@ -90,6 +90,16 @@ public final class NexoraEngine {
         return engine.execute(new Intent(goal, context));
     }
 
+    /**
+     * Convenience: execute with an inline per-call deadline, overriding any engine-wide default.
+     */
+    public CompletableFuture<ExecutionResult> execute(
+            String goal,
+            Map<String, Object> context,
+            Duration deadline) {
+        return engine.execute(new Intent(goal, context, deadline));
+    }
+
     public <E extends ExecutionEvent> Subscription subscribe(Class<E> eventType, EventHandler<E> handler) {
         return eventBus.subscribe(eventType, handler);
     }
@@ -127,6 +137,7 @@ public final class NexoraEngine {
         private Tracer tracer = NoopTracer.INSTANCE;
         private RetryPolicy defaultRetryPolicy = RetryPolicy.noRetry();
         private Duration defaultTimeout = null;
+        private Duration defaultPlanDeadline = null;
         private ExecutionStore executionStore = null;
         private boolean sagaEnabled = false;
 
@@ -152,6 +163,19 @@ public final class NexoraEngine {
 
         public Builder withDefaultTimeout(Duration timeout) {
             this.defaultTimeout = timeout;
+            return this;
+        }
+
+        /**
+         * Sets an engine-wide fallback deadline for all plan executions.
+         * A per-intent deadline (set via {@link Intent#Intent(String, java.util.Map, Duration)})
+         * always overrides this value.
+         */
+        public Builder withDefaultPlanDeadline(Duration deadline) {
+            if (deadline == null || deadline.compareTo(Duration.ZERO) <= 0) {
+                throw new IllegalArgumentException("defaultPlanDeadline must be a positive duration, got: " + deadline);
+            }
+            this.defaultPlanDeadline = deadline;
             return this;
         }
 
@@ -239,7 +263,8 @@ public final class NexoraEngine {
 
             // Engine
             ExecutionEngine engine = new ExecutionEngine(
-                    compositePlanner, capabilityRegistry, scheduler, eventBus, executionStore, sagaOrchestrator);
+                    compositePlanner, capabilityRegistry, scheduler, eventBus,
+                    executionStore, sagaOrchestrator, defaultPlanDeadline, executor);
 
             return new NexoraEngine(engine, pluginManager, eventBus, capabilityRegistry, contractMonitor);
         }

@@ -21,6 +21,7 @@ const sidebars = {
         'concepts/pluggable-planner',
         'concepts/reactive-amendments',
         'concepts/capability-contracts',
+        'concepts/execution-deadline',
       ],
     },
     {
