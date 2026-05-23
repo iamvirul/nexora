@@ -61,7 +61,7 @@ java -jar nexora-cli/target/nexora.jar demo --timeout 50
 
 This will run the demo with a 50ms plan-level deadline. Since the demo steps together take longer than 50ms, you will see the watchdog trigger:
 
-```
+```text
 21:56:59.468 [virtual-40] WARN  c.n.runtime.engine.ExecutionEngine - Plan deadline expired executionId=eedbe380-0205-43f6-94b6-ddf0be193ac0 deadline=PT0.05S
 21:56:59.470 [virtual-40] WARN  c.n.runtime.engine.ExecutionEngine - Execution timed out executionId=eedbe380-0205-43f6-94b6-ddf0be193ac0 elapsed=62ms deadline=PT0.05S
 
