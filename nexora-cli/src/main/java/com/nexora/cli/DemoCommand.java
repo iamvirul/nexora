@@ -8,6 +8,9 @@ import com.nexora.event.StepCompletedEvent;
 import com.nexora.event.StepFailedEvent;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
+import picocli.CommandLine.Spec;
+import picocli.CommandLine.Model.CommandSpec;
+import picocli.CommandLine.ParameterException;
 
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -18,6 +21,9 @@ import java.util.concurrent.Callable;
         mixinStandardHelpOptions = true
 )
 public class DemoCommand implements Callable<Integer> {
+
+    @Spec
+    private CommandSpec spec;
 
     @Option(names = {"--order-id"}, defaultValue = "ORD-42",
             description = "Order ID to use in the demo. Default: ${DEFAULT-VALUE}")
@@ -63,6 +69,10 @@ public class DemoCommand implements Callable<Integer> {
         System.out.println("Execution:");
         java.util.concurrent.CompletableFuture<ExecutionResult> future;
         if (timeoutMs != null) {
+            if (timeoutMs <= 0) {
+                throw new ParameterException(spec.commandLine(),
+                        "Timeout specified via --timeout (timeoutMs=" + timeoutMs + ") must be greater than zero.");
+            }
             future = engine.execute("process order payment notification", Map.of("orderId", orderId), java.time.Duration.ofMillis(timeoutMs));
         } else {
             future = engine.execute("process order payment notification", Map.of("orderId", orderId));
