@@ -23,6 +23,10 @@ public class DemoCommand implements Callable<Integer> {
             description = "Order ID to use in the demo. Default: ${DEFAULT-VALUE}")
     private String orderId;
 
+    @Option(names = {"--timeout"},
+            description = "Optional plan-level deadline timeout (in milliseconds) to trigger execution timeout")
+    private Long timeoutMs;
+
     @Override
     public Integer call() throws Exception {
         System.out.println("Nexora Feature Demo");
@@ -33,6 +37,7 @@ public class DemoCommand implements Callable<Integer> {
         System.out.println("  1. Pluggable planner SPI  - rule-based planner wired via CompositePlanner");
         System.out.println("  2. Reactive plan amendment - validate_order injects audit_log at runtime");
         System.out.println("  3. Capability contracts    - charge_card declares p99 SLA + fallback");
+        System.out.println("  4. Plan-level deadline     - cancels execution when deadline is exceeded");
         System.out.println();
 
         System.out.println("Initial DAG (from planner):");
@@ -56,9 +61,13 @@ public class DemoCommand implements Callable<Integer> {
                 System.out.printf("  ~ plan amended: %-10s -> %s%n", e.amendmentType(), e.targetStepId()));
 
         System.out.println("Execution:");
-        ExecutionResult result = engine
-                .execute("process order payment notification", Map.of("orderId", orderId))
-                .get();
+        java.util.concurrent.CompletableFuture<ExecutionResult> future;
+        if (timeoutMs != null) {
+            future = engine.execute("process order payment notification", Map.of("orderId", orderId), java.time.Duration.ofMillis(timeoutMs));
+        } else {
+            future = engine.execute("process order payment notification", Map.of("orderId", orderId));
+        }
+        ExecutionResult result = future.get();
 
         System.out.println();
         System.out.printf("Result:   %s%n", result.status());
