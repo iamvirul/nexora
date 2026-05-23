@@ -103,8 +103,8 @@ public final class DagStepScheduler {
      * Backward-compatible overload — no cancellation signal.
      * Equivalent to {@code schedule(plan, ctx, new AtomicBoolean(false))}.
      */
-    public ScheduleSession schedule(Plan plan, ExecutionContext ctx) {
-        return schedule(plan, ctx, new AtomicBoolean(false));
+    public CompletableFuture<ExecutionResult> schedule(Plan plan, ExecutionContext ctx) {
+        return schedule(plan, ctx, new AtomicBoolean(false)).future();
     }
 
     /**
