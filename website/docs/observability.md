@@ -20,6 +20,9 @@ This exposes four endpoints with no external dependencies:
 | `GET /metrics` | Prometheus text format scrape endpoint |
 | `GET /api/process` | Raw process snapshot as JSON |
 | `POST /api/execute` | Trigger an execution remotely |
+| `GET /health/ready` | Check health of all capabilities (returns 503 if any circuit is OPEN/HALF_OPEN) |
+
+> **Note**: The `/health/ready` endpoint is currently **Unreleased**.
 
 Example execute request:
 
