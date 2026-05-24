@@ -34,7 +34,7 @@ public final class CapabilityContractMonitor {
     private final ExecutionEventBus eventBus;
 
     public CapabilityContractMonitor(ExecutionEventBus eventBus) {
-        this.eventBus = eventBus;
+        this.eventBus = java.util.Objects.requireNonNull(eventBus, "eventBus must not be null");
     }
 
     // Default constructor for tests that don't need events
