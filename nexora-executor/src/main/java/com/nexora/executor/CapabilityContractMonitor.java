@@ -53,21 +53,25 @@ public final class CapabilityContractMonitor {
     }
 
     public void recordSuccess(String capabilityId, Duration latency) {
-        breaker(capabilityId).recordSuccess(capabilityId, latency.toNanos(), eventBus);
+        com.nexora.event.ExecutionEvent event = breaker(capabilityId).recordSuccess(capabilityId, latency.toNanos());
+        if (event != null) eventBus.publish(event);
     }
 
     public void recordFailure(String capabilityId, Duration latency) {
-        breaker(capabilityId).recordFailure(capabilityId, latency.toNanos(), eventBus);
+        com.nexora.event.ExecutionEvent event = breaker(capabilityId).recordFailure(capabilityId, latency.toNanos());
+        if (event != null) eventBus.publish(event);
     }
 
     public boolean isHealthy(String capabilityId, CapabilityContract contract) {
-        return breaker(capabilityId).isHealthy(capabilityId, contract, eventBus);
+        CircuitBreaker.HealthCheckResult result = breaker(capabilityId).isHealthy(capabilityId, contract);
+        if (result.eventToPublish() != null) eventBus.publish(result.eventToPublish());
+        return result.healthy();
     }
 
     public HealthSnapshot snapshot(String capabilityId) {
         CircuitBreaker b = breakers.get(capabilityId);
         if (b == null) return new HealthSnapshot(capabilityId, CircuitState.CLOSED, 0, 0.0, Duration.ZERO);
-        return new HealthSnapshot(capabilityId, b.state(), b.count(), b.errorRate(), b.p99Latency());
+        return b.snapshot(capabilityId);
     }
 
     private CircuitBreaker breaker(String capabilityId) {
@@ -102,25 +106,31 @@ public final class CapabilityContractMonitor {
             this.capacity = capacity;
         }
 
-        synchronized void recordSuccess(String capabilityId, long latencyNanos, ExecutionEventBus eventBus) {
+        record HealthCheckResult(boolean healthy, com.nexora.event.ExecutionEvent eventToPublish) {}
+
+        synchronized com.nexora.event.ExecutionEvent recordSuccess(String capabilityId, long latencyNanos) {
+            com.nexora.event.ExecutionEvent toPublish = null;
             if (state == CircuitState.HALF_OPEN) {
                 state = CircuitState.CLOSED;
                 latenciesNanos.clear();
                 outcomes.clear();
-                eventBus.publish(new CapabilityCircuitClosedEvent(capabilityId, Instant.now()));
+                toPublish = new CapabilityCircuitClosedEvent(capabilityId, Instant.now());
                 log.info("Circuit breaker for capability {} transitioned to CLOSED", capabilityId);
             }
             record(latencyNanos, true);
+            return toPublish;
         }
 
-        synchronized void recordFailure(String capabilityId, long latencyNanos, ExecutionEventBus eventBus) {
+        synchronized com.nexora.event.ExecutionEvent recordFailure(String capabilityId, long latencyNanos) {
+            com.nexora.event.ExecutionEvent toPublish = null;
             if (state == CircuitState.HALF_OPEN) {
                 state = CircuitState.OPEN;
                 openedAt = Instant.now();
-                eventBus.publish(new CapabilityCircuitOpenedEvent(capabilityId, openedAt));
+                toPublish = new CapabilityCircuitOpenedEvent(capabilityId, openedAt);
                 log.warn("Circuit breaker for capability {} transitioned to OPEN (probe failed)", capabilityId);
             }
             record(latencyNanos, false);
+            return toPublish;
         }
 
         private void record(long latencyNanos, boolean success) {
@@ -132,7 +142,7 @@ public final class CapabilityContractMonitor {
             outcomes.addLast(success);
         }
 
-        synchronized boolean isHealthy(String capabilityId, CapabilityContract contract, ExecutionEventBus eventBus) {
+        synchronized HealthCheckResult isHealthy(String capabilityId, CapabilityContract contract) {
             Instant now = Instant.now();
 
             if (state == CircuitState.OPEN) {
@@ -140,21 +150,21 @@ public final class CapabilityContractMonitor {
                     state = CircuitState.HALF_OPEN;
                     lastProbe = now;
                     log.info("Circuit breaker for capability {} transitioned to HALF_OPEN (sending probe)", capabilityId);
-                    return true;
+                    return new HealthCheckResult(true, null);
                 }
-                return false;
+                return new HealthCheckResult(false, null);
             }
 
             if (state == CircuitState.HALF_OPEN) {
                 if (lastProbe != null && now.isAfter(lastProbe.plus(contract.probeInterval()))) {
                     lastProbe = now;
-                    return true;
+                    return new HealthCheckResult(true, null);
                 }
-                return false;
+                return new HealthCheckResult(false, null);
             }
 
             // state == CLOSED
-            if (count() < MIN_SAMPLES) return true;
+            if (count() < MIN_SAMPLES) return new HealthCheckResult(true, null);
 
             if (contract.hasErrorRateSla()) {
                 double errRate = errorRate();
@@ -163,8 +173,7 @@ public final class CapabilityContractMonitor {
                             capabilityId,
                             String.format(Locale.ROOT, "%.1f", errRate * 100),
                             String.format(Locale.ROOT, "%.1f", contract.maxErrorRate() * 100));
-                    transitionToOpen(capabilityId, now, eventBus);
-                    return false;
+                    return new HealthCheckResult(false, transitionToOpen(capabilityId, now));
                 }
             }
 
@@ -173,19 +182,22 @@ public final class CapabilityContractMonitor {
                 if (p99.compareTo(contract.expectedP99Latency()) > 0) {
                     log.warn("Capability {} breached p99 latency contract: {}ms > {}ms",
                             capabilityId, p99.toMillis(), contract.expectedP99Latency().toMillis());
-                    transitionToOpen(capabilityId, now, eventBus);
-                    return false;
+                    return new HealthCheckResult(false, transitionToOpen(capabilityId, now));
                 }
             }
 
-            return true;
+            return new HealthCheckResult(true, null);
         }
 
-        private void transitionToOpen(String capabilityId, Instant now, ExecutionEventBus eventBus) {
+        private com.nexora.event.ExecutionEvent transitionToOpen(String capabilityId, Instant now) {
             state = CircuitState.OPEN;
             openedAt = now;
-            eventBus.publish(new CapabilityCircuitOpenedEvent(capabilityId, now));
             log.warn("Circuit breaker for capability {} transitioned to OPEN", capabilityId);
+            return new CapabilityCircuitOpenedEvent(capabilityId, now);
+        }
+
+        synchronized HealthSnapshot snapshot(String capabilityId) {
+            return new HealthSnapshot(capabilityId, state, count(), errorRate(), p99Latency());
         }
 
         synchronized CircuitState state() { return state; }

@@ -13,10 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Core Engine
 - **Plan-level execution deadline / timeout** - wall-clock deadline that cancels an entire plan execution when the limit is exceeded, returning `TIMED_OUT` execution status and triggering full saga compensation; overridable per `Intent` or globally via `NexoraEngine.Builder.withDefaultPlanDeadline()` ([#35](https://github.com/iamvirul/nexora/issues/35))
 
-#### Plugins
-- **Capability contracts enhancements** - Added `openDuration` and `probeInterval` properties to `CapabilityContract` to support stateful circuit breaking ([#36](https://github.com/iamvirul/nexora/issues/36))
-
 #### Executor
+- **Capability contracts enhancements** - Added `openDuration` and `probeInterval` properties to `CapabilityContract` to support stateful circuit breaking ([#36](https://github.com/iamvirul/nexora/issues/36))
 - **Capability circuit breaker** - `CapabilityContractMonitor` now implements a robust circuit breaker state machine (CLOSED, OPEN, HALF_OPEN) and routes unhealthy capabilities to their fallback transparently ([#36](https://github.com/iamvirul/nexora/issues/36))
 
 #### Observability

@@ -25,6 +25,12 @@ public record CapabilityContract(
         if (slidingWindowSize < 5) {
             throw new IllegalArgumentException("slidingWindowSize must be at least 5, got: " + slidingWindowSize);
         }
+        if (openDuration != null && openDuration.isNegative()) {
+            throw new IllegalArgumentException("openDuration must be non-negative");
+        }
+        if (probeInterval != null && (probeInterval.isNegative() || probeInterval.isZero())) {
+            throw new IllegalArgumentException("probeInterval must be positive");
+        }
     }
 
     /** No contract enforced; monitoring still records metrics. */

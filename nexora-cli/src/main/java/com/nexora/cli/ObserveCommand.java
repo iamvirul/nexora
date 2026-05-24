@@ -142,7 +142,7 @@ public class ObserveCommand implements Callable<Integer> {
                     .map(c -> NexoraEngine.HealthSnapshot.from(engine.capabilityHealth(c.id())))
                     .toList();
             
-            boolean anyOpen = snapshots.stream().anyMatch(s -> "OPEN".equals(s.state().name()) || "HALF_OPEN".equals(s.state().name()));
+            boolean anyOpen = snapshots.stream().anyMatch(s -> s.state() == com.nexora.executor.CapabilityContractMonitor.CircuitState.OPEN || s.state() == com.nexora.executor.CapabilityContractMonitor.CircuitState.HALF_OPEN);
             
             sendJson(exchange, anyOpen ? 503 : 200, Map.of(
                     "ready", !anyOpen,
