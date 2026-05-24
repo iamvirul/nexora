@@ -18,5 +18,7 @@ public sealed interface ExecutionEvent permits
         CompensationCompletedEvent,
         CompensationFailedEvent,
         PluginActivatedEvent,
-        PluginDeactivatedEvent {
+        PluginDeactivatedEvent,
+        CapabilityCircuitOpenedEvent,
+        CapabilityCircuitClosedEvent {
 }
