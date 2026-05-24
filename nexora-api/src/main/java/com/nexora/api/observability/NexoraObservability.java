@@ -5,6 +5,7 @@ import com.nexora.event.PlanAmendedEvent;
 import com.nexora.event.PlanCompletedEvent;
 import com.nexora.event.PlanFailedEvent;
 import com.nexora.event.PlanStartedEvent;
+import com.nexora.event.PlanTimedOutEvent;
 import com.nexora.event.StepCompletedEvent;
 import com.nexora.event.StepFailedEvent;
 import com.nexora.event.StepStartedEvent;
@@ -129,6 +130,7 @@ public final class NexoraObservability implements AutoCloseable {
         subscriptions.add(engine.subscribe(PlanStartedEvent.class, this::onPlanStarted));
         subscriptions.add(engine.subscribe(PlanCompletedEvent.class, this::onPlanCompleted));
         subscriptions.add(engine.subscribe(PlanFailedEvent.class, this::onPlanFailed));
+        subscriptions.add(engine.subscribe(PlanTimedOutEvent.class, this::onPlanTimedOut));
         subscriptions.add(engine.subscribe(PlanAmendedEvent.class, this::onPlanAmended));
         subscriptions.add(engine.subscribe(StepStartedEvent.class, this::onStepStarted));
         subscriptions.add(engine.subscribe(StepCompletedEvent.class, this::onStepCompleted));
@@ -215,6 +217,14 @@ public final class NexoraObservability implements AutoCloseable {
         planDurationSeconds.labels("failed").observe(seconds(event.elapsed().toNanos()));
         activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
         processTracker.onPlanFailed(event);
+        broadcastSnapshot();
+    }
+
+    private void onPlanTimedOut(PlanTimedOutEvent event) {
+        planFailedTotal.inc();
+        planDurationSeconds.labels("timed_out").observe(seconds(event.elapsed().toNanos()));
+        activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
+        processTracker.onPlanTimedOut(event);
         broadcastSnapshot();
     }
 
@@ -360,6 +370,15 @@ public final class NexoraObservability implements AutoCloseable {
             execution.appendTimeline(event.occurredAt().toEpochMilli(), "plan_failed", message);
         }
 
+        void onPlanTimedOut(PlanTimedOutEvent event) {
+            MutableExecution execution = executions.get(event.executionId());
+            if (execution == null) return;
+            if (execution.markTimedOut(event.occurredAt().toEpochMilli())) {
+                activeExecutions.updateAndGet(v -> Math.max(0, v - 1));
+            }
+            execution.appendTimeline(event.occurredAt().toEpochMilli(), "plan_timed_out", "Execution timed out (exceeded deadline)");
+        }
+
         void onPlanAmended(PlanAmendedEvent event) {
             MutableExecution execution = executions.get(event.executionId());
             if (execution == null) return;
@@ -429,6 +448,7 @@ public final class NexoraObservability implements AutoCloseable {
         private static final String STATUS_RUNNING = "RUNNING";
         private static final String STATUS_COMPLETED = "COMPLETED";
         private static final String STATUS_FAILED = "FAILED";
+        private static final String STATUS_TIMED_OUT = "TIMED_OUT";
 
         private final String executionId;
         private final Deque<TimelineSnapshot> timeline = new ConcurrentLinkedDeque<>();
@@ -495,6 +515,13 @@ public final class NexoraObservability implements AutoCloseable {
         private synchronized boolean markFailed(long finishedAtMs) {
             if (!STATUS_RUNNING.equals(status)) return false;
             this.status = STATUS_FAILED;
+            this.finishedAtMs = finishedAtMs;
+            return true;
+        }
+
+        private synchronized boolean markTimedOut(long finishedAtMs) {
+            if (!STATUS_RUNNING.equals(status)) return false;
+            this.status = STATUS_TIMED_OUT;
             this.finishedAtMs = finishedAtMs;
             return true;
         }

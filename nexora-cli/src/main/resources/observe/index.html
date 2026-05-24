@@ -235,6 +235,7 @@
     .badge.running   { background: rgba(88,166,255,0.15);  color: var(--blue);   }
     .badge.completed { background: rgba(63,185,80,0.15);   color: var(--green);  }
     .badge.failed    { background: rgba(248,81,73,0.15);   color: var(--red);    }
+    .badge.timed_out { background: rgba(240,136,62,0.15);  color: var(--orange); }
     .badge.skipped   { background: rgba(210,153,34,0.15);  color: var(--yellow); }
     .badge.pending   { background: rgba(125,133,144,0.15); color: var(--muted);  }
 
@@ -482,7 +483,7 @@ function esc(v) {
 
 function sc(s) {
   s = (s||'').toLowerCase();
-  return ['running','completed','failed','skipped','pending'].includes(s) ? s : 'pending';
+  return ['running','completed','failed','skipped','pending','timed_out'].includes(s) ? s : 'pending';
 }
 
 function fmtDur(ms) {
@@ -526,7 +527,7 @@ function renderStats() {
     ['Active',    data.activeExecutions ?? 0],
     ['Running',   execs.filter(e => e.status === 'RUNNING').length],
     ['Completed', execs.filter(e => e.status === 'COMPLETED').length],
-    ['Failed',    execs.filter(e => e.status === 'FAILED').length],
+    ['Failed',    execs.filter(e => e.status === 'FAILED' || e.status === 'TIMED_OUT').length],
     ['Tracked',   execs.length],
     ['Updated',   fmtAgo(data.generatedAtMs)]
   ];
