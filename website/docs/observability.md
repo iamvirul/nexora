@@ -38,7 +38,7 @@ curl -X POST http://localhost:9464/api/execute \
       }'
 ```
 
-### Webhook Callbacks (Unreleased version)
+## Webhook Callbacks (Unreleased version)
 
 Nexora allows you to register webhook URLs to be notified asynchronously when an execution reaches a terminal state (`COMPLETED`, `FAILED`, or `TIMED_OUT`). This is particularly useful when triggering executions remotely via the API and awaiting their outcome.
 
