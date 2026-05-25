@@ -167,6 +167,11 @@ public final class JdbcExecutionStore implements ExecutionStore {
 
     @Override
     public synchronized void recordWebhookDelivery(com.nexora.persistence.WebhookDeliveryRecord record) {
+        if (record.deliveryId() == null || record.executionId() == null ||
+            record.url() == null || record.timestamp() == null) {
+            throw new IllegalArgumentException(
+                "Required webhook delivery fields must not be null: deliveryId, executionId, url, timestamp");
+        }
         String sql = """
             INSERT INTO nexora_webhook_deliveries
                 (delivery_id, execution_id, url, status_code, attempt, successful, timestamp, error_message)

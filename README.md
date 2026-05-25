@@ -388,7 +388,7 @@ curl -X POST http://localhost:9464/api/execute \
       }'
 ```
 
-Nexora will dispatch a JSON payload to your endpoint with the execution outcome. It signs the payload using the configured secret and passes the signature in the `nexora-signature` HTTP header for validation. It also utilizes exponential backoff to retry deliveries up to 5 times. Delivery attempts are persisted in the `nexora_webhook_deliveries` database table and can be queried for auditability via the API.
+Nexora will dispatch a JSON payload to your endpoint with the execution outcome. It signs the payload using the configured secret and passes the signature in the `nexora-signature` HTTP header for validation. It also utilizes exponential backoff to retry deliveries up to 3 attempts. Delivery attempts are persisted in the `nexora_webhook_deliveries` database table and can be queried for auditability via the API.
 
 ## Observability UI + Prometheus + Grafana
 

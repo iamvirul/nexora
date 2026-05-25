@@ -157,8 +157,12 @@ public class ObserveCommand implements Callable<Integer> {
                 try { sendJson(exchange, 503, Map.of("error", "Persistence disabled")); } catch(Exception ignored) {}
                 return;
             }
-            java.util.List<com.nexora.persistence.WebhookDeliveryRecord> deliveries = store.getWebhookDeliveries(executionId);
-            try { sendJson(exchange, 200, deliveries); } catch(Exception ignored) {}
+            try {
+                java.util.List<com.nexora.persistence.WebhookDeliveryRecord> deliveries = store.getWebhookDeliveries(executionId);
+                try { sendJson(exchange, 200, deliveries); } catch(Exception ignored) {}
+            } catch (Exception e) {
+                try { sendJson(exchange, 500, Map.of("error", "internal", "details", e.getMessage())); } catch(Exception ignored) {}
+            }
         });
 
         server.createContext("/health/ready", exchange -> {

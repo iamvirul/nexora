@@ -45,8 +45,8 @@ public class Intent {
                     "deadline must be a positive duration, got: " + deadline);
         }
         this.deadline = deadline;
-        this.webhookUrl = webhookUrl;
-        this.webhookEvents = webhookEvents == null || webhookEvents.isEmpty() 
+        this.webhookUrl = (webhookUrl == null || webhookUrl.trim().isEmpty()) ? null : webhookUrl;
+        this.webhookEvents = webhookEvents == null || webhookEvents.isEmpty()
                 ? List.of(ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.TIMED_OUT)
                 : List.copyOf(webhookEvents);
     }

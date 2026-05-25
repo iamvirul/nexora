@@ -56,6 +56,7 @@ public class WebhookDeliveryService {
             return;
         }
 
+        String targetUrl = intent.getWebhookUrl();
         Map<String, Object> payloadMap = Map.of(
                 "executionId", executionId,
                 "status", status.name(),
@@ -67,16 +68,27 @@ public class WebhookDeliveryService {
             String payload = JSON.writeValueAsString(payloadMap);
             String signature = generateHmacSha256(payload, webhookSecret);
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(intent.getWebhookUrl()))
+                    .uri(URI.create(targetUrl))
                     .header("Content-Type", "application/json")
                     .header("nexora-signature", signature)
                     .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8))
+                    .timeout(Duration.ofSeconds(10))
                     .build();
 
             // Fire and forget, retry up to 3 times
-            CompletableFuture.runAsync(() -> attemptDelivery(request, executionId, intent.getWebhookUrl(), 1), executor);
+            CompletableFuture.runAsync(() -> attemptDelivery(request, executionId, targetUrl, 1), executor);
         } catch (Exception e) {
-            log.error("Failed to prepare webhook delivery executionId={}", executionId, e);
+            log.warn("Failed to prepare webhook delivery targetUrl={}", targetUrl);
+            if (store != null) {
+                try {
+                    store.recordWebhookDelivery(new WebhookDeliveryRecord(
+                            UUID.randomUUID().toString(), executionId, targetUrl, 0, 0, false,
+                            Instant.now(), "Preparation failed: " + e.getMessage()
+                    ));
+                } catch (Exception storeEx) {
+                    log.error("Failed to store webhook delivery executionId={}", executionId, storeEx);
+                }
+            }
         }
     }
 
@@ -92,16 +104,14 @@ public class WebhookDeliveryService {
 
                     if (error != null) {
                         errorMessage = error.getMessage();
-                        log.warn("Webhook delivery failed executionId={} url={} attempt={} error={}",
-                                executionId, url, attempt, errorMessage);
+                        log.warn("Failed to prepare webhook delivery targetUrl={}", url);
                     } else {
                         statusCode = response.statusCode();
                         if (statusCode >= 200 && statusCode < 300) {
                             success = true;
                         } else {
                             errorMessage = "HTTP " + statusCode;
-                            log.warn("Webhook delivery failed executionId={} url={} attempt={} statusCode={}",
-                                    executionId, url, attempt, statusCode);
+                            log.warn("Failed to prepare webhook delivery targetUrl={}", url);
                         }
                     }
 

@@ -53,10 +53,17 @@ public class JsonConfigDemoApp {
 
     public static void main(String[] args) throws Exception {
         System.out.println("Loading configuration from nexora.json...");
-        
+
         Config config;
         try (InputStream is = JsonConfigDemoApp.class.getClassLoader().getResourceAsStream("nexora.json")) {
+            if (is == null) {
+                throw new IllegalStateException("nexora.json resource not found on classpath");
+            }
             config = JSON.readValue(is, Config.class);
+        }
+
+        if (config.webhookSecret == null || config.webhookSecret.trim().isEmpty()) {
+            throw new IllegalArgumentException("webhookSecret is required in nexora.json configuration");
         }
 
         NexoraEngine.Builder builder = NexoraEngine.builder()
@@ -119,17 +126,20 @@ public class JsonConfigDemoApp {
         http.start();
 
         System.out.println("Starting execution: 'generate a daily report and send email'...");
-        
-        engine.execute(new Intent(
-                "generate a daily report and send email",
-                Map.of("reportType", "daily"),
-                null,
-                "http://localhost:" + HTTP_PORT + "/webhook",
-                List.of(ExecutionStatus.COMPLETED)
-        ));
 
-        shutdown.await();
-        http.stop(0);
+        try {
+            engine.execute(new Intent(
+                    "generate a daily report and send email",
+                    Map.of("reportType", "daily"),
+                    null,
+                    "http://localhost:" + HTTP_PORT + "/webhook",
+                    List.of(ExecutionStatus.COMPLETED)
+            ));
+
+            shutdown.await(30, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            http.stop(0);
+        }
         System.out.println("Demo complete!");
     }
 
