@@ -17,7 +17,14 @@ public interface ExecutionStore extends AutoCloseable {
 
     void updateExecution(String executionId, ExecutionState state, Instant completedAt);
 
+    /** Upserts step-level state into the store. */
     void upsertStep(String executionId, StepRecord step);
+
+    /** Records an outgoing webhook delivery attempt for auditability. */
+    void recordWebhookDelivery(WebhookDeliveryRecord record);
+
+    /** Returns all webhook delivery attempts for a given execution. */
+    List<WebhookDeliveryRecord> getWebhookDeliveries(String executionId);
 
     Optional<ExecutionRecord> findById(String executionId);
 
