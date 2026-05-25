@@ -118,7 +118,14 @@ public class ObserveCommand implements Callable<Integer> {
             }
 
             Map<String, Object> context = request.context() == null ? Map.of() : request.context();
-            engine.execute(request.goal(), context)
+            com.nexora.core.intent.Intent intent = new com.nexora.core.intent.Intent(
+                    request.goal(), 
+                    context, 
+                    null, 
+                    request.webhookUrl(), 
+                    request.webhookEvents()
+            );
+            engine.execute(intent)
                     .whenComplete((result, ex) -> {
                         if (ex != null) {
                             System.err.printf("Execution failed goal=%s error=%s%n",
@@ -131,6 +138,27 @@ public class ObserveCommand implements Callable<Integer> {
                     "message", "Execution accepted",
                     "goal", request.goal()
             ));
+        });
+
+        server.createContext("/api/webhook-deliveries/", exchange -> {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                try { sendText(exchange, 405, "Method Not Allowed"); } catch(Exception ignored) {}
+                return;
+            }
+            String path = exchange.getRequestURI().getPath();
+            String prefix = "/api/webhook-deliveries/";
+            if (path.length() <= prefix.length()) {
+                try { sendText(exchange, 400, "Missing executionId"); } catch(Exception ignored) {}
+                return;
+            }
+            String executionId = path.substring(prefix.length());
+            com.nexora.persistence.ExecutionStore store = engine.getStore();
+            if (store == null) {
+                try { sendJson(exchange, 503, Map.of("error", "Persistence disabled")); } catch(Exception ignored) {}
+                return;
+            }
+            java.util.List<com.nexora.persistence.WebhookDeliveryRecord> deliveries = store.getWebhookDeliveries(executionId);
+            try { sendJson(exchange, 200, deliveries); } catch(Exception ignored) {}
         });
 
         server.createContext("/health/ready", exchange -> {
@@ -224,7 +252,11 @@ public class ObserveCommand implements Callable<Integer> {
         }
     }
 
-    private record ExecuteRequest(String goal, Map<String, Object> context) {}
+    private record ExecuteRequest(
+            String goal, 
+            Map<String, Object> context, 
+            String webhookUrl, 
+            java.util.List<com.nexora.core.execution.ExecutionStatus> webhookEvents) {}
 
     private static final class SnapshotBroadcaster extends WebSocketServer {
 

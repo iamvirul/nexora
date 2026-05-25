@@ -147,6 +147,10 @@ public final class ExecutionEngine {
         }
     }
 
+    public ExecutionStore getStore() {
+        return store;
+    }
+
     public CompletableFuture<ExecutionResult> execute(Intent intent) {
         TraceContext traceContext = TraceContext.root();
         ExecutionContext ctx = new ExecutionContext(intent, traceContext);

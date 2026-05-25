@@ -121,6 +121,10 @@ public final class NexoraEngine {
         return contractMonitor.snapshot(capabilityId);
     }
 
+    public com.nexora.persistence.ExecutionStore getStore() {
+        return engine.getStore();
+    }
+
     public record HealthSnapshot(String capabilityId, CapabilityContractMonitor.CircuitState state, int sampleCount, double errorRate, Duration p99Latency) {
         public static HealthSnapshot from(CapabilityContractMonitor.HealthSnapshot s) {
             return new HealthSnapshot(s.capabilityId(), s.state(), s.sampleCount(), s.errorRate(), s.p99Latency());
