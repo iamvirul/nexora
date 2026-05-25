@@ -1,0 +1,21 @@
+{
+  "webhookSecret": "json-test-secret-123",
+  "retry": {
+    "maxAttempts": 3,
+    "initialDelayMs": 200,
+    "multiplier": 2.0,
+    "maxDelayMs": 10000
+  },
+  "steps": [
+    {
+      "id": "generate_report",
+      "capabilityId": "generate_report",
+      "matchesGoalContains": "report"
+    },
+    {
+      "id": "send_email",
+      "capabilityId": "send_email",
+      "matchesGoalContains": "email"
+    }
+  ]
+}
