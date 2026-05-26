@@ -30,6 +30,10 @@ public record CapabilityResult(
         return new CapabilityResult(ResultStatus.FAILURE, null, code, message, Map.of(), List.of());
     }
 
+    public static CapabilityResult skipped(String message) {
+        return new CapabilityResult(ResultStatus.SKIPPED, null, "SKIPPED", message, Map.of(), List.of());
+    }
+
     public boolean succeeded() {
         return status == ResultStatus.SUCCESS;
     }

@@ -2,6 +2,7 @@ package com.nexora.executor;
 
 import com.nexora.core.capability.CapabilityRequest;
 import com.nexora.core.capability.CapabilityResult;
+import com.nexora.core.capability.ResultStatus;
 import com.nexora.core.context.ExecutionContext;
 import com.nexora.core.execution.ExecutionResult;
 import com.nexora.core.execution.ExecutionStatus;
@@ -179,12 +180,12 @@ public final class DagStepScheduler {
                     if (skippedSteps.contains(step.id())) {
                         log.info("Step skipped by amendment id={}", step.id());
                         return new StepResult(step.id(),
-                                CapabilityResult.failure("SKIPPED", "Step skipped by plan amendment"));
+                                CapabilityResult.skipped("Step skipped by plan amendment"));
                     }
                     if (step.condition() != null && !step.condition().evaluate(ctx)) {
                         log.info("Step skipped by condition id={}", step.id());
                         return new StepResult(step.id(),
-                                CapabilityResult.failure("SKIPPED", "Step condition evaluated to false"));
+                                CapabilityResult.skipped("Step condition evaluated to false"));
                     }
                     return executeStep(step, ctx);
                 }, executor)
@@ -371,8 +372,7 @@ public final class DagStepScheduler {
     }
 
     private boolean isSkipped(StepResult result) {
-        return result.capabilityResult().failureCode() != null &&
-                result.capabilityResult().failureCode().equals("SKIPPED");
+        return result.capabilityResult().status() == ResultStatus.SKIPPED;
     }
 
     private void validateNoCycles(Plan plan) {
