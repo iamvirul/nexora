@@ -181,6 +181,11 @@ public final class DagStepScheduler {
                         return new StepResult(step.id(),
                                 CapabilityResult.failure("SKIPPED", "Step skipped by plan amendment"));
                     }
+                    if (step.condition() != null && !step.condition().evaluate(ctx)) {
+                        log.info("Step skipped by condition id={}", step.id());
+                        return new StepResult(step.id(),
+                                CapabilityResult.failure("SKIPPED", "Step condition evaluated to false"));
+                    }
                     return executeStep(step, ctx);
                 }, executor)
                 .handle((result, ex) -> {
