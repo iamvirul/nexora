@@ -61,8 +61,12 @@ public class PlanCommand implements Callable<Integer> {
             String deps = step.dependsOn().isEmpty() ? "—" : String.join(", ", step.dependsOn());
             String condStr = "—";
             if (step.condition() != null) {
-                boolean result = step.condition().evaluate(dummyCtx);
-                condStr = String.format("%s (eval: %b)", step.condition(), result);
+                try {
+                    boolean result = step.condition().evaluate(dummyCtx);
+                    condStr = String.format("%s (eval: %b)", step.condition(), result);
+                } catch (Throwable e) {
+                    condStr = String.format("<condition evaluation error: %s>", e.getMessage());
+                }
             }
             System.out.printf("  %-24s  %-24s  %-30s  %s%n", step.id(), step.capabilityId(), condStr, deps);
         }

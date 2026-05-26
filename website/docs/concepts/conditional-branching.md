@@ -14,7 +14,7 @@ Nexora provides built-in support for conditional branching, allowing you to dyna
 
 ## Step Conditions
 
-You can define a `Condition` for any step in your plan. Just before the step is dispatched for execution, the `DagStepScheduler` evaluates the condition against the current `ExecutionContext`. 
+You can define a `StepCondition` for any step in your plan. Just before the step is dispatched for execution, the `DagStepScheduler` evaluates the `StepCondition` against the current `ExecutionContext`. 
 
 If the condition evaluates to `false`, the step is marked as `SKIPPED`. Downstream steps that depend on this skipped step will proceed gracefully, but if they rely on the output of the skipped step, they might fail depending on their implementation.
 
@@ -49,6 +49,7 @@ If you are using the Nexora CLI or `CliConfig` module, you can easily define con
       "id": "process_data",
       "capabilityId": "transform",
       "matchesGoalContains": "get-data",
+      "dependsOn": ["fetch_data"],
       "condition": {
         "type": "stepOutputEquals",
         "stepId": "fetch_data",
@@ -60,7 +61,7 @@ If you are using the Nexora CLI or `CliConfig` module, you can easily define con
 }
 ```
 
-In this example, `process_data` will only run if `fetch_data` completes and returns an output payload where `status` is equal to `200`.
+In this example, `process_data` will only run if `fetch_data` completes and returns an output payload where `status` is equal to `200`. Note that `dependsOn` is specified to ensure the condition evaluates only after the producer step runs.
 
 ## Java API Example
 
