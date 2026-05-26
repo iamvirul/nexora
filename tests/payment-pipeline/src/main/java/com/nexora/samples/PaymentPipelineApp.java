@@ -394,7 +394,7 @@ public class PaymentPipelineApp {
                                 Map.of("risk", InputBinding.literal(risk)),
                                 null,
                                 Set.of("run_fraud_check"),
-                                null, null, null);
+                                null, null, null, null);
 
                         // Note: Map.of() prohibits null values — do NOT include optional
                         // flags here; they are read directly from the request context.

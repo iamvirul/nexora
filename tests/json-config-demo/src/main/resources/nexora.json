@@ -15,7 +15,12 @@
     {
       "id": "send_email",
       "capabilityId": "send_email",
-      "matchesGoalContains": "email"
+      "matchesGoalContains": "email",
+      "condition": {
+        "type": "contextValueEquals",
+        "key": "intent.context.send_email_enabled",
+        "value": true
+      }
     }
   ]
 }
