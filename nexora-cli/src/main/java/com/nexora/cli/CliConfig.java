@@ -69,6 +69,12 @@ public class CliConfig {
     public static class AndConfig implements ConditionConfig {
         public List<ConditionConfig> conditions;
         @Override public StepCondition toStepCondition() {
+            if (conditions == null) {
+                throw new IllegalStateException("AndConfig: 'conditions' list must not be null");
+            }
+            if (conditions.stream().anyMatch(c -> c == null)) {
+                throw new IllegalStateException("AndConfig: 'conditions' list must not contain null elements");
+            }
             return new And(conditions.stream().map(ConditionConfig::toStepCondition).collect(Collectors.toList()));
         }
     }
@@ -76,6 +82,12 @@ public class CliConfig {
     public static class OrConfig implements ConditionConfig {
         public List<ConditionConfig> conditions;
         @Override public StepCondition toStepCondition() {
+            if (conditions == null) {
+                throw new IllegalStateException("OrConfig: 'conditions' list must not be null");
+            }
+            if (conditions.stream().anyMatch(c -> c == null)) {
+                throw new IllegalStateException("OrConfig: 'conditions' list must not contain null elements");
+            }
             return new Or(conditions.stream().map(ConditionConfig::toStepCondition).collect(Collectors.toList()));
         }
     }
@@ -83,6 +95,9 @@ public class CliConfig {
     public static class NotConfig implements ConditionConfig {
         public ConditionConfig condition;
         @Override public StepCondition toStepCondition() {
+            if (condition == null) {
+                throw new IllegalStateException("NotConfig: 'condition' must not be null");
+            }
             return new Not(condition.toStepCondition());
         }
     }

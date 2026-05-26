@@ -51,12 +51,12 @@ public class JsonConfigDemoApp {
         public String type;
         public String key;
         public Object value;
-        
+
         public StepCondition toStepCondition() {
             if ("contextValueEquals".equals(type)) {
                 return new ContextValueEquals(key, value);
             }
-            return null; // simplified for demo
+            throw new IllegalArgumentException("Unknown condition type: " + type + " (key: " + key + ")");
         }
     }
 
