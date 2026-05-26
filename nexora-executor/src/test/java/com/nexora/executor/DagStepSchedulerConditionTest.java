@@ -60,7 +60,7 @@ class DagStepSchedulerConditionTest {
         assertFalse(executed.get(), "Capability should not have executed");
 
         StepResult sr = result.stepResults().getFirst();
-        assertEquals(ResultStatus.SKIPPED, sr.capabilityResult().status());
+        assertEquals(ResultStatus.FAILURE, sr.capabilityResult().status());
         assertEquals("SKIPPED", sr.capabilityResult().failureCode());
     }
 
@@ -129,7 +129,7 @@ class DagStepSchedulerConditionTest {
         assertEquals(3, result.stepResults().size());
 
         StepResult srAnd = result.stepResults().stream().filter(s -> s.stepId().equals("and")).findFirst().get();
-        assertEquals(ResultStatus.SKIPPED, srAnd.capabilityResult().status());
+        assertEquals(ResultStatus.FAILURE, srAnd.capabilityResult().status());
         assertEquals("SKIPPED", srAnd.capabilityResult().failureCode());
 
         StepResult srOr = result.stepResults().stream().filter(s -> s.stepId().equals("or")).findFirst().get();
