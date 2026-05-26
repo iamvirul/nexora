@@ -28,11 +28,12 @@ final class EngineFactory {
 
         for (CliConfig.StepConfig sc : config.steps) {
             String match = sc.matchesGoalContains;
-            builder.withStepDefinition(new StepDefinition(
-                    sc.id,
-                    sc.capabilityId,
-                    goal -> match == null || goal.contains(match)
-            ));
+            StepDefinition.Builder sdb = StepDefinition.builder(sc.id, sc.capabilityId)
+                    .withMatcher(goal -> match == null || goal.contains(match));
+            if (sc.condition != null) {
+                sdb.withCondition(sc.condition.toStepCondition());
+            }
+            builder.withStepDefinition(sdb.build());
         }
 
         return builder.build();
