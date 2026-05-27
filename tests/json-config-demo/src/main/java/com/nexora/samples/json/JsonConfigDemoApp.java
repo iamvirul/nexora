@@ -14,6 +14,8 @@ import com.nexora.spi.CapabilityProvider;
 import com.nexora.spi.NexoraPlugin;
 import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
+import com.nexora.core.plan.StepCondition;
+import com.nexora.core.plan.condition.ContextValueEquals;
 import com.sun.net.httpserver.HttpServer;
 
 import javax.crypto.Mac;
@@ -42,6 +44,20 @@ public class JsonConfigDemoApp {
         public String id;
         public String capabilityId;
         public String matchesGoalContains;
+        public ConditionConfig condition;
+    }
+
+    public static class ConditionConfig {
+        public String type;
+        public String key;
+        public Object value;
+
+        public StepCondition toStepCondition() {
+            if ("contextValueEquals".equals(type)) {
+                return new ContextValueEquals(key, value);
+            }
+            throw new IllegalArgumentException("Unknown condition type: " + type + " (key: " + key + ")");
+        }
     }
 
     public static class RetryConfig {
@@ -80,11 +96,12 @@ public class JsonConfigDemoApp {
 
         for (StepConfig sc : config.steps) {
             String match = sc.matchesGoalContains;
-            builder.withStepDefinition(new StepDefinition(
-                    sc.id,
-                    sc.capabilityId,
-                    goal -> match == null || goal.contains(match)
-            ));
+            StepDefinition.Builder sdb = StepDefinition.builder(sc.id, sc.capabilityId)
+                    .withMatcher(goal -> match == null || goal.contains(match));
+            if (sc.condition != null) {
+                sdb.withCondition(sc.condition.toStepCondition());
+            }
+            builder.withStepDefinition(sdb.build());
         }
 
         NexoraEngine engine = builder.build();
@@ -130,7 +147,7 @@ public class JsonConfigDemoApp {
         try {
             engine.execute(new Intent(
                     "generate a daily report and send email",
-                    Map.of("reportType", "daily"),
+                    Map.of("reportType", "daily", "send_email_enabled", true),
                     null,
                     "http://localhost:" + HTTP_PORT + "/webhook",
                     List.of(ExecutionStatus.COMPLETED)

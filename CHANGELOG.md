@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 #### Core Engine
+- **Conditional Branching** - Allows defining a `StepCondition` (e.g. `ContextValueEquals`, `StepOutputEquals`) on any step. The scheduler dynamically evaluates these before step execution and skips the step if the condition resolves to `false` ([#41](https://github.com/iamvirul/nexora/issues/41))
 - **Plan-level execution deadline / timeout** - wall-clock deadline that cancels an entire plan execution when the limit is exceeded, returning `TIMED_OUT` execution status and triggering full saga compensation; overridable per `Intent` or globally via `NexoraEngine.Builder.withDefaultPlanDeadline()` ([#35](https://github.com/iamvirul/nexora/issues/35))
 
 #### Executor

@@ -10,6 +10,9 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
 
+import com.nexora.core.context.ExecutionContext;
+import com.nexora.core.context.TraceContext;
+
 import java.util.Map;
 import java.util.concurrent.Callable;
 
@@ -32,10 +35,12 @@ public class PlanCommand implements Callable<Integer> {
         PlanRegistry registry = new PlanRegistry();
         for (CliConfig.StepConfig sc : config.steps) {
             String match = sc.matchesGoalContains;
-            registry.register(new StepDefinition(
-                    sc.id, sc.capabilityId,
-                    g -> match == null || g.contains(match)
-            ));
+            StepDefinition.Builder sdb = StepDefinition.builder(sc.id, sc.capabilityId)
+                    .withMatcher(g -> match == null || g.contains(match));
+            if (sc.condition != null) {
+                sdb.withCondition(sc.condition.toStepCondition());
+            }
+            registry.register(sdb.build());
         }
 
         Plan plan = new PlannerEngine(registry).createPlan(new Intent(goal, Map.of()));
@@ -47,11 +52,23 @@ public class PlanCommand implements Callable<Integer> {
             return 0;
         }
 
-        System.out.printf("  %-24s  %-24s  %s%n", "STEP ID", "CAPABILITY", "DEPENDS ON");
-        System.out.println("  " + "─".repeat(72));
+        System.out.printf("  %-24s  %-24s  %-30s  %s%n", "STEP ID", "CAPABILITY", "CONDITION (Dry-run eval)", "DEPENDS ON");
+        System.out.println("  " + "─".repeat(90));
+        
+        ExecutionContext dummyCtx = new ExecutionContext(new Intent(goal, Map.of()), TraceContext.root());
+        
         for (Step step : plan.getSteps()) {
             String deps = step.dependsOn().isEmpty() ? "—" : String.join(", ", step.dependsOn());
-            System.out.printf("  %-24s  %-24s  %s%n", step.id(), step.capabilityId(), deps);
+            String condStr = "—";
+            if (step.condition() != null) {
+                try {
+                    boolean result = step.condition().evaluate(dummyCtx);
+                    condStr = String.format("%s (eval: %b)", step.condition(), result);
+                } catch (Throwable e) {
+                    condStr = String.format("<condition evaluation error: %s>", e.getMessage());
+                }
+            }
+            System.out.printf("  %-24s  %-24s  %-30s  %s%n", step.id(), step.capabilityId(), condStr, deps);
         }
         System.out.printf("%n%d step(s) in plan.%n", plan.getSteps().size());
         return 0;
