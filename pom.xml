@@ -59,7 +59,7 @@
         <picocli.version>4.7.7</picocli.version>
         <jackson.version>2.17.2</jackson.version>
         <websocket.version>1.6.0</websocket.version>
-        <logback.version>1.5.32</logback.version>
+        <logback.version>1.5.33</logback.version>
         <prometheus.version>0.16.0</prometheus.version>
         <h2.version>2.4.240</h2.version>
         
