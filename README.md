@@ -112,6 +112,9 @@ nexora [--config <file>] <command>
 | `nexora plugins` | List active plugins |
 | `nexora observe` | Start UI/API/metrics server for live process observability |
 | `nexora demo` | Run the built-in feature demo |
+| `nexora dlq list` | List dead letter queue entries (default: PENDING) |
+| `nexora dlq replay <id>` | Replay a dead-lettered execution |
+| `nexora dlq resolve <id>` | Mark a dead letter as resolved |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 
@@ -390,6 +393,63 @@ curl -X POST http://localhost:9464/api/execute \
 
 Nexora will dispatch a JSON payload to your endpoint with the execution outcome. It signs the payload using the configured secret and passes the signature in the `nexora-signature` HTTP header for validation. It also utilizes exponential backoff to retry deliveries up to 3 attempts. Delivery attempts are persisted in the `nexora_webhook_deliveries` database table and can be queried for auditability via the API.
 
+## Dead Letter Queue (Unreleased version)
+
+When a execution fails after exhausting all retries, Nexora writes a record to the `nexora_dead_letters` table and fires an `ExecutionDeadLetteredEvent` on the event bus. This gives operators a structured audit trail of every permanently failed execution and a way to replay or resolve them without querying the database directly.
+
+Each dead letter record carries:
+
+| Field | Description |
+|-------|-------------|
+| `id` | UUID of the dead letter record |
+| `executionId` | The original failed execution |
+| `goal` | The intent goal string |
+| `context` | The intent context (JSON) |
+| `failureCode` | Machine-readable failure code (e.g. `STEP_FAILED`) |
+| `failureMessage` | Human-readable error detail |
+| `failedAt` | When the failure occurred |
+| `reviewState` | `PENDING`, `RESOLVED`, or `REPLAYED` |
+
+Subscribe to the event for alerting:
+
+```java
+engine.subscribe(ExecutionDeadLetteredEvent.class, e ->
+    alerting.notify("Execution dead-lettered: " + e.executionId() + " code=" + e.failureCode()));
+```
+
+Inspect and remediate via CLI:
+
+```bash
+# list all pending dead letters
+nexora dlq list
+
+# replay a failed execution (creates a new execution with the same goal and context)
+nexora dlq replay <dead-letter-id>
+
+# mark as resolved when no replay is needed
+nexora dlq resolve <dead-letter-id> --reason "Root cause fixed in deployment 1.2.3"
+```
+
+Or via the observability REST API:
+
+```bash
+# list PENDING (default)
+curl http://localhost:9464/api/dead-letters
+
+# filter by state, paginate
+curl "http://localhost:9464/api/dead-letters?state=RESOLVED&page=0&size=10"
+
+# replay
+curl -X POST http://localhost:9464/api/dead-letters/<id>/replay
+
+# resolve
+curl -X POST http://localhost:9464/api/dead-letters/<id>/resolve \
+  -H "content-type: application/json" \
+  -d '{"reason":"investigated and closed"}'
+```
+
+> **Authentication**: DLQ endpoints will require a Bearer token once [#30](https://github.com/iamvirul/nexora/issues/30) lands.
+
 ## Observability UI + Prometheus + Grafana
 
 Start Nexora's built-in observability server:
@@ -408,6 +468,9 @@ This exposes four endpoints with no external dependencies:
 | `POST /api/execute` | Trigger an execution remotely |
 | `GET /health/ready` | Check health of all capabilities (returns 503 if any circuit is OPEN/HALF_OPEN) |
 | `GET /api/webhook-deliveries/{id}` | Audit log of webhook delivery attempts for an execution |
+| `GET /api/dead-letters` | List dead letter queue entries (paginated, filterable by `?state=PENDING\|RESOLVED\|REPLAYED\|ALL`) |
+| `POST /api/dead-letters/{id}/replay` | Create a new execution from a dead letter and mark it as `REPLAYED` |
+| `POST /api/dead-letters/{id}/resolve` | Mark a dead letter as `RESOLVED` with an optional `{"reason":"..."}` body |
 
 > **Note**: The `/health/ready` endpoint is currently **Unreleased**.
 
