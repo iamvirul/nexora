@@ -51,10 +51,6 @@ public class ObserveCommand implements Callable<Integer> {
             description = "Max timeline events retained per execution. Default: ${DEFAULT-VALUE}")
     private int maxEvents;
 
-    @Option(names = {"--api-key"},
-            description = "Bearer token required on DLQ endpoints. Reads NEXORA_API_KEY env var if absent.")
-    private String apiKey;
-
     @Override
     public Integer call() throws Exception {
         int wsPort = port + 1;
@@ -175,10 +171,6 @@ public class ObserveCommand implements Callable<Integer> {
                 try { sendJson(exchange, 503, Map.of("error", "Persistence disabled")); } catch(Exception ignored) {}
                 return;
             }
-            if (!isAuthorized(exchange)) {
-                try { sendJson(exchange, 401, Map.of("error", "Unauthorized")); } catch(Exception ignored) {}
-                return;
-            }
             String path = exchange.getRequestURI().getPath();
             String prefix = "/api/dead-letters/";
             String remainder = path.length() > prefix.length() ? path.substring(prefix.length()) : "";
@@ -239,10 +231,6 @@ public class ObserveCommand implements Callable<Integer> {
             com.nexora.persistence.ExecutionStore dlqStore = engine.getStore();
             if (dlqStore == null) {
                 try { sendJson(exchange, 503, Map.of("error", "Persistence disabled")); } catch(Exception ignored) {}
-                return;
-            }
-            if (!isAuthorized(exchange)) {
-                try { sendJson(exchange, 401, Map.of("error", "Unauthorized")); } catch(Exception ignored) {}
                 return;
             }
             String query = exchange.getRequestURI().getQuery();
@@ -366,13 +354,6 @@ public class ObserveCommand implements Callable<Integer> {
             Map<String, Object> context, 
             String webhookUrl, 
             java.util.List<com.nexora.core.execution.ExecutionStatus> webhookEvents) {}
-
-    private boolean isAuthorized(HttpExchange exchange) {
-        String effectiveKey = apiKey != null && !apiKey.isBlank() ? apiKey : System.getenv("NEXORA_API_KEY");
-        if (effectiveKey == null || effectiveKey.isBlank()) return true; // no key configured — open
-        String header = exchange.getRequestHeaders().getFirst("Authorization");
-        return header != null && header.equals("Bearer " + effectiveKey);
-    }
 
     private static final class SnapshotBroadcaster extends WebSocketServer {
 
