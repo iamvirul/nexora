@@ -382,6 +382,25 @@
 
       .exec-meta .ts { display: none; }
     }
+
+    /* ── DLQ panel ── */
+    .dlq-section { display: flex; flex-direction: column; gap: 6px; }
+    .dlq-table-wrap { overflow-x: auto; }
+    .dlq-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .dlq-table th { padding: 6px 10px; text-align: left; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .dlq-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .dlq-table tr:hover td { background: #1a1f2e; }
+    .dlq-table .dlq-id { font-family: monospace; font-size: 11px; color: var(--muted); }
+    .dlq-table .dlq-goal { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dlq-table .dlq-code { color: var(--red); font-size: 11px; }
+    .dlq-table .dlq-time { color: var(--muted); white-space: nowrap; }
+    .dlq-btn { padding: 3px 9px; font-size: 11px; border-radius: 4px; border: none; cursor: pointer; font-weight: 500; }
+    .dlq-btn.replay { background: var(--blue); color: #fff; }
+    .dlq-btn.resolve { background: var(--border); color: var(--text); margin-left: 4px; }
+    .dlq-btn:disabled { opacity: 0.4; cursor: default; }
+    .dlq-empty { color: var(--muted); font-size: 12px; padding: 10px 0; }
+    .dlq-header { display: flex; align-items: center; justify-content: space-between; }
+    .dlq-refresh { font-size: 11px; padding: 3px 8px; }
   </style>
 </head>
 <body>
@@ -414,6 +433,16 @@
       </div>
       <div class="exec-scroll">
         <div id="exec-list"></div>
+      </div>
+    </div>
+
+    <div class="dlq-section">
+      <div class="section-header dlq-header">
+        <div class="section-title">Dead Letter Queue <span id="dlq-count" style="font-weight:400;color:var(--muted)"></span></div>
+        <button class="dlq-btn dlq-refresh" onclick="loadDlq()">Refresh</button>
+      </div>
+      <div class="dlq-table-wrap">
+        <div id="dlq-body"><div class="dlq-empty">Loading…</div></div>
       </div>
     </div>
 
@@ -646,6 +675,66 @@ function buildExec(exec, open) {
 
   return `<div class="exec open" id="exec-${esc(exec.executionId)}">${header}<div class="exec-body">${kpis}${gantt}${stepsTable}</div></div>`;
 }
+
+// ── Dead Letter Queue ─────────────────────────────────────────────────────────
+
+const dlqBody  = document.getElementById('dlq-body');
+const dlqCount = document.getElementById('dlq-count');
+
+async function loadDlq() {
+  try {
+    const r = await fetch('/api/dead-letters?state=PENDING&size=50', { cache: 'no-store' });
+    if (!r.ok) { dlqBody.innerHTML = `<div class="dlq-empty">Error ${r.status}</div>`; return; }
+    const d = await r.json();
+    renderDlq(d.items || []);
+  } catch (ex) {
+    dlqBody.innerHTML = `<div class="dlq-empty">Could not load DLQ: ${esc(ex.message)}</div>`;
+  }
+}
+
+function renderDlq(items) {
+  dlqCount.textContent = items.length ? `(${items.length} pending)` : '';
+  if (!items.length) {
+    dlqBody.innerHTML = '<div class="dlq-empty">No pending dead letters.</div>';
+    return;
+  }
+  const rows = items.map(dl => `
+    <tr>
+      <td class="dlq-id">${esc(dl.id.slice(0, 8))}…</td>
+      <td class="dlq-goal" title="${esc(dl.goal)}">${esc(dl.goal)}</td>
+      <td class="dlq-code">${esc(dl.failureCode || '—')}</td>
+      <td class="dlq-time">${dl.failedAt ? new Date(dl.failedAt).toLocaleTimeString() : '—'}</td>
+      <td>
+        <button class="dlq-btn replay" onclick="dlqAction('${esc(dl.id)}','replay',this)">Replay</button>
+        <button class="dlq-btn resolve" onclick="dlqAction('${esc(dl.id)}','resolve',this)">Resolve</button>
+      </td>
+    </tr>`).join('');
+  dlqBody.innerHTML = `
+    <table class="dlq-table">
+      <thead><tr><th>ID</th><th>Goal</th><th>Failure</th><th>Failed At</th><th>Actions</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+async function dlqAction(id, action, btn) {
+  btn.disabled = true;
+  btn.closest('tr').querySelectorAll('.dlq-btn').forEach(b => b.disabled = true);
+  try {
+    const r = await fetch(`/api/dead-letters/${encodeURIComponent(id)}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: action === 'resolve' ? JSON.stringify({ reason: 'Resolved via UI' }) : ''
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    await loadDlq();
+  } catch (ex) {
+    flash(`DLQ ${action} failed: ${ex.message}`, false);
+    btn.closest('tr').querySelectorAll('.dlq-btn').forEach(b => b.disabled = false);
+  }
+}
+
+loadDlq();
+setInterval(loadDlq, 30000);
 
 // ── Form ───────────────────────────────────────────────────────────────────────
 
