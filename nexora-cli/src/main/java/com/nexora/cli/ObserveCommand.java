@@ -1,6 +1,7 @@
 package com.nexora.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.nexora.api.NexoraEngine;
 import com.nexora.api.observability.NexoraObservability;
 import com.sun.net.httpserver.HttpExchange;
@@ -30,7 +31,9 @@ import java.util.concurrent.Executors;
 )
 public class ObserveCommand implements Callable<Integer> {
 
-    private static final ObjectMapper JSON = new ObjectMapper().findAndRegisterModules();
+    private static final ObjectMapper JSON = new ObjectMapper()
+            .findAndRegisterModules()
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     @ParentCommand
     private NexoraCli parent;

@@ -1,6 +1,7 @@
 package com.nexora.samples;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.nexora.api.NexoraEngine;
 import com.nexora.api.observability.NexoraObservability;
 import com.nexora.core.capability.CapabilityContract;
@@ -70,7 +71,9 @@ public class PaymentPipelineApp {
 
     static final int HTTP_PORT = 9464;
     static final int WS_PORT   = 9465;
-    static final ObjectMapper JSON = new ObjectMapper();
+    static final ObjectMapper JSON = new ObjectMapper()
+            .findAndRegisterModules()
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     static final AtomicLong requestCounter = new AtomicLong(1);
     static JdbcExecutionStore executionStore;
 

@@ -384,23 +384,51 @@
     }
 
     /* ── DLQ panel ── */
-    .dlq-section { display: flex; flex-direction: column; gap: 6px; }
-    .dlq-table-wrap { overflow-x: auto; }
-    .dlq-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    .dlq-table th { padding: 6px 10px; text-align: left; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--border); white-space: nowrap; }
-    .dlq-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
-    .dlq-table tr:hover td { background: #1a1f2e; }
-    .dlq-table .dlq-id { font-family: monospace; font-size: 11px; color: var(--muted); }
-    .dlq-table .dlq-goal { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .dlq-table .dlq-code { color: var(--red); font-size: 11px; }
-    .dlq-table .dlq-time { color: var(--muted); white-space: nowrap; }
-    .dlq-btn { padding: 3px 9px; font-size: 11px; border-radius: 4px; border: none; cursor: pointer; font-weight: 500; }
+    .dlq-section { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; }
+    .dlq-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .dlq-list { display: grid; gap: 8px; }
+    .dlq-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--red);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .dlq-card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border2);
+    }
+    .dlq-card-goal {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+    .dlq-card-time { font-size: 11px; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+    .dlq-card-body {
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .dlq-card-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+    .dlq-card-id { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+    .dlq-card-code { font-size: 11px; color: var(--red); font-weight: 600; }
+    .dlq-card-msg { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dlq-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .dlq-btn { padding: 4px 10px; font-size: 11px; border-radius: 4px; border: none; cursor: pointer; font-weight: 500; }
     .dlq-btn.replay { background: var(--blue); color: #fff; }
-    .dlq-btn.resolve { background: var(--border); color: var(--text); margin-left: 4px; }
+    .dlq-btn.resolve { background: var(--border); color: var(--text); }
     .dlq-btn:disabled { opacity: 0.4; cursor: default; }
     .dlq-empty { color: var(--muted); font-size: 12px; padding: 10px 0; }
-    .dlq-header { display: flex; align-items: center; justify-content: space-between; }
-    .dlq-refresh { font-size: 11px; padding: 3px 8px; }
+    .dlq-refresh { font-size: 11px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; }
+    .dlq-refresh:hover { color: var(--text); border-color: var(--muted); }
   </style>
 </head>
 <body>
@@ -437,13 +465,11 @@
     </div>
 
     <div class="dlq-section">
-      <div class="section-header dlq-header">
+      <div class="dlq-header">
         <div class="section-title">Dead Letter Queue <span id="dlq-count" style="font-weight:400;color:var(--muted)"></span></div>
-        <button class="dlq-btn dlq-refresh" onclick="loadDlq()">Refresh</button>
+        <button class="dlq-refresh" onclick="loadDlq()">↻ Refresh</button>
       </div>
-      <div class="dlq-table-wrap">
-        <div id="dlq-body"><div class="dlq-empty">Loading…</div></div>
-      </div>
+      <div class="dlq-list" id="dlq-body"><div class="dlq-empty">Loading…</div></div>
     </div>
 
   </div>
@@ -698,27 +724,30 @@ function renderDlq(items) {
     dlqBody.innerHTML = '<div class="dlq-empty">No pending dead letters.</div>';
     return;
   }
-  const rows = items.map(dl => `
-    <tr>
-      <td class="dlq-id">${esc(dl.id.slice(0, 8))}…</td>
-      <td class="dlq-goal" title="${esc(dl.goal)}">${esc(dl.goal)}</td>
-      <td class="dlq-code">${esc(dl.failureCode || '—')}</td>
-      <td class="dlq-time">${dl.failedAt ? new Date(dl.failedAt).toLocaleTimeString() : '—'}</td>
-      <td>
-        <button class="dlq-btn replay" onclick="dlqAction('${esc(dl.id)}','replay',this)">Replay</button>
-        <button class="dlq-btn resolve" onclick="dlqAction('${esc(dl.id)}','resolve',this)">Resolve</button>
-      </td>
-    </tr>`).join('');
-  dlqBody.innerHTML = `
-    <table class="dlq-table">
-      <thead><tr><th>ID</th><th>Goal</th><th>Failure</th><th>Failed At</th><th>Actions</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+  dlqBody.innerHTML = items.map(dl => `
+    <div class="dlq-card" id="dlq-card-${esc(dl.id)}">
+      <div class="dlq-card-header">
+        <span class="badge failed">FAILED</span>
+        <span class="dlq-card-goal" title="${esc(dl.goal)}">${esc(dl.goal)}</span>
+        <span class="dlq-card-time">${dl.failedAt ? new Date(dl.failedAt).toLocaleTimeString() : '—'}</span>
+      </div>
+      <div class="dlq-card-body">
+        <div class="dlq-card-meta">
+          <span class="dlq-card-id">${esc(dl.id.slice(0, 8))}…</span>
+          <span class="dlq-card-code">${esc(dl.failureCode || '—')}</span>
+          ${dl.failureMessage ? `<span class="dlq-card-msg" title="${esc(dl.failureMessage)}">${esc(dl.failureMessage)}</span>` : ''}
+        </div>
+        <div class="dlq-actions">
+          <button class="dlq-btn replay" onclick="dlqAction('${esc(dl.id)}','replay',this)">Replay</button>
+          <button class="dlq-btn resolve" onclick="dlqAction('${esc(dl.id)}','resolve',this)">Resolve</button>
+        </div>
+      </div>
+    </div>`).join('');
 }
 
 async function dlqAction(id, action, btn) {
-  btn.disabled = true;
-  btn.closest('tr').querySelectorAll('.dlq-btn').forEach(b => b.disabled = true);
+  const card = document.getElementById(`dlq-card-${id}`);
+  card.querySelectorAll('.dlq-btn').forEach(b => b.disabled = true);
   try {
     const r = await fetch(`/api/dead-letters/${encodeURIComponent(id)}/${action}`, {
       method: 'POST',
@@ -726,10 +755,11 @@ async function dlqAction(id, action, btn) {
       body: action === 'resolve' ? JSON.stringify({ reason: 'Resolved via UI' }) : ''
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    await loadDlq();
+    card.style.opacity = '0.4';
+    setTimeout(() => loadDlq(), 400);
   } catch (ex) {
     flash(`DLQ ${action} failed: ${ex.message}`, false);
-    btn.closest('tr').querySelectorAll('.dlq-btn').forEach(b => b.disabled = false);
+    card.querySelectorAll('.dlq-btn').forEach(b => b.disabled = false);
   }
 }
 
