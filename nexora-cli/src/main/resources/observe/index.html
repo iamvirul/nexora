@@ -151,9 +151,21 @@
 
     .flash { font-size: 12px; color: var(--muted); white-space: nowrap; }
 
+    /* ── Two-column panels row ── */
+    .panels {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    @media (max-width: 800px) {
+      .panels { grid-template-columns: 1fr; }
+    }
+
     /* ── Exec section (scrollable) ── */
     .exec-section {
-      flex: 1;
       overflow: hidden;
       display: flex;
       flex-direction: column;
@@ -384,8 +396,12 @@
     }
 
     /* ── DLQ panel ── */
-    .dlq-section { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; }
-    .dlq-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .dlq-section { overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+    .dlq-scroll { flex: 1; overflow-y: auto; min-height: 0; padding-bottom: 4px; }
+    .dlq-scroll::-webkit-scrollbar { width: 6px; }
+    .dlq-scroll::-webkit-scrollbar-track { background: transparent; }
+    .dlq-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .dlq-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-shrink: 0; }
     .dlq-list { display: grid; gap: 8px; }
     .dlq-card {
       background: var(--surface);
@@ -455,21 +471,27 @@
       <span class="flash" id="flash"></span>
     </form>
 
-    <div class="exec-section">
-      <div class="section-header">
-        <div class="section-title" id="exec-count">Executions</div>
-      </div>
-      <div class="exec-scroll">
-        <div id="exec-list"></div>
-      </div>
-    </div>
+    <div class="panels">
 
-    <div class="dlq-section">
-      <div class="dlq-header">
-        <div class="section-title">Dead Letter Queue <span id="dlq-count" style="font-weight:400;color:var(--muted)"></span></div>
-        <button class="dlq-refresh" onclick="loadDlq()">↻ Refresh</button>
+      <div class="exec-section">
+        <div class="section-header">
+          <div class="section-title" id="exec-count">Executions</div>
+        </div>
+        <div class="exec-scroll">
+          <div id="exec-list"></div>
+        </div>
       </div>
-      <div class="dlq-list" id="dlq-body"><div class="dlq-empty">Loading…</div></div>
+
+      <div class="dlq-section">
+        <div class="dlq-header">
+          <div class="section-title">Dead Letter Queue <span id="dlq-count" style="font-weight:400;color:var(--muted)"></span></div>
+          <button class="dlq-refresh" onclick="loadDlq()">↻ Refresh</button>
+        </div>
+        <div class="dlq-scroll">
+          <div class="dlq-list" id="dlq-body"><div class="dlq-empty">Loading…</div></div>
+        </div>
+      </div>
+
     </div>
 
   </div>
