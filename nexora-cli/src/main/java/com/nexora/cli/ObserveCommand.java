@@ -51,6 +51,10 @@ public class ObserveCommand implements Callable<Integer> {
             description = "Max timeline events retained per execution. Default: ${DEFAULT-VALUE}")
     private int maxEvents;
 
+    @Option(names = {"--api-key"},
+            description = "Bearer token required on DLQ endpoints. Reads NEXORA_API_KEY env var if absent.")
+    private String apiKey;
+
     @Override
     public Integer call() throws Exception {
         int wsPort = port + 1;
@@ -165,6 +169,107 @@ public class ObserveCommand implements Callable<Integer> {
             }
         });
 
+        server.createContext("/api/dead-letters/", exchange -> {
+            com.nexora.persistence.ExecutionStore dlqStore = engine.getStore();
+            if (dlqStore == null) {
+                try { sendJson(exchange, 503, Map.of("error", "Persistence disabled")); } catch(Exception ignored) {}
+                return;
+            }
+            if (!isAuthorized(exchange)) {
+                try { sendJson(exchange, 401, Map.of("error", "Unauthorized")); } catch(Exception ignored) {}
+                return;
+            }
+            String path = exchange.getRequestURI().getPath();
+            String prefix = "/api/dead-letters/";
+            String remainder = path.length() > prefix.length() ? path.substring(prefix.length()) : "";
+
+            // POST /api/dead-letters/{id}/replay
+            if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && remainder.endsWith("/replay")) {
+                String dlId = remainder.substring(0, remainder.length() - "/replay".length());
+                var dlOpt = dlqStore.findDeadLetterById(dlId);
+                if (dlOpt.isEmpty()) {
+                    try { sendJson(exchange, 404, Map.of("error", "Dead letter not found")); } catch(Exception ignored) {}
+                    return;
+                }
+                var dl = dlOpt.get();
+                if (dl.reviewState() != com.nexora.persistence.DeadLetterReviewState.PENDING) {
+                    try { sendJson(exchange, 409, Map.of("error", "Dead letter is not in PENDING state")); } catch(Exception ignored) {}
+                    return;
+                }
+                com.nexora.core.intent.Intent replayIntent = new com.nexora.core.intent.Intent(dl.goal(), dl.context());
+                engine.execute(replayIntent).whenComplete((r, ex) -> {
+                    if (ex != null) System.err.printf("DLQ replay failed id=%s error=%s%n", dlId, ex.getMessage());
+                });
+                dlqStore.updateDeadLetterState(dlId, com.nexora.persistence.DeadLetterReviewState.REPLAYED, null);
+                try { sendJson(exchange, 202, Map.of("accepted", true, "deadLetterId", dlId)); } catch(Exception ignored) {}
+                return;
+            }
+
+            // POST /api/dead-letters/{id}/resolve
+            if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && remainder.endsWith("/resolve")) {
+                String dlId = remainder.substring(0, remainder.length() - "/resolve".length());
+                var dlOpt = dlqStore.findDeadLetterById(dlId);
+                if (dlOpt.isEmpty()) {
+                    try { sendJson(exchange, 404, Map.of("error", "Dead letter not found")); } catch(Exception ignored) {}
+                    return;
+                }
+                String reason = null;
+                try (java.io.InputStream body = exchange.getRequestBody()) {
+                    byte[] bytes = body.readAllBytes();
+                    if (bytes.length > 0) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> payload = JSON.readValue(bytes, Map.class);
+                        Object r = payload.get("reason");
+                        reason = r != null ? r.toString() : null;
+                    }
+                } catch (Exception ignored) {}
+                dlqStore.updateDeadLetterState(dlId, com.nexora.persistence.DeadLetterReviewState.RESOLVED, reason);
+                try { sendJson(exchange, 200, Map.of("resolved", true, "deadLetterId", dlId)); } catch(Exception ignored) {}
+                return;
+            }
+
+            try { sendJson(exchange, 405, Map.of("error", "Method Not Allowed")); } catch(Exception ignored) {}
+        });
+
+        server.createContext("/api/dead-letters", exchange -> {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                try { sendText(exchange, 405, "Method Not Allowed"); } catch(Exception ignored) {}
+                return;
+            }
+            com.nexora.persistence.ExecutionStore dlqStore = engine.getStore();
+            if (dlqStore == null) {
+                try { sendJson(exchange, 503, Map.of("error", "Persistence disabled")); } catch(Exception ignored) {}
+                return;
+            }
+            if (!isAuthorized(exchange)) {
+                try { sendJson(exchange, 401, Map.of("error", "Unauthorized")); } catch(Exception ignored) {}
+                return;
+            }
+            String query = exchange.getRequestURI().getQuery();
+            com.nexora.persistence.DeadLetterReviewState stateFilter =
+                    com.nexora.persistence.DeadLetterReviewState.PENDING;
+            int page = 0;
+            int size = 20;
+            if (query != null) {
+                for (String param : query.split("&")) {
+                    String[] kv = param.split("=", 2);
+                    if (kv.length < 2) continue;
+                    switch (kv[0]) {
+                        case "state" -> {
+                            if ("ALL".equalsIgnoreCase(kv[1])) stateFilter = null;
+                            else try { stateFilter = com.nexora.persistence.DeadLetterReviewState.valueOf(kv[1].toUpperCase()); }
+                                 catch (IllegalArgumentException ignored) {}
+                        }
+                        case "page" -> { try { page = Integer.parseInt(kv[1]); } catch (NumberFormatException ignored) {} }
+                        case "size" -> { try { size = Math.min(100, Integer.parseInt(kv[1])); } catch (NumberFormatException ignored) {} }
+                    }
+                }
+            }
+            java.util.List<com.nexora.persistence.DeadLetterRecord> items =
+                    dlqStore.findDeadLetters(stateFilter, page * size, size);
+            try { sendJson(exchange, 200, Map.of("items", items, "page", page, "size", size)); } catch(Exception ignored) {}
+        });
+
         server.createContext("/health/ready", exchange -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 sendText(exchange, 405, "Method Not Allowed");
@@ -261,6 +366,13 @@ public class ObserveCommand implements Callable<Integer> {
             Map<String, Object> context, 
             String webhookUrl, 
             java.util.List<com.nexora.core.execution.ExecutionStatus> webhookEvents) {}
+
+    private boolean isAuthorized(HttpExchange exchange) {
+        String effectiveKey = apiKey != null && !apiKey.isBlank() ? apiKey : System.getenv("NEXORA_API_KEY");
+        if (effectiveKey == null || effectiveKey.isBlank()) return true; // no key configured — open
+        String header = exchange.getRequestHeaders().getFirst("Authorization");
+        return header != null && header.equals("Bearer " + effectiveKey);
+    }
 
     private static final class SnapshotBroadcaster extends WebSocketServer {
 
