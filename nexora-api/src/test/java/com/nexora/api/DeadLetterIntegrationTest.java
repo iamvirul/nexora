@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -66,11 +67,11 @@ class DeadLetterIntegrationTest {
     @Test
     void deadLetteredEventFiresWithCorrectDetails() throws Exception {
         List<ExecutionDeadLetteredEvent> events = new CopyOnWriteArrayList<>();
-        engine.subscribe(ExecutionDeadLetteredEvent.class, events::add);
+        CountDownLatch latch = new CountDownLatch(1);
+        engine.subscribe(ExecutionDeadLetteredEvent.class, e -> { events.add(e); latch.countDown(); });
 
         ExecutionResult result = engine.execute(new Intent("fail this goal", Map.of())).get();
-        // give the event bus a moment to deliver async
-        Thread.sleep(200);
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "ExecutionDeadLetteredEvent not delivered within 5s");
 
         assertEquals(1, events.size());
         ExecutionDeadLetteredEvent evt = events.get(0);
