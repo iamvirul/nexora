@@ -78,9 +78,6 @@
       flex-direction: column;
       gap: 12px;
       padding: 16px 20px;
-      max-width: 1200px;
-      width: 100%;
-      margin: 0 auto;
       min-height: 0;
     }
 
@@ -164,12 +161,16 @@
       .panels { grid-template-columns: 1fr; }
     }
 
-    /* ── Exec section (scrollable) ── */
+    /* ── Panel islands (IntelliJ-style) ── */
     .exec-section {
       overflow: hidden;
       display: flex;
       flex-direction: column;
       min-height: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
     }
 
     .section-header {
@@ -177,16 +178,19 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 8px;
+      padding: 8px 14px;
+      background: #1a1f2e;
+      border-bottom: 1px solid var(--border);
+      border-radius: 7px 7px 0 0;
     }
 
-    .section-title { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .section-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; }
 
     .exec-scroll {
       flex: 1;
       overflow-y: auto;
       min-height: 0;
-      padding-bottom: 4px;
+      padding: 10px;
     }
 
     .exec-scroll::-webkit-scrollbar { width: 6px; }
@@ -196,7 +200,6 @@
     .exec-list { display: grid; gap: 8px; }
 
     .empty {
-      background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 6px;
       padding: 40px;
@@ -396,12 +399,30 @@
     }
 
     /* ── DLQ panel ── */
-    .dlq-section { overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
-    .dlq-scroll { flex: 1; overflow-y: auto; min-height: 0; padding-bottom: 4px; }
+    .dlq-section {
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    }
+    .dlq-scroll { flex: 1; overflow-y: auto; min-height: 0; padding: 10px; }
     .dlq-scroll::-webkit-scrollbar { width: 6px; }
     .dlq-scroll::-webkit-scrollbar-track { background: transparent; }
     .dlq-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-    .dlq-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-shrink: 0; }
+    .dlq-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      padding: 8px 14px;
+      background: #1a1f2e;
+      border-bottom: 1px solid var(--border);
+      border-radius: 7px 7px 0 0;
+    }
     .dlq-list { display: grid; gap: 8px; }
     .dlq-card {
       background: var(--surface);
