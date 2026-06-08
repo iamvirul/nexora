@@ -110,10 +110,14 @@ class WebhookDeliveryServiceTest {
 
         assertEquals(expectedSignature, receivedSignature.get(), "HMAC signature should match payload");
 
-        // Wait a bit for the async HTTP client's whenComplete block to store the delivery
-        Thread.sleep(100); 
-
-        List<WebhookDeliveryRecord> deliveries = store.getWebhookDeliveries("exec-1");
+        // Poll until the async whenComplete block stores the delivery (or timeout)
+        List<WebhookDeliveryRecord> deliveries = List.of();
+        long deadline = System.currentTimeMillis() + 3_000;
+        while (System.currentTimeMillis() < deadline) {
+            deliveries = store.getWebhookDeliveries("exec-1");
+            if (!deliveries.isEmpty()) break;
+            Thread.sleep(50);
+        }
         assertEquals(1, deliveries.size());
         assertTrue(deliveries.get(0).successful());
         assertEquals("exec-1", deliveries.get(0).executionId());
