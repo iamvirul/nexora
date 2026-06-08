@@ -14,8 +14,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
-      - with:
-+          persist-credentials: false 
+        with:
+          persist-credentials: false 
       
 
       - name: Setup Java
