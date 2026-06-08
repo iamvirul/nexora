@@ -18,6 +18,9 @@ nexora [--config <file>] <command>
 | `nexora plugins` | List active plugins |
 | `nexora observe` | Start UI/API/metrics server for live process observability |
 | `nexora demo` | Run the built-in feature demo |
+| `nexora dlq list` | List dead letter queue entries (default: PENDING) — *Unreleased* |
+| `nexora dlq replay <id>` | Replay a dead-lettered execution — *Unreleased* |
+| `nexora dlq resolve <id>` | Mark a dead letter as resolved — *Unreleased* |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 

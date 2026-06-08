@@ -22,8 +22,11 @@ This exposes four endpoints with no external dependencies:
 | `POST /api/execute` | Trigger an execution remotely |
 | `GET /health/ready` | Check health of all capabilities (returns 503 if any circuit is OPEN/HALF_OPEN) |
 | `GET /api/webhook-deliveries/{id}` | Audit log of webhook delivery attempts for an execution |
+| `GET /api/dead-letters` | List dead letter queue entries (paginated, filterable by `?state=`) — *Unreleased* |
+| `POST /api/dead-letters/{id}/replay` | Create a new execution from a dead letter — *Unreleased* |
+| `POST /api/dead-letters/{id}/resolve` | Mark a dead letter as resolved — *Unreleased* |
 
-> **Note**: The `/health/ready` and `/api/webhook-deliveries` endpoints are currently **Unreleased**.
+> **Note**: The `/health/ready`, `/api/webhook-deliveries`, and `/api/dead-letters` endpoints are currently **Unreleased**.
 
 Example execute request with webhook callback:
 
@@ -52,6 +55,23 @@ To use webhooks securely, configure an HMAC-SHA256 signature secret in your `nex
 ```
 
 Nexora will dispatch a JSON payload to your endpoint with the execution outcome. It signs the payload using the configured secret and passes the signature in the `nexora-signature` HTTP header for validation. Delivery attempts are persisted in the `nexora_webhook_deliveries` database table and can be queried for auditability via the API.
+
+## Dead Letter Queue API (Unreleased version)
+
+Permanently failed executions are captured in the dead letter queue. See [Dead Letter Queue](concepts/dead-letter-queue) for full documentation.
+
+```bash
+# list PENDING (default)
+curl http://localhost:9464/api/dead-letters
+
+# replay
+curl -X POST http://localhost:9464/api/dead-letters/<id>/replay
+
+# resolve
+curl -X POST http://localhost:9464/api/dead-letters/<id>/resolve \
+  -H "content-type: application/json" \
+  -d '{"reason":"investigated and closed"}'
+```
 
 ### Metrics exposed include
 
