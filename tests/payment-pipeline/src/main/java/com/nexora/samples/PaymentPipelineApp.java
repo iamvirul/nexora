@@ -8,6 +8,10 @@ import com.nexora.core.capability.CapabilityResult;
 import com.nexora.core.plan.AddStepAmendment;
 import com.nexora.core.plan.InputBinding;
 import com.nexora.core.plan.Step;
+import com.nexora.event.ExecutionDeadLetteredEvent;
+import com.nexora.persistence.DeadLetterReviewState;
+import com.nexora.persistence.ExecutionStore;
+import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import com.nexora.planner.model.StepDefinition;
 import com.nexora.spi.Capability;
 import com.nexora.spi.CapabilityDescriptor;
@@ -68,10 +72,16 @@ public class PaymentPipelineApp {
     static final int WS_PORT   = 9465;
     static final ObjectMapper JSON = new ObjectMapper();
     static final AtomicLong requestCounter = new AtomicLong(1);
+    static JdbcExecutionStore executionStore;
 
     public static void main(String[] args) throws Exception {
+        executionStore = JdbcExecutionStore.h2InMemory();
         NexoraEngine engine = buildEngine();
         NexoraObservability obs = NexoraObservability.attach(engine, 50, 300);
+
+        engine.subscribe(ExecutionDeadLetteredEvent.class, e ->
+            System.out.printf("%n  >>> DEAD LETTER CREATED  executionId=%s  code=%s  dlId=%s%n",
+                e.executionId(), e.failureCode(), e.deadLetterId()));
 
         // WebSocket broadcaster
         SnapshotBroadcaster broadcaster = new SnapshotBroadcaster(WS_PORT);
@@ -127,6 +137,70 @@ public class PaymentPipelineApp {
             sendJson(exchange, 202, Map.of("accepted", true, "goal", req.goal()));
         });
 
+        http.createContext("/api/dead-letters/", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            String prefix = "/api/dead-letters/";
+            String remainder = path.length() > prefix.length() ? path.substring(prefix.length()) : "";
+            if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && remainder.endsWith("/replay")) {
+                String dlId = remainder.substring(0, remainder.length() - "/replay".length());
+                var dlOpt = executionStore.findDeadLetterById(dlId);
+                if (dlOpt.isEmpty()) { sendJson(exchange, 404, Map.of("error", "Not found")); return; }
+                var dl = dlOpt.get();
+                if (dl.reviewState() != DeadLetterReviewState.PENDING) {
+                    sendJson(exchange, 409, Map.of("error", "Not in PENDING state")); return;
+                }
+                engine.execute(dl.goal(), dl.context());
+                executionStore.updateDeadLetterState(dlId, DeadLetterReviewState.REPLAYED, null);
+                sendJson(exchange, 202, Map.of("accepted", true, "deadLetterId", dlId));
+                return;
+            }
+            if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && remainder.endsWith("/resolve")) {
+                String dlId = remainder.substring(0, remainder.length() - "/resolve".length());
+                var dlOpt = executionStore.findDeadLetterById(dlId);
+                if (dlOpt.isEmpty()) { sendJson(exchange, 404, Map.of("error", "Not found")); return; }
+                String reason = null;
+                try (var body = exchange.getRequestBody()) {
+                    byte[] bytes = body.readAllBytes();
+                    if (bytes.length > 0) {
+                        @SuppressWarnings("unchecked")
+                        var p = (java.util.Map<String,Object>) JSON.readValue(bytes, java.util.Map.class);
+                        Object r = p.get("reason");
+                        reason = r != null ? r.toString() : null;
+                    }
+                } catch (Exception ignored) {}
+                executionStore.updateDeadLetterState(dlId, DeadLetterReviewState.RESOLVED, reason);
+                sendJson(exchange, 200, Map.of("resolved", true, "deadLetterId", dlId));
+                return;
+            }
+            sendJson(exchange, 405, Map.of("error", "Method Not Allowed"));
+        });
+
+        http.createContext("/api/dead-letters", exchange -> {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendText(exchange, 405, "Method Not Allowed"); return;
+            }
+            String query = exchange.getRequestURI().getQuery();
+            DeadLetterReviewState stateFilter = DeadLetterReviewState.PENDING;
+            int page = 0, size = 20;
+            if (query != null) {
+                for (String param : query.split("&")) {
+                    String[] kv = param.split("=", 2);
+                    if (kv.length < 2) continue;
+                    switch (kv[0]) {
+                        case "state" -> {
+                            if ("ALL".equalsIgnoreCase(kv[1])) stateFilter = null;
+                            else try { stateFilter = DeadLetterReviewState.valueOf(kv[1].toUpperCase()); }
+                                 catch (IllegalArgumentException ignored) {}
+                        }
+                        case "page" -> { try { page = Integer.parseInt(kv[1]); } catch (NumberFormatException ignored) {} }
+                        case "size" -> { try { size = Math.min(100, Integer.parseInt(kv[1])); } catch (NumberFormatException ignored) {} }
+                    }
+                }
+            }
+            var items = executionStore.findDeadLetters(stateFilter, page * size, size);
+            sendJson(exchange, 200, Map.of("items", items, "page", page, "size", size));
+        });
+
         http.createContext("/api/mock-webhook", exchange -> {
             System.out.println();
             System.out.println("  >>> WEBHOOK CALLBACK RECEIVED!");
@@ -137,7 +211,7 @@ public class PaymentPipelineApp {
 
         CountDownLatch shutdown = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try { http.stop(0); broadcaster.stop(500); obs.close(); }
+            try { http.stop(0); broadcaster.stop(500); obs.close(); executionStore.close(); }
             catch (Exception ignored) {}
             finally { shutdown.countDown(); }
         }));
@@ -160,14 +234,17 @@ public class PaymentPipelineApp {
         System.out.println("                    │");
         System.out.println("  screen_sanctions ─┘");
         System.out.println();
+        System.out.printf("DLQ:       http://localhost:%d/api/dead-letters%n", HTTP_PORT);
+        System.out.println();
         System.out.println("Scenarios:");
         System.out.println("  1  Happy path       amount=450,  low risk");
         System.out.println("  2  High risk         amount=1500, fraud review amendment");
-        System.out.println("  3  Gateway failure   forceFailure=true, saga compensates");
-        System.out.println("  4  Sanctions hit     forceBlockedUser=true, early failure + partial compensation");
+        System.out.println("  3  Gateway failure   forceFailure=true, saga compensates + DLQ entry");
+        System.out.println("  4  Sanctions hit     forceBlockedUser=true, early failure + partial compensation + DLQ entry");
         System.out.println("  5  Execution timeout deadline=100ms, watchdog cancels execution + saga compensates");
         System.out.println("  6  Circuit Breaker   trigger failures to open the circuit, then test fallback routing");
         System.out.println("  7  Webhook Callback  dispatch webhook on execution completion with HMAC signature");
+        System.out.println("  8  DLQ Replay        replays a dead-lettered execution from the DLQ");
         System.out.println();
         System.out.println("Firing test scenarios...");
         System.out.println();
@@ -245,6 +322,29 @@ public class PaymentPipelineApp {
         ));
         sleep(200);
 
+        // Scenario 8 — DLQ replay: wait for dead letters from scenarios 3 & 4, then replay one
+        System.out.println();
+        System.out.println("  [8/8] DLQ Replay — replaying a permanently failed execution from the dead letter queue");
+        sleep(800); // allow async dead-letter writes to complete
+        var pendingDls = executionStore.findDeadLetters(DeadLetterReviewState.PENDING, 0, 10);
+        System.out.printf("  DLQ has %d pending dead letters.%n", pendingDls.size());
+        if (!pendingDls.isEmpty()) {
+            var dl = pendingDls.get(0);
+            System.out.printf("  Replaying dead letter id=%s executionId=%s goal='%s'%n",
+                    dl.id(), dl.executionId(), dl.goal());
+            engine.execute(dl.goal(), dl.context());
+            executionStore.updateDeadLetterState(dl.id(), DeadLetterReviewState.REPLAYED, null);
+            System.out.println("  Dead letter marked REPLAYED.");
+            if (pendingDls.size() > 1) {
+                var dl2 = pendingDls.get(1);
+                executionStore.updateDeadLetterState(dl2.id(), DeadLetterReviewState.RESOLVED, "False positive — investigated");
+                System.out.println("  Second dead letter marked RESOLVED (false positive).");
+            }
+        } else {
+            System.out.println("  No pending dead letters yet — try scenario 3 or 4 manually via the UI.");
+        }
+        sleep(200);
+
         System.out.println();
         System.out.println("Ready. Open http://localhost:9464/ in your browser.");
         System.out.println("Submit more executions via the form. Press Ctrl+C to stop.");
@@ -258,6 +358,7 @@ public class PaymentPipelineApp {
     static NexoraEngine buildEngine() {
         return NexoraEngine.builder()
                 .withWebhookSecret("payment-pipeline-secret-key-123")
+                .withExecutionStore(executionStore)
                 .withPlugin(buildPlugin())
                 .withSagaEnabled(true)
                 // step 1 - starts immediately
