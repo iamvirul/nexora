@@ -328,7 +328,9 @@ public class PaymentPipelineApp {
         // Scenario 8 — DLQ replay: wait for dead letters from scenarios 3 & 4, then replay one
         System.out.println();
         System.out.println("  [8/8] DLQ Replay — replaying a permanently failed execution from the dead letter queue");
-        sleep(800); // allow async dead-letter writes to complete
+        // Demo-only: arbitrary delay to let async dead-letter writes land before querying.
+        // Production should coordinate via event subscription or synchronous store writes instead.
+        sleep(800);
         var pendingDls = executionStore.findDeadLetters(DeadLetterReviewState.PENDING, 0, 10);
         System.out.printf("  DLQ has %d pending dead letters.%n", pendingDls.size());
         if (!pendingDls.isEmpty()) {

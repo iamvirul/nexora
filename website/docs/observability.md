@@ -22,7 +22,7 @@ This exposes four endpoints with no external dependencies:
 | `POST /api/execute` | Trigger an execution remotely |
 | `GET /health/ready` | Check health of all capabilities (returns 503 if any circuit is OPEN/HALF_OPEN) |
 | `GET /api/webhook-deliveries/{id}` | Audit log of webhook delivery attempts for an execution |
-| `GET /api/dead-letters` | List dead letter queue entries (paginated, filterable by `?state=`) — *Unreleased* |
+| `GET /api/dead-letters` | List dead letter queue entries (paginated via `?page=` and `?size=`, filterable by `?state=PENDING\|RESOLVED\|REPLAYED\|ALL`) — *Unreleased* |
 | `POST /api/dead-letters/{id}/replay` | Create a new execution from a dead letter — *Unreleased* |
 | `POST /api/dead-letters/{id}/resolve` | Mark a dead letter as resolved — *Unreleased* |
 
@@ -64,13 +64,22 @@ Permanently failed executions are captured in the dead letter queue. See [Dead L
 # list PENDING (default)
 curl http://localhost:9464/api/dead-letters
 
-# replay
+# list all states with pagination
+curl "http://localhost:9464/api/dead-letters?state=ALL&page=0&size=10"
+
+# filter by state
+curl "http://localhost:9464/api/dead-letters?state=RESOLVED&page=0&size=20"
+
+# replay a dead letter (creates a new execution from the original goal + context)
 curl -X POST http://localhost:9464/api/dead-letters/<id>/replay
 
-# resolve
+# resolve with a reason
 curl -X POST http://localhost:9464/api/dead-letters/<id>/resolve \
   -H "content-type: application/json" \
   -d '{"reason":"investigated and closed"}'
+
+# resolve without a reason (reason field is optional)
+curl -X POST http://localhost:9464/api/dead-letters/<id>/resolve
 ```
 
 ### Metrics exposed include
