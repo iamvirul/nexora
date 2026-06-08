@@ -66,8 +66,19 @@ public class DlqCommand implements Callable<Integer> {
             ExecutionStore store = requireStore(dlq.parent.engine());
             if (store == null) return 1;
 
-            DeadLetterReviewState filter = "ALL".equalsIgnoreCase(state) ? null
-                    : DeadLetterReviewState.valueOf(state.toUpperCase());
+            DeadLetterReviewState filter;
+            if ("ALL".equalsIgnoreCase(state)) {
+                filter = null;
+            } else {
+                try {
+                    filter = DeadLetterReviewState.valueOf(state.toUpperCase());
+                } catch (IllegalArgumentException e) {
+                    System.err.printf("Invalid state '%s'. Allowed values: ALL, %s%n",
+                            state, java.util.Arrays.stream(DeadLetterReviewState.values())
+                                    .map(Enum::name).collect(java.util.stream.Collectors.joining(", ")));
+                    return 1;
+                }
+            }
 
             List<DeadLetterRecord> items = store.findDeadLetters(filter, page * size, size);
             if (items.isEmpty()) {

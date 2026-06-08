@@ -347,6 +347,14 @@ public final class JdbcExecutionStore implements ExecutionStore {
         Map<String, Object> ctx = rs.getString("context_json") != null
                 ? JSON.readValue(rs.getString("context_json"), MAP_TYPE)
                 : Map.of();
+        String rawState = rs.getString("review_state");
+        DeadLetterReviewState reviewState;
+        try {
+            reviewState = rawState != null ? DeadLetterReviewState.valueOf(rawState) : DeadLetterReviewState.PENDING;
+        } catch (IllegalArgumentException e) {
+            log.warn("Unknown review_state '{}' in dead letter id={}, defaulting to PENDING", rawState, rs.getString("id"));
+            reviewState = DeadLetterReviewState.PENDING;
+        }
         return new DeadLetterRecord(
                 rs.getString("id"),
                 rs.getString("execution_id"),
@@ -355,7 +363,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 rs.getString("failure_code"),
                 rs.getString("failure_message"),
                 rs.getTimestamp("failed_at").toInstant(),
-                DeadLetterReviewState.valueOf(rs.getString("review_state")),
+                reviewState,
                 rs.getString("resolve_reason")
         );
     }

@@ -272,6 +272,7 @@ public final class ExecutionEngine {
                         .findFirst().orElse(null);
                 String failureMessage = result.stepResults().stream()
                         .filter(sr -> !sr.succeeded())
+                        .filter(sr -> sr.capabilityResult() != null)
                         .map(sr -> sr.capabilityResult().failureMessage())
                         .filter(Objects::nonNull)
                         .findFirst().orElse(null);

@@ -247,9 +247,18 @@ public class ObserveCommand implements Callable<Integer> {
                     if (kv.length < 2) continue;
                     switch (kv[0]) {
                         case "state" -> {
-                            if ("ALL".equalsIgnoreCase(kv[1])) stateFilter = null;
-                            else try { stateFilter = com.nexora.persistence.DeadLetterReviewState.valueOf(kv[1].toUpperCase()); }
-                                 catch (IllegalArgumentException ignored) {}
+                            if ("ALL".equalsIgnoreCase(kv[1])) {
+                                stateFilter = null;
+                            } else {
+                                try {
+                                    stateFilter = com.nexora.persistence.DeadLetterReviewState.valueOf(kv[1].toUpperCase());
+                                } catch (IllegalArgumentException e) {
+                                    try { sendJson(exchange, 400, Map.of("error",
+                                            "Invalid state '" + kv[1] + "'. Allowed: PENDING, RESOLVED, REPLAYED, ALL")); }
+                                    catch (Exception ignored) {}
+                                    return;
+                                }
+                            }
                         }
                         case "page" -> { try { page = Integer.parseInt(kv[1]); } catch (NumberFormatException ignored) {} }
                         case "size" -> { try { size = Math.min(100, Integer.parseInt(kv[1])); } catch (NumberFormatException ignored) {} }
