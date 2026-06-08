@@ -30,6 +30,38 @@ public interface ExecutionStore extends AutoCloseable {
 
     List<ExecutionRecord> findRecent(int limit);
 
+    // --- Dead Letter Queue ---
+
+    /** Persists a new dead letter record in PENDING state. */
+    default void createDeadLetter(DeadLetterRecord record) {
+        throw new UnsupportedOperationException("DLQ not supported by this store implementation");
+    }
+
+    /** Finds a dead letter by its own id. */
+    default Optional<DeadLetterRecord> findDeadLetterById(String id) {
+        return Optional.empty();
+    }
+
+    /**
+     * Returns a page of dead letters filtered by review state.
+     *
+     * @param state  filter; {@code null} returns all states
+     * @param offset zero-based row offset
+     * @param limit  max rows to return
+     */
+    default List<DeadLetterRecord> findDeadLetters(DeadLetterReviewState state, int offset, int limit) {
+        return List.of();
+    }
+
+    /**
+     * Transitions a dead letter to the given state.
+     *
+     * @param resolveReason optional human-readable reason; only meaningful for RESOLVED transitions
+     */
+    default void updateDeadLetterState(String id, DeadLetterReviewState state, String resolveReason) {
+        throw new UnsupportedOperationException("DLQ not supported by this store implementation");
+    }
+
     @Override
     void close();
 }
