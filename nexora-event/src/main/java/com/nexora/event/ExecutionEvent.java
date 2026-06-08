@@ -20,5 +20,6 @@ public sealed interface ExecutionEvent permits
         PluginActivatedEvent,
         PluginDeactivatedEvent,
         CapabilityCircuitOpenedEvent,
-        CapabilityCircuitClosedEvent {
+        CapabilityCircuitClosedEvent,
+        ExecutionDeadLetteredEvent {
 }

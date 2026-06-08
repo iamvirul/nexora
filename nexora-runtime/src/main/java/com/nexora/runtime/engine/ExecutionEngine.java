@@ -6,6 +6,7 @@ import com.nexora.core.execution.ExecutionResult;
 import com.nexora.core.execution.ExecutionStatus;
 import com.nexora.core.intent.Intent;
 import com.nexora.core.plan.Plan;
+import com.nexora.event.ExecutionDeadLetteredEvent;
 import com.nexora.event.ExecutionEventBus;
 import com.nexora.event.PlanCompletedEvent;
 import com.nexora.event.PlanFailedEvent;
@@ -14,6 +15,7 @@ import com.nexora.event.PlanTimedOutEvent;
 import com.nexora.event.StepCompletedEvent;
 import com.nexora.event.StepFailedEvent;
 import com.nexora.event.StepStartedEvent;
+import com.nexora.persistence.DeadLetterRecord;
 import com.nexora.executor.DagStepScheduler;
 import com.nexora.persistence.ExecutionRecord;
 import com.nexora.persistence.ExecutionState;
@@ -32,6 +34,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -139,6 +142,23 @@ public final class ExecutionEngine {
         });
     }
 
+    private void writeDeadLetter(String executionId, Intent intent, String failureCode,
+                                 String failureMessage, Instant failedAt) {
+        if (store == null) return;
+        String dlId = UUID.randomUUID().toString();
+        DeadLetterRecord dl = DeadLetterRecord.pending(
+                dlId, executionId, intent.getGoal(), intent.getContext(),
+                failureCode, failureMessage, failedAt);
+        try {
+            store.createDeadLetter(dl);
+        } catch (Exception e) {
+            log.warn("Persistence: failed to create dead letter executionId={}", executionId, e);
+            return;
+        }
+        eventBus.publish(new ExecutionDeadLetteredEvent(executionId, dlId, failureCode, failureMessage, failedAt));
+        log.warn("Execution dead-lettered executionId={} deadLetterId={} code={}", executionId, dlId, failureCode);
+    }
+
     private void persistExecutionState(String executionId, ExecutionState state, Instant completedAt) {
         if (store == null) return;
         try {
@@ -220,6 +240,8 @@ public final class ExecutionEngine {
                         ctx.getExecutionId(), traceContext.traceId(),
                         null, "UNEXPECTED_ERROR", elapsed, now
                 ));
+                writeDeadLetter(ctx.getExecutionId(), intent, "UNEXPECTED_ERROR",
+                        ex.getMessage(), now);
                 webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.FAILED, elapsed);
 
             } else if (result.status() == ExecutionStatus.TIMED_OUT) {
@@ -248,11 +270,17 @@ public final class ExecutionEngine {
                         .filter(sr -> !sr.succeeded())
                         .map(sr -> sr.stepId())
                         .findFirst().orElse(null);
+                String failureMessage = result.stepResults().stream()
+                        .filter(sr -> !sr.succeeded())
+                        .map(sr -> sr.capabilityResult().failureMessage())
+                        .filter(Objects::nonNull)
+                        .findFirst().orElse(null);
                 persistExecutionState(ctx.getExecutionId(), ExecutionState.FAILED, now);
                 eventBus.publish(new PlanFailedEvent(
                         ctx.getExecutionId(), traceContext.traceId(),
                         failedStep, "STEP_FAILED", elapsed, now
                 ));
+                writeDeadLetter(ctx.getExecutionId(), intent, "STEP_FAILED", failureMessage, now);
                 log.warn("Execution failed executionId={} failedStep={}", ctx.getExecutionId(), failedStep);
                 webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.FAILED, elapsed);
                 if (sagaOrchestrator != null) {
