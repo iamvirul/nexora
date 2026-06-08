@@ -22,6 +22,7 @@ import java.util.concurrent.Callable;
                 PluginsCommand.class,
                 ObserveCommand.class,
                 DemoCommand.class,
+                DlqCommand.class,
                 CommandLine.HelpCommand.class
         }
 )

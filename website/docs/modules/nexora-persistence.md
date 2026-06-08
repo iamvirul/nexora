@@ -15,13 +15,24 @@ public interface ExecutionStore extends AutoCloseable {
     void createExecution(ExecutionRecord record);
     void updateExecution(String executionId, ExecutionState state, Instant completedAt);
     void upsertStep(String executionId, StepRecord record);
+    void recordWebhookDelivery(WebhookDeliveryRecord record);
+    List<WebhookDeliveryRecord> getWebhookDeliveries(String executionId);
     Optional<ExecutionRecord> findById(String executionId);
     List<ExecutionRecord> findRecent(int limit);
+
+    // Dead Letter Queue (default methods — Unreleased)
+    default void createDeadLetter(DeadLetterRecord record);
+    default Optional<DeadLetterRecord> findDeadLetterById(String id);
+    default List<DeadLetterRecord> findDeadLetters(DeadLetterReviewState state, int offset, int limit);
+    default void updateDeadLetterState(String id, DeadLetterReviewState state, String resolveReason);
+
     void close();
 }
 ```
 
 **Idempotency:** `upsertStep` must be safe to call twice with the same `(executionId, stepId, idempotencyKey)`. The JDBC implementation uses an `INSERT OR REPLACE` (H2) / `ON CONFLICT DO UPDATE` (PostgreSQL) strategy.
+
+The four DLQ methods are `default` methods that throw `UnsupportedOperationException`. Existing custom `ExecutionStore` implementations continue to compile without change. Override them to enable DLQ support.
 
 ---
 

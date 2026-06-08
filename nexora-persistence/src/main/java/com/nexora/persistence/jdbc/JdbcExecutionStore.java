@@ -2,6 +2,8 @@ package com.nexora.persistence.jdbc;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nexora.persistence.DeadLetterRecord;
+import com.nexora.persistence.DeadLetterReviewState;
 import com.nexora.persistence.ExecutionRecord;
 import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.ExecutionStore;
@@ -99,6 +101,19 @@ public final class JdbcExecutionStore implements ExecutionStore {
                     timestamp        TIMESTAMP    NOT NULL,
                     error_message    TEXT,
                     FOREIGN KEY (execution_id) REFERENCES nexora_executions(execution_id)
+                )
+            """);
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS nexora_dead_letters (
+                    id               VARCHAR(36)  PRIMARY KEY,
+                    execution_id     VARCHAR(36)  NOT NULL,
+                    goal             TEXT,
+                    context_json     TEXT,
+                    failure_code     VARCHAR(100),
+                    failure_message  TEXT,
+                    failed_at        TIMESTAMP    NOT NULL,
+                    review_state     VARCHAR(30)  NOT NULL DEFAULT 'PENDING',
+                    resolve_reason   TEXT
                 )
             """);
         }
@@ -249,6 +264,108 @@ public final class JdbcExecutionStore implements ExecutionStore {
             log.error("Failed to query recent executions", e);
         }
         return results;
+    }
+
+    @Override
+    public synchronized void createDeadLetter(DeadLetterRecord record) {
+        String sql = """
+            INSERT INTO nexora_dead_letters
+                (id, execution_id, goal, context_json, failure_code, failure_message, failed_at, review_state, resolve_reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, record.id());
+            ps.setString(2, record.executionId());
+            ps.setString(3, record.goal());
+            ps.setString(4, JSON.writeValueAsString(record.context()));
+            ps.setString(5, record.failureCode());
+            ps.setString(6, record.failureMessage());
+            ps.setTimestamp(7, Timestamp.from(record.failedAt()));
+            ps.setString(8, record.reviewState().name());
+            ps.setString(9, record.resolveReason());
+            ps.executeUpdate();
+        } catch (Exception e) {
+            log.error("Failed to create dead letter id={} executionId={}", record.id(), record.executionId(), e);
+        }
+    }
+
+    @Override
+    public synchronized Optional<DeadLetterRecord> findDeadLetterById(String id) {
+        String sql = "SELECT * FROM nexora_dead_letters WHERE id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return Optional.empty();
+                return Optional.of(mapDeadLetter(rs));
+            }
+        } catch (Exception e) {
+            log.error("Failed to find dead letter id={}", id, e);
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    public synchronized List<DeadLetterRecord> findDeadLetters(DeadLetterReviewState state, int offset, int limit) {
+        String sql = state != null
+                ? "SELECT * FROM nexora_dead_letters WHERE review_state = ? ORDER BY failed_at DESC LIMIT ? OFFSET ?"
+                : "SELECT * FROM nexora_dead_letters ORDER BY failed_at DESC LIMIT ? OFFSET ?";
+        List<DeadLetterRecord> results = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            if (state != null) {
+                ps.setString(1, state.name());
+                ps.setInt(2, limit);
+                ps.setInt(3, offset);
+            } else {
+                ps.setInt(1, limit);
+                ps.setInt(2, offset);
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    results.add(mapDeadLetter(rs));
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to query dead letters state={}", state, e);
+        }
+        return results;
+    }
+
+    @Override
+    public synchronized void updateDeadLetterState(String id, DeadLetterReviewState state, String resolveReason) {
+        String sql = "UPDATE nexora_dead_letters SET review_state = ?, resolve_reason = ? WHERE id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, state.name());
+            ps.setString(2, resolveReason);
+            ps.setString(3, id);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            log.error("Failed to update dead letter state id={}", id, e);
+        }
+    }
+
+    private DeadLetterRecord mapDeadLetter(ResultSet rs) throws Exception {
+        Map<String, Object> ctx = rs.getString("context_json") != null
+                ? JSON.readValue(rs.getString("context_json"), MAP_TYPE)
+                : Map.of();
+        String rawState = rs.getString("review_state");
+        DeadLetterReviewState reviewState;
+        try {
+            reviewState = rawState != null ? DeadLetterReviewState.valueOf(rawState) : DeadLetterReviewState.PENDING;
+        } catch (IllegalArgumentException e) {
+            log.warn("Unknown review_state '{}' in dead letter id={}, defaulting to PENDING", rawState, rs.getString("id"));
+            reviewState = DeadLetterReviewState.PENDING;
+        }
+        return new DeadLetterRecord(
+                rs.getString("id"),
+                rs.getString("execution_id"),
+                rs.getString("goal"),
+                ctx,
+                rs.getString("failure_code"),
+                rs.getString("failure_message"),
+                rs.getTimestamp("failed_at").toInstant(),
+                reviewState,
+                rs.getString("resolve_reason")
+        );
     }
 
     @Override
