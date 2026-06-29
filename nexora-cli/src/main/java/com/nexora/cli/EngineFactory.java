@@ -1,6 +1,7 @@
 package com.nexora.cli;
 
 import com.nexora.api.NexoraEngine;
+import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import com.nexora.planner.model.StepDefinition;
 import com.nexora.retry.ExponentialBackoffPolicy;
 
@@ -16,8 +17,13 @@ final class EngineFactory {
                 : System.getenv("NEXORA_WEBHOOK_SECRET");
 
         NexoraEngine.Builder builder = NexoraEngine.builder()
-                .withWebhookSecret(secret)
-                .withDefaultRetryPolicy(
+                .withWebhookSecret(secret);
+
+        if (config.executionStore != null && !config.executionStore.isBlank()) {
+            builder.withExecutionStore(JdbcExecutionStore.h2(config.executionStore));
+        }
+
+        builder.withDefaultRetryPolicy(
                         ExponentialBackoffPolicy.builder()
                                 .maxAttempts(config.retry.maxAttempts)
                                 .initialDelay(Duration.ofMillis(config.retry.initialDelayMs))

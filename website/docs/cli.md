@@ -33,6 +33,7 @@ By default Nexora looks for `nexora.json` in the working directory. Point to a d
 
 ```json
 {
+  "executionStore": "./nexora-data",
   "steps": [
     {
       "id": "validate_order",
