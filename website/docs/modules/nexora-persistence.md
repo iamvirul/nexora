@@ -26,13 +26,21 @@ public interface ExecutionStore extends AutoCloseable {
     default List<DeadLetterRecord> findDeadLetters(DeadLetterReviewState state, int offset, int limit);
     default void updateDeadLetterState(String id, DeadLetterReviewState state, String resolveReason);
 
+    // Cron scheduling (default methods — Unreleased)
+    default void createSchedule(ScheduleRecord record);
+    default Optional<ScheduleRecord> findScheduleById(String id);
+    default List<ScheduleRecord> findActiveSchedules();
+    default List<ScheduleRecord> findAllSchedules();
+    default void updateScheduleLastFired(String id, Instant lastFiredAt, Instant nextFireAt);
+    default void deactivateSchedule(String id);
+
     void close();
 }
 ```
 
 **Idempotency:** `upsertStep` must be safe to call twice with the same `(executionId, stepId, idempotencyKey)`. The JDBC implementation uses an `INSERT OR REPLACE` (H2) / `ON CONFLICT DO UPDATE` (PostgreSQL) strategy.
 
-The four DLQ methods are `default` methods that throw `UnsupportedOperationException`. Existing custom `ExecutionStore` implementations continue to compile without change. Override them to enable DLQ support.
+The DLQ and scheduling methods are `default` methods that throw `UnsupportedOperationException`. Existing custom `ExecutionStore` implementations continue to compile without change. Override them to enable those features.
 
 ---
 

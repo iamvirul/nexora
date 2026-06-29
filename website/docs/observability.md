@@ -25,8 +25,11 @@ This exposes four endpoints with no external dependencies:
 | `GET /api/dead-letters` | List dead letter queue entries (paginated via `?page=` and `?size=`, filterable by `?state=PENDING\|RESOLVED\|REPLAYED\|ALL`) — *Unreleased* |
 | `POST /api/dead-letters/{id}/replay` | Create a new execution from a dead letter — *Unreleased* |
 | `POST /api/dead-letters/{id}/resolve` | Mark a dead letter as resolved — *Unreleased* |
+| `GET /api/schedules` | List all cron schedules — *Unreleased* |
+| `POST /api/schedules` | Register a new cron schedule — *Unreleased* |
+| `DELETE /api/schedules/{id}` | Cancel a cron schedule — *Unreleased* |
 
-> **Note**: The `/health/ready`, `/api/webhook-deliveries`, and `/api/dead-letters` endpoints are currently **Unreleased**.
+> **Note**: The `/health/ready`, `/api/webhook-deliveries`, `/api/dead-letters`, and `/api/schedules` endpoints are currently **Unreleased**.
 
 Example execute request with webhook callback:
 
@@ -55,6 +58,27 @@ To use webhooks securely, configure an HMAC-SHA256 signature secret in your `nex
 ```
 
 Nexora will dispatch a JSON payload to your endpoint with the execution outcome. It signs the payload using the configured secret and passes the signature in the `nexora-signature` HTTP header for validation. Delivery attempts are persisted in the `nexora_webhook_deliveries` database table and can be queried for auditability via the API.
+
+## Cron Schedule API (Unreleased version)
+
+Requires `executionStore` to be configured (see [CLI Reference](cli)). The dashboard includes a live **Cron Schedules** panel that auto-refreshes every 30 seconds.
+
+```bash
+# list all schedules
+curl http://localhost:9464/api/schedules
+
+# register a nightly schedule
+curl -X POST http://localhost:9464/api/schedules \
+  -H "content-type: application/json" \
+  -d '{"cronExpression":"0 0 * * *","goal":"nightly cleanup","missedFirePolicy":"FIRE_ONCE"}'
+
+# cancel a schedule
+curl -X DELETE http://localhost:9464/api/schedules/<id>
+```
+
+See [Cron Scheduling](concepts/cron-scheduling) for the full reference including missed-fire policies and events.
+
+---
 
 ## Dead Letter Queue API (Unreleased version)
 

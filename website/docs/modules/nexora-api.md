@@ -105,6 +105,32 @@ engine.deactivatePlugin("v1-plugin");
 
 ---
 
+## Cron scheduling (Unreleased)
+
+Requires a persistence store. Returns a `ScheduledExecution` handle with `id()`, `nextFireTime()`, and `cancel()`.
+
+```java
+// Register — default FIRE_ONCE missed-fire policy
+ScheduledExecution handle = engine.schedule("0 0 * * *", new Intent("nightly cleanup", Map.of()));
+
+System.out.println(handle.nextFireTime()); // next UTC midnight
+
+// Override missed-fire policy
+engine.schedule("*/5 * * * *", intent, MissedFirePolicy.SKIP);
+
+// Cancel
+handle.cancel();
+engine.cancelSchedule(handle.id()); // equivalent
+
+// Query
+List<ScheduleRecord> active = engine.listActiveSchedules();
+List<ScheduleRecord> all    = engine.listSchedules();
+```
+
+See [Cron Scheduling](../concepts/cron-scheduling) for the full reference.
+
+---
+
 ## Shutdown
 
 Always close the engine to drain in-flight executions and shut down plugins cleanly:
