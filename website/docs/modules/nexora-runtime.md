@@ -6,7 +6,7 @@ sidebar_position: 13
 
 # nexora-runtime
 
-`ExecutionEngine` — ties the planner and scheduler together into a single execution unit. You do not use this directly; `NexoraEngine` (in `nexora-api`) is the public entry point.
+`ExecutionEngine`, ties the planner and scheduler together into a single execution unit. You do not use this directly; `NexoraEngine` (in `nexora-api`) is the public entry point.
 
 ## Responsibilities
 
@@ -55,8 +55,8 @@ Use `.join()` for synchronous callers, but be aware this will block the calling 
 
 ## Cron scheduler (Unreleased)
 
-`nexora-runtime` also hosts `CronScheduler` — an in-process scheduler backed by a daemon `ScheduledExecutorService`. It is created automatically by `NexoraEngine.build()` when an `ExecutionStore` is configured.
+`nexora-runtime` also hosts `CronScheduler`, an in-process scheduler backed by a daemon `ScheduledExecutorService`. It is created automatically by `NexoraEngine.build()` when an `ExecutionStore` is configured.
 
 On startup it calls `store.findActiveSchedules()`, applies the configured `MissedFirePolicy` for any schedule whose `next_fire_at` is in the past, then enqueues each wakeup at the correct future instant. After each firing it updates `last_fired_at` / `next_fire_at` in the store and re-enqueues the next occurrence.
 
-You do not interact with `CronScheduler` directly — use `NexoraEngine.schedule(...)` and the returned `ScheduledExecution` handle. See [Cron Scheduling](../concepts/cron-scheduling).
+You do not interact with `CronScheduler` directly, use `NexoraEngine.schedule(...)` and the returned `ScheduledExecution` handle. See [Cron Scheduling](../concepts/cron-scheduling).

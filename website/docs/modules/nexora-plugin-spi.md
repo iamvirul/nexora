@@ -30,7 +30,7 @@ public class SendEmailCapability implements Capability {
 **Rules:**
 - Implementations must be **thread-safe**. The engine calls `execute()` concurrently across independent steps.
 - Return `CapabilityResult.success(output)` on success.
-- Return `CapabilityResult.failure(exception)` or throw — both are handled.
+- Return `CapabilityResult.failure(exception)` or throw, both are handled.
 - Return `CapabilityResult.success(output, amendments)` to reshape the remaining plan.
 
 ### CapabilityContract

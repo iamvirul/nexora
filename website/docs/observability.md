@@ -22,12 +22,12 @@ This exposes four endpoints with no external dependencies:
 | `POST /api/execute` | Trigger an execution remotely |
 | `GET /health/ready` | Check health of all capabilities (returns 503 if any circuit is OPEN/HALF_OPEN) |
 | `GET /api/webhook-deliveries/{id}` | Audit log of webhook delivery attempts for an execution |
-| `GET /api/dead-letters` | List dead letter queue entries (paginated via `?page=` and `?size=`, filterable by `?state=PENDING\|RESOLVED\|REPLAYED\|ALL`) — *Unreleased* |
-| `POST /api/dead-letters/{id}/replay` | Create a new execution from a dead letter — *Unreleased* |
-| `POST /api/dead-letters/{id}/resolve` | Mark a dead letter as resolved — *Unreleased* |
-| `GET /api/schedules` | List all cron schedules — *Unreleased* |
-| `POST /api/schedules` | Register a new cron schedule — *Unreleased* |
-| `DELETE /api/schedules/{id}` | Cancel a cron schedule — *Unreleased* |
+| `GET /api/dead-letters` | List dead letter queue entries (paginated via `?page=` and `?size=`, filterable by `?state=PENDING\|RESOLVED\|REPLAYED\|ALL`) *(Unreleased)* |
+| `POST /api/dead-letters/{id}/replay` | Create a new execution from a dead letter *(Unreleased)* |
+| `POST /api/dead-letters/{id}/resolve` | Mark a dead letter as resolved *(Unreleased)* |
+| `GET /api/schedules` | List all cron schedules *(Unreleased)* |
+| `POST /api/schedules` | Register a new cron schedule *(Unreleased)* |
+| `DELETE /api/schedules/{id}` | Cancel a cron schedule *(Unreleased)* |
 
 > **Note**: The `/health/ready`, `/api/webhook-deliveries`, `/api/dead-letters`, and `/api/schedules` endpoints are currently **Unreleased**.
 

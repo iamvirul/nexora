@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 #### Core Engine
+- **Cron Scheduling** - Recurring intent executions driven by 5-field UNIX cron expressions. `NexoraEngine.schedule(cron, intent)` persists the schedule to a `nexora_schedules` table and returns a `ScheduledExecution` handle with `id()`, `nextFireTime()`, and `cancel()`. Three missed-fire policies control restart behaviour: `SKIP` (drop missed windows), `FIRE_ONCE` (fire once to catch up, default), and `FIRE_ALL` (fire once per missed window). `ScheduledExecutionFiredEvent` and `ScheduledExecutionMissedEvent` are published on the event bus. Requires a persistence store ([#38](https://github.com/iamvirul/nexora/issues/38))
 - **Dead Letter Queue** - Permanently failed executions (after all retries are exhausted) are now captured in a `nexora_dead_letters` table. Each dead letter record stores `executionId`, `goal`, `context`, `failureCode`, `failureMessage`, `failedAt`, and a `reviewState` (`PENDING` / `RESOLVED` / `REPLAYED`). An `ExecutionDeadLetteredEvent` fires on the event bus for external alerting ([#42](https://github.com/iamvirul/nexora/issues/42))
 - **Conditional Branching** - Allows defining a `StepCondition` (e.g. `ContextValueEquals`, `StepOutputEquals`) on any step. The scheduler dynamically evaluates these before step execution and skips the step if the condition resolves to `false` ([#41](https://github.com/iamvirul/nexora/issues/41))
 - **Plan-level execution deadline / timeout** - wall-clock deadline that cancels an entire plan execution when the limit is exceeded, returning `TIMED_OUT` execution status and triggering full saga compensation; overridable per `Intent` or globally via `NexoraEngine.Builder.withDefaultPlanDeadline()` ([#35](https://github.com/iamvirul/nexora/issues/35))
@@ -20,11 +21,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Capability circuit breaker** - `CapabilityContractMonitor` now implements a robust circuit breaker state machine (CLOSED, OPEN, HALF_OPEN) and routes unhealthy capabilities to their fallback transparently ([#36](https://github.com/iamvirul/nexora/issues/36))
 
 #### Observability
+- **Schedule REST API** - Three new endpoints on the observability server: `GET /api/schedules` (list all schedules), `POST /api/schedules` (register a schedule with `cronExpression`, `goal`, and optional `missedFirePolicy`), `DELETE /api/schedules/{id}` (cancel immediately). The observe dashboard includes a live Cron Schedules panel with an add-form and auto-refresh every 30 seconds ([#38](https://github.com/iamvirul/nexora/issues/38))
 - **DLQ REST API** - Three new endpoints on the observability server: `GET /api/dead-letters` (paginated, filterable by `state`; defaults to `PENDING`), `POST /api/dead-letters/{id}/replay` (creates a new execution and marks the entry as `REPLAYED`), `POST /api/dead-letters/{id}/resolve` (accepts an optional `reason` body and marks the entry as `RESOLVED`). Authentication will be enforced once [#30](https://github.com/iamvirul/nexora/issues/30) lands ([#42](https://github.com/iamvirul/nexora/issues/42))
 - **Circuit breaker monitoring** - Added `/health/ready` endpoint to the observability server to monitor capabilities circuit statuses ([#36](https://github.com/iamvirul/nexora/issues/36))
 - **Webhook Callbacks** - Implemented asynchronous terminal event webhooks using Java 11 `HttpClient` with exponential backoff. Webhooks are signed with an HMAC-SHA256 signature and delivery attempts are persisted in `nexora_webhook_deliveries` and exposed via `/api/webhook-deliveries/{executionId}` ([#39](https://github.com/iamvirul/nexora/issues/39))
 
 #### CLI
+- **`nexora schedule`** - New subcommand group for cron schedule management: `nexora schedule add --goal "<goal>" --cron "<expr>" [--policy SKIP|FIRE_ONCE|FIRE_ALL]`, `nexora schedule list [--active-only]`, `nexora schedule remove <id>`. Requires `executionStore` set in `nexora.json` ([#38](https://github.com/iamvirul/nexora/issues/38))
 - **`nexora dlq`** - New subcommand group for dead letter queue management: `nexora dlq list [--state PENDING|RESOLVED|REPLAYED|ALL]`, `nexora dlq replay <id>`, `nexora dlq resolve <id> [--reason "..."]` ([#42](https://github.com/iamvirul/nexora/issues/42))
 
 ### Fixed

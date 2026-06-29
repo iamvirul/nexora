@@ -16,11 +16,11 @@ Nexora's built-in cron scheduler lets you register recurring executions backed b
 
 ## How It Works
 
-1. **Register** — call `engine.schedule(cronExpression, intent)` or `nexora schedule add`. The schedule is persisted to `nexora_schedules` and the next fire time is calculated immediately.
-2. **Fire** — an in-process `ScheduledExecutorService` wakes at the calculated next-fire instant and calls `engine.execute(intent)`.
-3. **Missed-fire check** — on each startup, the scheduler loads all active schedules from the store. For any schedule whose `next_fire_at` is in the past it applies the configured `MissedFirePolicy` before rescheduling.
-4. **Events** — `ScheduledExecutionFiredEvent` is published after each successful dispatch; `ScheduledExecutionMissedEvent` is published when windows are skipped.
-5. **Reschedule** — after firing, `last_fired_at` and `next_fire_at` are updated in the store, and the next wakeup is enqueued.
+1. **Register**: call `engine.schedule(cronExpression, intent)` or `nexora schedule add`. The schedule is persisted to `nexora_schedules` and the next fire time is calculated immediately.
+2. **Fire**: an in-process `ScheduledExecutorService` wakes at the calculated next-fire instant and calls `engine.execute(intent)`.
+3. **Missed-fire check**: on each startup, the scheduler loads all active schedules from the store. For any schedule whose `next_fire_at` is in the past it applies the configured `MissedFirePolicy` before rescheduling.
+4. **Events**: `ScheduledExecutionFiredEvent` is published after each successful dispatch; `ScheduledExecutionMissedEvent` is published when windows are skipped.
+5. **Reschedule**: after firing, `last_fired_at` and `next_fire_at` are updated in the store, and the next wakeup is enqueued.
 
 ---
 
@@ -77,7 +77,7 @@ Supported syntax per field: `*`, `N`, `N-M` (range), `*/step`, `N/step`, `N,M,..
 ```
 
 :::note
-If both day-of-month and day-of-week are restricted (neither is `*`), a day matches if **either** constraint is satisfied — standard UNIX cron OR semantics.
+If both day-of-month and day-of-week are restricted (neither is `*`), a day matches if **either** constraint is satisfied, standard UNIX cron OR semantics.
 :::
 
 ---
@@ -169,7 +169,7 @@ The panel auto-refreshes every 30 seconds and the REST endpoints are:
 
 ## Limitations
 
-- **In-process only** — the scheduler runs inside the JVM. In a multi-instance deployment, every instance will fire independently. Use a distributed lock or a dedicated scheduler node if exactly-once firing is required.
-- **1-minute resolution** — the smallest cron interval is 1 minute (`* * * * *`). Sub-minute scheduling is not supported.
-- **UTC only** — all fire times are calculated and stored in UTC. Timezone-aware cron is not yet supported.
-- **No dynamic context** — the intent context is captured at registration time and replayed verbatim on every firing. Use a capability to fetch fresh data at execution time.
+- **In-process only**: the scheduler runs inside the JVM. In a multi-instance deployment, every instance will fire independently. Use a distributed lock or a dedicated scheduler node if exactly-once firing is required.
+- **1-minute resolution**: the smallest cron interval is 1 minute (`* * * * *`). Sub-minute scheduling is not supported.
+- **UTC only**: all fire times are calculated and stored in UTC. Timezone-aware cron is not yet supported.
+- **No dynamic context**: the intent context is captured at registration time and replayed verbatim on every firing. Use a capability to fetch fresh data at execution time.

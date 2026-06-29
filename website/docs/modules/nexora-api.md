@@ -6,7 +6,7 @@ sidebar_position: 14
 
 # nexora-api
 
-`NexoraEngine` — the public facade. This is the only class you need to import for production use.
+`NexoraEngine`, the public facade. This is the only class you need to import for production use.
 
 ## Builder reference
 
@@ -110,7 +110,7 @@ engine.deactivatePlugin("v1-plugin");
 Requires a persistence store. Returns a `ScheduledExecution` handle with `id()`, `nextFireTime()`, and `cancel()`.
 
 ```java
-// Register — default FIRE_ONCE missed-fire policy
+// Register, default FIRE_ONCE missed-fire policy
 ScheduledExecution handle = engine.schedule("0 0 * * *", new Intent("nightly cleanup", Map.of()));
 
 System.out.println(handle.nextFireTime()); // next UTC midnight
