@@ -62,6 +62,35 @@ public interface ExecutionStore extends AutoCloseable {
         throw new UnsupportedOperationException("DLQ not supported by this store implementation");
     }
 
+    // --- Schedules ---
+
+    /** Persists a new schedule. */
+    default void createSchedule(ScheduleRecord record) {
+        throw new UnsupportedOperationException("Schedules not supported by this store implementation");
+    }
+
+    default java.util.Optional<ScheduleRecord> findScheduleById(String id) {
+        return java.util.Optional.empty();
+    }
+
+    /** Returns all active schedules, ordered by next_fire_at ascending. */
+    default List<ScheduleRecord> findActiveSchedules() {
+        return List.of();
+    }
+
+    /** Returns all schedules (active and inactive), most recently created first. */
+    default List<ScheduleRecord> findAllSchedules() {
+        return List.of();
+    }
+
+    default void updateScheduleLastFired(String id, Instant lastFiredAt, Instant nextFireAt) {
+        throw new UnsupportedOperationException("Schedules not supported by this store implementation");
+    }
+
+    default void deactivateSchedule(String id) {
+        throw new UnsupportedOperationException("Schedules not supported by this store implementation");
+    }
+
     @Override
     void close();
 }

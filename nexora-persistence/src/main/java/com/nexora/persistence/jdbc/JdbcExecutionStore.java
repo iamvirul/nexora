@@ -7,6 +7,8 @@ import com.nexora.persistence.DeadLetterReviewState;
 import com.nexora.persistence.ExecutionRecord;
 import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.ExecutionStore;
+import com.nexora.persistence.MissedFirePolicy;
+import com.nexora.persistence.ScheduleRecord;
 import com.nexora.persistence.StepRecord;
 import com.nexora.persistence.StepState;
 import org.slf4j.Logger;
@@ -114,6 +116,19 @@ public final class JdbcExecutionStore implements ExecutionStore {
                     failed_at        TIMESTAMP    NOT NULL,
                     review_state     VARCHAR(30)  NOT NULL DEFAULT 'PENDING',
                     resolve_reason   TEXT
+                )
+            """);
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS nexora_schedules (
+                    id                   VARCHAR(36)   PRIMARY KEY,
+                    cron_expression      VARCHAR(120)  NOT NULL,
+                    goal                 TEXT          NOT NULL,
+                    context_json         TEXT,
+                    missed_fire_policy   VARCHAR(20)   NOT NULL DEFAULT 'FIRE_ONCE',
+                    created_at           TIMESTAMP     NOT NULL,
+                    last_fired_at        TIMESTAMP,
+                    next_fire_at         TIMESTAMP     NOT NULL,
+                    active               BOOLEAN       NOT NULL DEFAULT TRUE
                 )
             """);
         }
@@ -365,6 +380,113 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 rs.getTimestamp("failed_at").toInstant(),
                 reviewState,
                 rs.getString("resolve_reason")
+        );
+    }
+
+    @Override
+    public synchronized void createSchedule(ScheduleRecord record) {
+        String sql = """
+            INSERT INTO nexora_schedules
+                (id, cron_expression, goal, context_json, missed_fire_policy,
+                 created_at, last_fired_at, next_fire_at, active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, record.id());
+            ps.setString(2, record.cronExpression());
+            ps.setString(3, record.goal());
+            ps.setString(4, JSON.writeValueAsString(record.context()));
+            ps.setString(5, record.missedFirePolicy().name());
+            ps.setTimestamp(6, Timestamp.from(record.createdAt()));
+            ps.setTimestamp(7, record.lastFiredAt() != null ? Timestamp.from(record.lastFiredAt()) : null);
+            ps.setTimestamp(8, Timestamp.from(record.nextFireAt()));
+            ps.setBoolean(9, record.active());
+            ps.executeUpdate();
+        } catch (Exception e) {
+            log.error("Failed to create schedule id={}", record.id(), e);
+        }
+    }
+
+    @Override
+    public synchronized Optional<ScheduleRecord> findScheduleById(String id) {
+        String sql = "SELECT * FROM nexora_schedules WHERE id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return Optional.empty();
+                return Optional.of(mapSchedule(rs));
+            }
+        } catch (Exception e) {
+            log.error("Failed to find schedule id={}", id, e);
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    public synchronized List<ScheduleRecord> findActiveSchedules() {
+        String sql = "SELECT * FROM nexora_schedules WHERE active = TRUE ORDER BY next_fire_at ASC";
+        List<ScheduleRecord> results = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) results.add(mapSchedule(rs));
+        } catch (Exception e) {
+            log.error("Failed to query active schedules", e);
+        }
+        return results;
+    }
+
+    @Override
+    public synchronized List<ScheduleRecord> findAllSchedules() {
+        String sql = "SELECT * FROM nexora_schedules ORDER BY created_at DESC";
+        List<ScheduleRecord> results = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) results.add(mapSchedule(rs));
+        } catch (Exception e) {
+            log.error("Failed to query schedules", e);
+        }
+        return results;
+    }
+
+    @Override
+    public synchronized void updateScheduleLastFired(String id, Instant lastFiredAt, Instant nextFireAt) {
+        String sql = "UPDATE nexora_schedules SET last_fired_at = ?, next_fire_at = ? WHERE id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setTimestamp(1, Timestamp.from(lastFiredAt));
+            ps.setTimestamp(2, Timestamp.from(nextFireAt));
+            ps.setString(3, id);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            log.error("Failed to update schedule last_fired_at id={}", id, e);
+        }
+    }
+
+    @Override
+    public synchronized void deactivateSchedule(String id) {
+        String sql = "UPDATE nexora_schedules SET active = FALSE WHERE id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            log.error("Failed to deactivate schedule id={}", id, e);
+        }
+    }
+
+    private ScheduleRecord mapSchedule(ResultSet rs) throws Exception {
+        Map<String, Object> ctx = rs.getString("context_json") != null
+                ? JSON.readValue(rs.getString("context_json"), MAP_TYPE)
+                : Map.of();
+        Timestamp lastFiredAt = rs.getTimestamp("last_fired_at");
+        return new ScheduleRecord(
+                rs.getString("id"),
+                rs.getString("cron_expression"),
+                rs.getString("goal"),
+                ctx,
+                MissedFirePolicy.valueOf(rs.getString("missed_fire_policy")),
+                rs.getTimestamp("created_at").toInstant(),
+                lastFiredAt != null ? lastFiredAt.toInstant() : null,
+                rs.getTimestamp("next_fire_at").toInstant(),
+                rs.getBoolean("active")
         );
     }
 
