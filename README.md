@@ -115,6 +115,9 @@ nexora [--config <file>] <command>
 | `nexora dlq list` | List dead letter queue entries (default: PENDING) |
 | `nexora dlq replay <id>` | Replay a dead-lettered execution |
 | `nexora dlq resolve <id>` | Mark a dead letter as resolved |
+| `nexora schedule add` | Register a recurring cron-based execution (Unreleased) |
+| `nexora schedule list` | List schedules and next fire times (Unreleased) |
+| `nexora schedule remove <id>` | Cancel a schedule immediately (Unreleased) |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 
@@ -124,6 +127,7 @@ By default Nexora looks for `nexora.json` in the working directory. Point to a d
 
 ```json
 {
+  "executionStore": "./nexora-data",
   "steps": [
     {
       "id": "validate_order",
@@ -450,6 +454,75 @@ curl -X POST http://localhost:9464/api/dead-letters/<id>/resolve \
 
 > **Authentication**: DLQ endpoints will require a Bearer token once [#30](https://github.com/iamvirul/nexora/issues/30) lands.
 
+## Cron Scheduling (Unreleased version)
+
+Register recurring executions driven by standard 5-field UNIX cron expressions. Schedules are persisted to a `nexora_schedules` table and survive engine restarts. Requires `executionStore` to be configured.
+
+```java
+NexoraEngine engine = NexoraEngine.builder()
+    .withExecutionStore(JdbcExecutionStore.h2("./nexora-data"))
+    .withPlugin(myPlugin)
+    .build();
+
+// Register a nightly job
+ScheduledExecution handle = engine.schedule(
+    "0 0 * * *",
+    new Intent("nightly cleanup", Map.of())
+);
+
+System.out.println("Next fire: " + handle.nextFireTime());
+
+// Cancel at any time
+handle.cancel();
+
+// List active schedules
+engine.listActiveSchedules().forEach(s ->
+    System.out.println(s.id() + " " + s.cronExpression() + " next=" + s.nextFireAt()));
+```
+
+Three missed-fire policies control what happens when the engine restarts after downtime:
+
+| Policy | Behaviour |
+|--------|-----------|
+| `FIRE_ONCE` | Fire once immediately to catch up, regardless of how many windows were missed (default) |
+| `SKIP` | Drop all missed windows and wait for the next scheduled slot |
+| `FIRE_ALL` | Fire once for each missed window |
+
+```java
+engine.schedule("*/5 * * * *", intent, MissedFirePolicy.SKIP);
+```
+
+Subscribe to scheduling events:
+
+```java
+engine.subscribe(ScheduledExecutionFiredEvent.class, e ->
+    log.info("fired scheduleId={} executionId={}", e.scheduleId(), e.executionId()));
+
+engine.subscribe(ScheduledExecutionMissedEvent.class, e ->
+    alerting.warn("missed {} windows for schedule {}", e.missedCount(), e.scheduleId()));
+```
+
+Manage via CLI:
+
+```bash
+nexora schedule add --goal "nightly cleanup" --cron "0 0 * * *"
+nexora schedule add --goal "poll api" --cron "*/5 * * * *" --policy SKIP
+nexora schedule list --active-only
+nexora schedule remove <schedule-id>
+```
+
+Or via the observability REST API (also exposed in the dashboard Cron Schedules panel):
+
+```bash
+curl http://localhost:9464/api/schedules
+
+curl -X POST http://localhost:9464/api/schedules \
+  -H "content-type: application/json" \
+  -d '{"cronExpression":"0 0 * * *","goal":"nightly cleanup","missedFirePolicy":"FIRE_ONCE"}'
+
+curl -X DELETE http://localhost:9464/api/schedules/<id>
+```
+
 ## Observability UI + Prometheus + Grafana
 
 Start Nexora's built-in observability server:
@@ -485,11 +558,11 @@ curl -X POST http://localhost:9464/api/execute \
 Metrics exposed include:
 
 - `nexora_plan_started_total`, `nexora_plan_completed_total`, `nexora_plan_failed_total`
-- `nexora_plan_duration_seconds` — histogram by status (completed/failed)
-- `nexora_step_started_total`, `nexora_step_completed_total`, `nexora_step_failed_total` — all by capability ID
-- `nexora_step_duration_seconds` — histogram by capability ID and terminal status
-- `nexora_plan_amendments_total` — by amendment type (ADD_STEP, SKIP_STEP, MODIFY_INPUT)
-- `nexora_active_executions` — current in-flight count
+- `nexora_plan_duration_seconds` - histogram by status (completed/failed)
+- `nexora_step_started_total`, `nexora_step_completed_total`, `nexora_step_failed_total` - all by capability ID
+- `nexora_step_duration_seconds` - histogram by capability ID and terminal status
+- `nexora_plan_amendments_total` - by amendment type (ADD_STEP, SKIP_STEP, MODIFY_INPUT)
+- `nexora_active_executions` - current in-flight count
 
 Bring up Prometheus, Grafana, and Alertmanager with the prebuilt stack:
 
