@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.nexora.api.NexoraEngine;
 import com.nexora.api.observability.NexoraObservability;
+import com.nexora.core.intent.Intent;
+import com.nexora.persistence.MissedFirePolicy;
+import com.nexora.persistence.ScheduleRecord;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.java_websocket.WebSocket;
@@ -268,6 +271,85 @@ public class ObserveCommand implements Callable<Integer> {
             java.util.List<com.nexora.persistence.DeadLetterRecord> items =
                     dlqStore.findDeadLetters(stateFilter, page * size, size);
             try { sendJson(exchange, 200, Map.of("items", items, "page", page, "size", size)); } catch(Exception ignored) {}
+        });
+
+        server.createContext("/api/schedules/", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            String id   = path.substring("/api/schedules/".length());
+            if (id.isBlank()) { try { sendText(exchange, 400, "Missing schedule id"); } catch (Exception ignored) {} return; }
+            if (!"DELETE".equalsIgnoreCase(exchange.getRequestMethod())) {
+                try { sendText(exchange, 405, "Method Not Allowed"); } catch (Exception ignored) {}
+                return;
+            }
+            try {
+                engine.cancelSchedule(id);
+                sendJson(exchange, 200, Map.of("cancelled", true, "id", id));
+            } catch (IllegalStateException e) {
+                try { sendJson(exchange, 503, Map.of("error", e.getMessage())); } catch (Exception ignored) {}
+            } catch (Exception e) {
+                try { sendJson(exchange, 500, Map.of("error", e.getMessage())); } catch (Exception ignored) {}
+            }
+        });
+
+        server.createContext("/api/schedules", exchange -> {
+            String method = exchange.getRequestMethod();
+            if ("GET".equalsIgnoreCase(method)) {
+                try {
+                    java.util.List<ScheduleRecord> records = engine.listSchedules();
+                    java.util.List<Map<String, Object>> payload = records.stream()
+                            .map(r -> {
+                                java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+                                m.put("id",               r.id());
+                                m.put("cronExpression",   r.cronExpression());
+                                m.put("goal",             r.goal());
+                                m.put("missedFirePolicy", r.missedFirePolicy().name());
+                                m.put("active",           r.active());
+                                m.put("nextFireAt",       r.nextFireAt().toString());
+                                m.put("lastFiredAt",      r.lastFiredAt() != null ? r.lastFiredAt().toString() : null);
+                                return (Map<String, Object>) m;
+                            })
+                            .toList();
+                    sendJson(exchange, 200, Map.of("schedules", payload));
+                } catch (IllegalStateException e) {
+                    try { sendJson(exchange, 503, Map.of("error", e.getMessage())); } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    try { sendJson(exchange, 500, Map.of("error", e.getMessage())); } catch (Exception ignored) {}
+                }
+            } else if ("POST".equalsIgnoreCase(method)) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> body;
+                try (InputStream in = exchange.getRequestBody()) {
+                    body = JSON.readValue(in, Map.class);
+                } catch (Exception e) {
+                    try { sendJson(exchange, 400, Map.of("error", "Invalid JSON")); } catch (Exception ignored) {}
+                    return;
+                }
+                String cron  = body.get("cronExpression") instanceof String s ? s : null;
+                String goal  = body.get("goal")           instanceof String s ? s : null;
+                if (cron == null || cron.isBlank() || goal == null || goal.isBlank()) {
+                    try { sendJson(exchange, 400, Map.of("error", "cronExpression and goal are required")); } catch (Exception ignored) {}
+                    return;
+                }
+                String policyStr = body.getOrDefault("missedFirePolicy", "FIRE_ONCE").toString();
+                MissedFirePolicy policy;
+                try { policy = MissedFirePolicy.valueOf(policyStr.toUpperCase()); }
+                catch (IllegalArgumentException e) {
+                    try { sendJson(exchange, 400, Map.of("error", "Invalid missedFirePolicy: " + policyStr)); } catch (Exception ignored) {}
+                    return;
+                }
+                try {
+                    var handle = engine.schedule(cron, new Intent(goal, Map.of()), policy);
+                    sendJson(exchange, 201, Map.of("id", handle.id(), "nextFireAt", handle.nextFireTime().toString()));
+                } catch (IllegalStateException e) {
+                    try { sendJson(exchange, 503, Map.of("error", e.getMessage())); } catch (Exception ignored) {}
+                } catch (IllegalArgumentException e) {
+                    try { sendJson(exchange, 400, Map.of("error", e.getMessage())); } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    try { sendJson(exchange, 500, Map.of("error", e.getMessage())); } catch (Exception ignored) {}
+                }
+            } else {
+                try { sendText(exchange, 405, "Method Not Allowed"); } catch (Exception ignored) {}
+            }
         });
 
         server.createContext("/health/ready", exchange -> {

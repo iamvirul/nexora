@@ -466,6 +466,75 @@
     .dlq-empty { color: var(--muted); font-size: 12px; padding: 10px 0; }
     .dlq-refresh { font-size: 11px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; }
     .dlq-refresh:hover { color: var(--text); border-color: var(--muted); }
+
+    /* ── Schedule panel ── */
+    .schedule-section {
+      margin-top: 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+      overflow: hidden;
+    }
+    .schedule-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 14px;
+      background: #1a1f2e;
+      border-bottom: 1px solid var(--border);
+      border-radius: 7px 7px 0 0;
+    }
+    .schedule-body { padding: 12px 14px; }
+    .schedule-add-form {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border2);
+    }
+    .schedule-add-form label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 3px; }
+    .schedule-add-form input, .schedule-add-form select {
+      height: 30px; padding: 0 8px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 4px; color: var(--text); font-size: 12px; font-family: var(--mono);
+    }
+    .schedule-add-form input:focus, .schedule-add-form select:focus { outline: none; border-color: var(--blue); }
+    .sched-cron-input { width: 140px; }
+    .sched-goal-input { width: 220px; font-family: var(--sans) !important; }
+    .sched-add-btn {
+      height: 30px; padding: 0 14px;
+      background: var(--blue); color: #fff;
+      border: none; border-radius: 4px; font-size: 12px; font-weight: 500; cursor: pointer;
+    }
+    .sched-add-btn:disabled { opacity: 0.4; cursor: default; }
+    .schedule-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .schedule-table th {
+      text-align: left; font-size: 11px; font-weight: 600; color: var(--muted);
+      padding: 0 8px 6px; border-bottom: 1px solid var(--border2);
+    }
+    .schedule-table td { padding: 7px 8px; border-bottom: 1px solid var(--border2); vertical-align: middle; }
+    .schedule-table tr:last-child td { border-bottom: none; }
+    .schedule-table tr:hover td { background: var(--surface2); }
+    .sched-id { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+    .sched-cron { font-family: var(--mono); color: var(--blue); }
+    .sched-goal { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sched-time { font-size: 11px; color: var(--muted); white-space: nowrap; }
+    .sched-cancel {
+      padding: 3px 9px; font-size: 11px; border-radius: 4px;
+      border: 1px solid var(--red); background: transparent; color: var(--red);
+      cursor: pointer; font-weight: 500;
+    }
+    .sched-cancel:hover { background: rgba(248,81,73,0.12); }
+    .sched-cancel:disabled { opacity: 0.4; cursor: default; }
+    .schedule-empty { color: var(--muted); font-size: 12px; padding: 8px 0; }
+    .sched-refresh { font-size: 11px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; }
+    .sched-refresh:hover { color: var(--text); border-color: var(--muted); }
+    .sched-flash { font-size: 11px; margin-left: 8px; }
+    .sched-flash.ok  { color: var(--green); }
+    .sched-flash.err { color: var(--red); }
   </style>
 </head>
 <body>
@@ -513,6 +582,54 @@
         </div>
       </div>
 
+    </div>
+
+    <div class="schedule-section">
+      <div class="schedule-header">
+        <div class="section-title">Cron Schedules <span id="sched-count" style="font-weight:400;color:var(--muted)"></span></div>
+        <button class="sched-refresh" onclick="loadSchedules()">↻ Refresh</button>
+      </div>
+      <div class="schedule-body">
+        <form class="schedule-add-form" id="sched-add-form">
+          <div>
+            <label>Cron Expression</label>
+            <input class="sched-cron-input" id="sched-cron" type="text" placeholder="* * * * *" required>
+          </div>
+          <div>
+            <label>Goal</label>
+            <input class="sched-goal-input" id="sched-goal" type="text" placeholder="process payment" required>
+          </div>
+          <div>
+            <label>Missed-fire Policy</label>
+            <select id="sched-policy">
+              <option value="FIRE_ONCE" selected>FIRE_ONCE</option>
+              <option value="SKIP">SKIP</option>
+              <option value="FIRE_ALL">FIRE_ALL</option>
+            </select>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button class="sched-add-btn" type="submit" id="sched-add-btn">Add Schedule</button>
+          </div>
+          <span class="sched-flash" id="sched-flash"></span>
+        </form>
+        <table class="schedule-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Cron</th>
+              <th>Goal</th>
+              <th>Policy</th>
+              <th>Next Fire</th>
+              <th>Last Fire</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="sched-body">
+            <tr><td colspan="7" class="schedule-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
   </div>
@@ -808,6 +925,93 @@ async function dlqAction(id, action, btn) {
 
 loadDlq();
 setInterval(loadDlq, 30000);
+
+// ── Schedules ──────────────────────────────────────────────────────────────────
+
+const schedBody    = document.getElementById('sched-body');
+const schedCount   = document.getElementById('sched-count');
+const schedFlashEl = document.getElementById('sched-flash');
+const schedAddForm = document.getElementById('sched-add-form');
+const schedAddBtn  = document.getElementById('sched-add-btn');
+
+function schedFlash(msg, ok) {
+  schedFlashEl.textContent = msg;
+  schedFlashEl.className = 'sched-flash' + (ok === true ? ' ok' : ok === false ? ' err' : '');
+  if (msg) setTimeout(() => { schedFlashEl.textContent = ''; schedFlashEl.className = 'sched-flash'; }, 3000);
+}
+
+async function loadSchedules() {
+  try {
+    const r = await fetch('/api/schedules', { cache: 'no-store' });
+    if (!r.ok) { schedBody.innerHTML = `<tr><td colspan="7" class="schedule-empty">Error ${r.status}</td></tr>`; return; }
+    const d = await r.json();
+    renderSchedules((d.schedules || []).filter(s => s.active));
+  } catch (ex) {
+    schedBody.innerHTML = `<tr><td colspan="7" class="schedule-empty">Could not load schedules: ${esc(ex.message)}</td></tr>`;
+  }
+}
+
+function renderSchedules(items) {
+  schedCount.textContent = items.length ? `(${items.length} active)` : '';
+  if (!items.length) {
+    schedBody.innerHTML = '<tr><td colspan="7" class="schedule-empty">No active schedules. Add one above.</td></tr>';
+    return;
+  }
+  schedBody.innerHTML = items.map(s => `
+    <tr id="sched-row-${esc(s.id)}">
+      <td class="sched-id" title="${esc(s.id)}">${esc(s.id.slice(0,8))}…</td>
+      <td class="sched-cron">${esc(s.cronExpression)}</td>
+      <td class="sched-goal" title="${esc(s.goal)}">${esc(s.goal)}</td>
+      <td>${esc(s.missedFirePolicy)}</td>
+      <td class="sched-time">${s.nextFireAt ? fmtTime(s.nextFireAt) : '—'}</td>
+      <td class="sched-time">${s.lastFiredAt ? fmtTime(s.lastFiredAt) : '—'}</td>
+      <td><button class="sched-cancel" onclick="cancelSchedule('${esc(s.id)}',this)">Cancel</button></td>
+    </tr>`).join('');
+}
+
+async function cancelSchedule(id, btn) {
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/api/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const row = document.getElementById(`sched-row-${id}`);
+    if (row) { row.style.opacity = '0.4'; setTimeout(loadSchedules, 400); }
+    schedFlash('Schedule cancelled.', true);
+  } catch (ex) {
+    schedFlash('Cancel failed: ' + ex.message, false);
+    btn.disabled = false;
+  }
+}
+
+schedAddForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  const cron   = document.getElementById('sched-cron').value.trim();
+  const goal   = document.getElementById('sched-goal').value.trim();
+  const policy = document.getElementById('sched-policy').value;
+  if (!cron || !goal) return;
+  schedAddBtn.disabled = true;
+  schedFlash('Adding…', null);
+  try {
+    const r = await fetch('/api/schedules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cronExpression: cron, goal, missedFirePolicy: policy })
+    });
+    const p = await r.json();
+    if (!r.ok) throw new Error(p.error || 'HTTP ' + r.status);
+    schedFlash('Added — next fire: ' + (p.nextFireAt ? fmtTime(p.nextFireAt) : '?'), true);
+    document.getElementById('sched-cron').value = '';
+    document.getElementById('sched-goal').value = '';
+    setTimeout(loadSchedules, 300);
+  } catch (ex) {
+    schedFlash(ex.message, false);
+  } finally {
+    schedAddBtn.disabled = false;
+  }
+});
+
+loadSchedules();
+setInterval(loadSchedules, 30000);
 
 // ── Form ───────────────────────────────────────────────────────────────────────
 
