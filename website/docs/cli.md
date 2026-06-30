@@ -18,12 +18,12 @@ nexora [--config <file>] <command>
 | `nexora plugins` | List active plugins |
 | `nexora observe` | Start UI/API/metrics server for live process observability |
 | `nexora demo` | Run the built-in feature demo |
-| `nexora dlq list` | List dead letter queue entries (default: PENDING) ** |
-| `nexora dlq replay <id>` | Replay a dead-lettered execution ** |
-| `nexora dlq resolve <id>` | Mark a dead letter as resolved ** |
-| `nexora schedule add` | Register a recurring cron-based execution ** |
-| `nexora schedule list` | List all schedules and their next fire time ** |
-| `nexora schedule remove <id>` | Cancel a schedule immediately ** |
+| `nexora dlq list` | List dead letter queue entries (default: PENDING) |
+| `nexora dlq replay <id>` | Replay a dead-lettered execution |
+| `nexora dlq resolve <id>` | Mark a dead letter as resolved |
+| `nexora schedule add` | Register a recurring cron-based execution |
+| `nexora schedule list` | List all schedules and their next fire time |
+| `nexora schedule remove <id>` | Cancel a schedule immediately |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 
