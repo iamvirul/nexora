@@ -407,7 +407,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.executeUpdate();
         } catch (Exception e) {
             log.error("Failed to create schedule id={}", record.id(), e);
-            throw new RuntimeException("Failed to create schedule id=" + record.id(), e);
+            throw new IllegalStateException("Failed to create schedule id=" + record.id(), e);
         }
     }
 
@@ -422,7 +422,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             }
         } catch (Exception e) {
             log.error("Failed to find schedule id={}", id, e);
-            throw new RuntimeException("Failed to find schedule id=" + id, e);
+            throw new IllegalStateException("Failed to find schedule id=" + id, e);
         }
     }
 
@@ -441,7 +441,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             }
         } catch (Exception e) {
             log.error("Failed to query active schedules", e);
-            throw new RuntimeException("Failed to query active schedules", e);
+            throw new IllegalStateException("Failed to query active schedules", e);
         }
         return results;
     }
@@ -461,7 +461,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             }
         } catch (Exception e) {
             log.error("Failed to query schedules", e);
-            throw new RuntimeException("Failed to query schedules", e);
+            throw new IllegalStateException("Failed to query schedules", e);
         }
         return results;
     }
@@ -476,7 +476,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.executeUpdate();
         } catch (SQLException e) {
             log.error("Failed to update schedule last_fired_at id={}", id, e);
-            throw new RuntimeException("Failed to update schedule last_fired_at id=" + id, e);
+            throw new IllegalStateException("Failed to update schedule last_fired_at id=" + id, e);
         }
     }
 
@@ -489,7 +489,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.executeUpdate();
         } catch (SQLException e) {
             log.error("Failed to update schedule next_fire_at id={}", id, e);
-            throw new RuntimeException("Failed to update schedule next_fire_at id=" + id, e);
+            throw new IllegalStateException("Failed to update schedule next_fire_at id=" + id, e);
         }
     }
 
@@ -501,7 +501,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.executeUpdate();
         } catch (SQLException e) {
             log.error("Failed to deactivate schedule id={}", id, e);
-            throw new RuntimeException("Failed to deactivate schedule id=" + id, e);
+            throw new IllegalStateException("Failed to deactivate schedule id=" + id, e);
         }
     }
 
@@ -514,7 +514,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.executeUpdate();
         } catch (SQLException e) {
             log.error("Failed to update schedule status id={}", id, e);
-            throw new RuntimeException("Failed to update schedule status id=" + id, e);
+            throw new IllegalStateException("Failed to update schedule status id=" + id, e);
         }
     }
 
