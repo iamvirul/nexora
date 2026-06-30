@@ -148,7 +148,7 @@ public final class CronScheduler implements AutoCloseable {
                 }
                 case FIRE_ALL -> {
                     log.info("Schedule id={} missed {} window(s); FIRE_ALL — firing {} time(s)", record.id(), missed.size(), missed.size());
-                    for (ZonedDateTime t : missed) {
+                    for (int i = 0; i < missed.size(); i++) {
                         executeAndPublish(record.id(), record.goal(), record.context());
                     }
                 }
