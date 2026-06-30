@@ -19,9 +19,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -128,6 +130,43 @@ class SchedulerIntegrationTest {
         List<ScheduleRecord> records = engine.listSchedules();
         assertThat(records).hasSize(1);
         assertThat(records.get(0).missedFirePolicy()).isEqualTo(MissedFirePolicy.FIRE_ALL);
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void fireOnce_catchesUpMissedWindowOnReload() throws InterruptedException {
+        // Insert a stale schedule with nextFireAt 2 minutes in the past so reload triggers catch-up
+        Instant twoMinutesAgo = Instant.now().minusSeconds(120);
+        ScheduleRecord stale = new ScheduleRecord(
+                UUID.randomUUID().toString(),
+                "* * * * *",
+                "ping",
+                Map.of(),
+                MissedFirePolicy.FIRE_ONCE,
+                twoMinutesAgo.minusSeconds(10),
+                null,
+                twoMinutesAgo,
+                true
+        );
+        store.createSchedule(stale);
+
+        CountDownLatch latch = new CountDownLatch(1);
+        NexoraEngine reloadedEngine = NexoraEngine.builder()
+                .withExecutionStore(store)
+                .withPlugin(buildPlugin())
+                .withStepDefinition(new StepDefinition(
+                        "ping", "ping",
+                        g -> g.equals("ping"),
+                        Map.of(), null, Set.of(), null, null))
+                .build();
+        reloadedEngine.subscribe(ScheduledExecutionFiredEvent.class, e -> {
+            if (stale.id().equals(e.scheduleId())) latch.countDown();
+        });
+
+        assertThat(latch.await(5, TimeUnit.SECONDS))
+                .as("FIRE_ONCE catch-up should fire within 5s on reload")
+                .isTrue();
+        reloadedEngine.shutdown();
     }
 
     // --- helper ---

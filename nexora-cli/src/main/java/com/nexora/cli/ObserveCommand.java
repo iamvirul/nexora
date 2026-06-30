@@ -330,7 +330,8 @@ public class ObserveCommand implements Callable<Integer> {
                     try { sendJson(exchange, 400, Map.of("error", "cronExpression and goal are required")); } catch (Exception ignored) {}
                     return;
                 }
-                String policyStr = body.getOrDefault("missedFirePolicy", "FIRE_ONCE").toString();
+                Object rawPolicy = body.get("missedFirePolicy");
+                String policyStr = (rawPolicy != null ? rawPolicy.toString() : "FIRE_ONCE");
                 MissedFirePolicy policy;
                 try { policy = MissedFirePolicy.valueOf(policyStr.toUpperCase()); }
                 catch (IllegalArgumentException e) {

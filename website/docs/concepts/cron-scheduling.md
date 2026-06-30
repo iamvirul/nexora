@@ -56,7 +56,7 @@ When the engine is restarted after downtime, some cron windows may have been mis
 
 Standard 5-field UNIX cron (no seconds, no year):
 
-```
+```text
 ┌──── minute      (0–59)
 │ ┌──── hour        (0–23)
 │ │ ┌──── day-of-month (1–31)

@@ -404,6 +404,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.executeUpdate();
         } catch (Exception e) {
             log.error("Failed to create schedule id={}", record.id(), e);
+            throw new RuntimeException("Failed to create schedule id=" + record.id(), e);
         }
     }
 
@@ -418,7 +419,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             }
         } catch (Exception e) {
             log.error("Failed to find schedule id={}", id, e);
-            return Optional.empty();
+            throw new RuntimeException("Failed to find schedule id=" + id, e);
         }
     }
 
@@ -428,9 +429,16 @@ public final class JdbcExecutionStore implements ExecutionStore {
         List<ScheduleRecord> results = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) results.add(mapSchedule(rs));
+            while (rs.next()) {
+                try {
+                    results.add(mapSchedule(rs));
+                } catch (Exception e) {
+                    log.warn("Skipping malformed schedule row id={}: {}", rs.getString("id"), e.getMessage());
+                }
+            }
         } catch (Exception e) {
             log.error("Failed to query active schedules", e);
+            throw new RuntimeException("Failed to query active schedules", e);
         }
         return results;
     }
@@ -441,9 +449,16 @@ public final class JdbcExecutionStore implements ExecutionStore {
         List<ScheduleRecord> results = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) results.add(mapSchedule(rs));
+            while (rs.next()) {
+                try {
+                    results.add(mapSchedule(rs));
+                } catch (Exception e) {
+                    log.warn("Skipping malformed schedule row id={}: {}", rs.getString("id"), e.getMessage());
+                }
+            }
         } catch (Exception e) {
             log.error("Failed to query schedules", e);
+            throw new RuntimeException("Failed to query schedules", e);
         }
         return results;
     }
@@ -458,6 +473,20 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.executeUpdate();
         } catch (SQLException e) {
             log.error("Failed to update schedule last_fired_at id={}", id, e);
+            throw new RuntimeException("Failed to update schedule last_fired_at id=" + id, e);
+        }
+    }
+
+    @Override
+    public synchronized void updateScheduleNextFire(String id, Instant nextFireAt) {
+        String sql = "UPDATE nexora_schedules SET next_fire_at = ? WHERE id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setTimestamp(1, Timestamp.from(nextFireAt));
+            ps.setString(2, id);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            log.error("Failed to update schedule next_fire_at id={}", id, e);
+            throw new RuntimeException("Failed to update schedule next_fire_at id=" + id, e);
         }
     }
 
@@ -469,6 +498,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.executeUpdate();
         } catch (SQLException e) {
             log.error("Failed to deactivate schedule id={}", id, e);
+            throw new RuntimeException("Failed to deactivate schedule id=" + id, e);
         }
     }
 
@@ -482,12 +512,25 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 rs.getString("cron_expression"),
                 rs.getString("goal"),
                 ctx,
-                MissedFirePolicy.valueOf(rs.getString("missed_fire_policy")),
+                parseMissedFirePolicy(rs.getString("missed_fire_policy")),
                 rs.getTimestamp("created_at").toInstant(),
                 lastFiredAt != null ? lastFiredAt.toInstant() : null,
                 rs.getTimestamp("next_fire_at").toInstant(),
                 rs.getBoolean("active")
         );
+    }
+
+    private static MissedFirePolicy parseMissedFirePolicy(String value) {
+        try {
+            return MissedFirePolicy.valueOf(value);
+        } catch (IllegalArgumentException e) {
+            log.warn("Unknown missed_fire_policy '{}', defaulting to FIRE_ONCE", value);
+            return MissedFirePolicy.FIRE_ONCE;
+        }
+    }
+
+    public static JdbcExecutionStore h2AutoServer(String filePath) {
+        return new JdbcExecutionStore("jdbc:h2:" + filePath + ";AUTO_SERVER=TRUE");
     }
 
     @Override

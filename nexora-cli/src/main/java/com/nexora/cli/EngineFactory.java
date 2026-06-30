@@ -20,7 +20,7 @@ final class EngineFactory {
                 .withWebhookSecret(secret);
 
         if (config.executionStore != null && !config.executionStore.isBlank()) {
-            builder.withExecutionStore(JdbcExecutionStore.h2(config.executionStore));
+            builder.withExecutionStore(JdbcExecutionStore.h2AutoServer(config.executionStore));
         }
 
         builder.withDefaultRetryPolicy(

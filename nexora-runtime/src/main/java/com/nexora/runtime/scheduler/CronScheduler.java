@@ -128,17 +128,17 @@ public final class CronScheduler implements AutoCloseable {
         Instant from = record.lastFiredAt() != null ? record.lastFiredAt() : record.createdAt();
         ZonedDateTime fromDt = from.atZone(ZoneOffset.UTC);
 
-        List<ZonedDateTime> missed = collectMissedFirings(cron, fromDt, now);
+        List<ZonedDateTime> missed = collectMissedFirings(record.id(), cron, fromDt, now);
 
         if (!missed.isEmpty()) {
             switch (record.missedFirePolicy()) {
                 case SKIP -> {
-                    log.warn("Schedule id={} missed {} window(s); SKIP policy — not firing", record.id(), missed.size());
+                    log.warn("Schedule id={} missed {} window(s); SKIP policy, not firing", record.id(), missed.size());
                     eventBus.publish(new ScheduledExecutionMissedEvent(
                             record.id(), missed.size(), from, now.toInstant()));
                 }
                 case FIRE_ONCE -> {
-                    log.info("Schedule id={} missed {} window(s); FIRE_ONCE — firing once now", record.id(), missed.size());
+                    log.info("Schedule id={} missed {} window(s); FIRE_ONCE, firing once now", record.id(), missed.size());
                     executeAndPublish(record.id(), record.goal(), record.context());
                     int extra = missed.size() - 1;
                     if (extra > 0) {
@@ -147,7 +147,7 @@ public final class CronScheduler implements AutoCloseable {
                     }
                 }
                 case FIRE_ALL -> {
-                    log.info("Schedule id={} missed {} window(s); FIRE_ALL — firing {} time(s)", record.id(), missed.size(), missed.size());
+                    log.info("Schedule id={} missed {} window(s); FIRE_ALL, firing {} time(s)", record.id(), missed.size(), missed.size());
                     for (int i = 0; i < missed.size(); i++) {
                         executeAndPublish(record.id(), record.goal(), record.context());
                     }
@@ -156,7 +156,12 @@ public final class CronScheduler implements AutoCloseable {
         }
 
         ZonedDateTime nextFire = cron.next(now);
-        store.updateScheduleLastFired(record.id(), now.toInstant(), nextFire.toInstant());
+        boolean actuallyFired = !missed.isEmpty() && record.missedFirePolicy() != MissedFirePolicy.SKIP;
+        if (actuallyFired) {
+            store.updateScheduleLastFired(record.id(), now.toInstant(), nextFire.toInstant());
+        } else {
+            store.updateScheduleNextFire(record.id(), nextFire.toInstant());
+        }
         enqueue(record.id(), nextFire);
     }
 
@@ -199,7 +204,7 @@ public final class CronScheduler implements AutoCloseable {
     }
 
     private static List<ZonedDateTime> collectMissedFirings(
-            CronExpression cron, ZonedDateTime from, ZonedDateTime to) {
+            String scheduleId, CronExpression cron, ZonedDateTime from, ZonedDateTime to) {
         List<ZonedDateTime> missed = new ArrayList<>();
         ZonedDateTime cursor = from;
         while (true) {
@@ -207,7 +212,10 @@ public final class CronScheduler implements AutoCloseable {
             if (!next.isBefore(to)) break;
             missed.add(next);
             cursor = next;
-            if (missed.size() > 1000) break; // safety cap
+            if (missed.size() >= 1000) {
+                log.warn("Schedule id={} has 1000+ missed windows; truncating catch-up to 1000", scheduleId);
+                break;
+            }
         }
         return missed;
     }

@@ -230,13 +230,14 @@ public class PaymentPipelineApp {
                     sendJson(exchange, 400, Map.of("error", "Invalid JSON"));
                     return;
                 }
-                String cron = (String) body.get("cronExpression");
-                String goal = (String) body.get("goal");
+                String cron = body.get("cronExpression") instanceof String s ? s : null;
+                String goal = body.get("goal") instanceof String s ? s : null;
                 if (cron == null || goal == null) {
                     sendJson(exchange, 400, Map.of("error", "cronExpression and goal are required"));
                     return;
                 }
-                String policyStr = body.getOrDefault("missedFirePolicy", "FIRE_ONCE").toString();
+                Object rawPolicy = body.get("missedFirePolicy");
+                String policyStr = rawPolicy != null ? rawPolicy.toString() : "FIRE_ONCE";
                 MissedFirePolicy policy;
                 try { policy = MissedFirePolicy.valueOf(policyStr.toUpperCase()); }
                 catch (IllegalArgumentException e) { sendJson(exchange, 400, Map.of("error", "Invalid missedFirePolicy")); return; }
@@ -424,8 +425,8 @@ public class PaymentPipelineApp {
                 MissedFirePolicy.FIRE_ONCE);
         System.out.printf("  Schedule registered id=%s cron='* * * * *' nextFire=%s%n",
                 scheduleHandle.id(), scheduleHandle.nextFireTime());
-        System.out.printf("  Run: nexora schedule list  — to see the active schedule%n");
-        System.out.printf("  Run: nexora schedule remove %s  — to cancel it%n", scheduleHandle.id());
+        System.out.printf("  GET  http://localhost:8090/api/schedules         — list all schedules%n");
+        System.out.printf("  DELETE http://localhost:8090/api/schedules/%s  — cancel it%n", scheduleHandle.id());
         System.out.printf("  (Scheduled executions will appear in the UI as they fire)%n");
 
         System.out.println();

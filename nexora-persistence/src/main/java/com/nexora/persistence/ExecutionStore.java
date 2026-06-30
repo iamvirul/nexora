@@ -70,17 +70,21 @@ public interface ExecutionStore extends AutoCloseable {
     }
 
     default java.util.Optional<ScheduleRecord> findScheduleById(String id) {
-        return java.util.Optional.empty();
+        throw new UnsupportedOperationException("Schedules not supported by this store implementation");
     }
 
     /** Returns all active schedules, ordered by next_fire_at ascending. */
     default List<ScheduleRecord> findActiveSchedules() {
-        return List.of();
+        throw new UnsupportedOperationException("Schedules not supported by this store implementation");
     }
 
     /** Returns all schedules (active and inactive), most recently created first. */
     default List<ScheduleRecord> findAllSchedules() {
-        return List.of();
+        throw new UnsupportedOperationException("Schedules not supported by this store implementation");
+    }
+
+    default void updateScheduleNextFire(String id, Instant nextFireAt) {
+        throw new UnsupportedOperationException("Schedules not supported by this store implementation");
     }
 
     default void updateScheduleLastFired(String id, Instant lastFiredAt, Instant nextFireAt) {

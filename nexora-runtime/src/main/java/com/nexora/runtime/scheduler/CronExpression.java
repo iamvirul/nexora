@@ -98,16 +98,27 @@ public final class CronExpression {
                 int step = Integer.parseInt(sp[1]);
                 if (step < 1) throw new IllegalArgumentException("Step must be >= 1: " + part);
                 int start = "*".equals(sp[0]) ? min : Integer.parseInt(sp[0]);
+                if (start < min || start > max)
+                    throw new IllegalArgumentException("Value " + start + " out of range [" + min + "," + max + "] in: " + part);
                 for (int i = start; i <= max; i += step) result.add(i);
             } else if (part.contains("-")) {
                 String[] rp = part.split("-", 2);
                 int from = Integer.parseInt(rp[0]);
                 int to   = Integer.parseInt(rp[1]);
+                if (from < min || from > max)
+                    throw new IllegalArgumentException("Value " + from + " out of range [" + min + "," + max + "] in: " + part);
+                if (to < min || to > max)
+                    throw new IllegalArgumentException("Value " + to + " out of range [" + min + "," + max + "] in: " + part);
+                if (from > to)
+                    throw new IllegalArgumentException("Range start " + from + " > end " + to + " in: " + part);
                 for (int i = from; i <= to; i++) result.add(i);
             } else if ("*".equals(part)) {
                 for (int i = min; i <= max; i++) result.add(i);
             } else {
-                result.add(Integer.parseInt(part));
+                int val = Integer.parseInt(part);
+                if (val < min || val > max)
+                    throw new IllegalArgumentException("Value " + val + " out of range [" + min + "," + max + "] in field: " + field);
+                result.add(val);
             }
         }
         return result;
