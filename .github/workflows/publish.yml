@@ -55,7 +55,14 @@ jobs:
           echo "Releasing ${TAG} (pom version -> ${VERSION})"
 
       - name: Set release version in pom
-        run: mvn versions:set -DnewVersion=${{ steps.tag.outputs.version }} -DgenerateBackupPoms=false -q
+        env:
+          NEW_VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          OLD_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          mvn versions:set -DnewVersion="${NEW_VERSION}" -DgenerateBackupPoms=false -q
+          # versions:set updates <version> elements but not the individual nexora-*.version
+          # properties in the parent pom — patch those explicitly
+          sed -i "s|<nexora-\(.*\)\.version>[^<]*</nexora-\1\.version>|<nexora-\1.version>${NEW_VERSION}</nexora-\1.version>|g" pom.xml
 
       - name: Build & test all modules
         run: mvn install --no-transfer-progress
