@@ -53,7 +53,7 @@ engine.execute(intent)
 
 Use `.join()` for synchronous callers, but be aware this will block the calling thread.
 
-## Cron scheduler (Unreleased)
+## Cron scheduler
 
 `nexora-runtime` also hosts `CronScheduler`, an in-process scheduler backed by a daemon `ScheduledExecutorService`. It is created automatically by `NexoraEngine.build()` when an `ExecutionStore` is configured.
 

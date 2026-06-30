@@ -1,8 +1,4 @@
-# Execution Deadline (Unreleased version)
-
-:::info Unreleased Version
-This feature is implemented in the unreleased development version of Nexora.
-:::
+# Execution Deadline
 
 Nexora supports a **plan-level wall-clock execution deadline** (timeout) to guarantee that an execution terminates within an upper bound of time. 
 

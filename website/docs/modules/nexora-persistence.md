@@ -20,13 +20,13 @@ public interface ExecutionStore extends AutoCloseable {
     Optional<ExecutionRecord> findById(String executionId);
     List<ExecutionRecord> findRecent(int limit);
 
-    // Dead Letter Queue (default methods, Unreleased)
+    // Dead Letter Queue (default methods)
     default void createDeadLetter(DeadLetterRecord record);
     default Optional<DeadLetterRecord> findDeadLetterById(String id);
     default List<DeadLetterRecord> findDeadLetters(DeadLetterReviewState state, int offset, int limit);
     default void updateDeadLetterState(String id, DeadLetterReviewState state, String resolveReason);
 
-    // Cron scheduling (default methods, Unreleased)
+    // Cron scheduling (default methods)
     default void createSchedule(ScheduleRecord record);
     default Optional<ScheduleRecord> findScheduleById(String id);
     default List<ScheduleRecord> findActiveSchedules();

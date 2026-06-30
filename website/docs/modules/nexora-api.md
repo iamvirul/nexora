@@ -105,7 +105,7 @@ engine.deactivatePlugin("v1-plugin");
 
 ---
 
-## Cron scheduling (Unreleased)
+## Cron scheduling
 
 Requires a persistence store. Returns a `ScheduledExecution` handle with `id()`, `nextFireTime()`, and `cancel()`.
 

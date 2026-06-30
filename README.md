@@ -115,9 +115,9 @@ nexora [--config <file>] <command>
 | `nexora dlq list` | List dead letter queue entries (default: PENDING) |
 | `nexora dlq replay <id>` | Replay a dead-lettered execution |
 | `nexora dlq resolve <id>` | Mark a dead letter as resolved |
-| `nexora schedule add` | Register a recurring cron-based execution (Unreleased) |
-| `nexora schedule list` | List schedules and next fire times (Unreleased) |
-| `nexora schedule remove <id>` | Cancel a schedule immediately (Unreleased) |
+| `nexora schedule add` | Register a recurring cron-based execution |
+| `nexora schedule list` | List schedules and next fire times |
+| `nexora schedule remove <id>` | Cancel a schedule immediately |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 
@@ -231,7 +231,7 @@ Amendments are applied by the scheduler before any dependent step begins. A `Pla
 
 ## Capability contracts
 
-> **Note**: Stateful circuit breaker options (`openDuration` and `probeInterval`) are currently **Unreleased**.
+> **Note**: Stateful circuit breaker options (`openDuration` and `probeInterval`) were added in v0.2.0.
 
 Capabilities declare their expected operational behaviour. The engine monitors every call and reroutes traffic when a capability breaches its contract:
 
@@ -342,7 +342,7 @@ NexoraEngine.builder()
 
 Backoff includes ±25% jitter to avoid thundering herd on simultaneous failures.
 
-## Execution Deadline (Unreleased version)
+## Execution Deadline
 
 Nexora allows you to set a plan-level wall-clock execution deadline. If the execution exceeds this duration, the entire plan is cancelled: running steps continue, but not-yet-started steps are suppressed, the terminal execution status is set to `TIMED_OUT`, and saga compensation is triggered for all successfully completed steps.
 
@@ -370,7 +370,7 @@ When a plan times out:
 2. A `PlanTimedOutEvent` is published.
 3. Saga compensation runs for completed steps if saga is enabled.
 
-## Webhook Callbacks (Unreleased version)
+## Webhook Callbacks
 
 Nexora allows you to register webhook URLs to be notified asynchronously when an execution reaches a terminal state (`COMPLETED`, `FAILED`, or `TIMED_OUT`). This is particularly useful when triggering executions remotely via the API and awaiting their outcome.
 
@@ -397,7 +397,7 @@ curl -X POST http://localhost:9464/api/execute \
 
 Nexora will dispatch a JSON payload to your endpoint with the execution outcome. It signs the payload using the configured secret and passes the signature in the `nexora-signature` HTTP header for validation. It also utilizes exponential backoff to retry deliveries up to 3 attempts. Delivery attempts are persisted in the `nexora_webhook_deliveries` database table and can be queried for auditability via the API.
 
-## Dead Letter Queue (Unreleased version)
+## Dead Letter Queue
 
 When a execution fails after exhausting all retries, Nexora writes a record to the `nexora_dead_letters` table and fires an `ExecutionDeadLetteredEvent` on the event bus. This gives operators a structured audit trail of every permanently failed execution and a way to replay or resolve them without querying the database directly.
 
@@ -454,7 +454,7 @@ curl -X POST http://localhost:9464/api/dead-letters/<id>/resolve \
 
 > **Authentication**: DLQ endpoints will require a Bearer token once [#30](https://github.com/iamvirul/nexora/issues/30) lands.
 
-## Cron Scheduling (Unreleased version)
+## Cron Scheduling
 
 Register recurring executions driven by standard 5-field UNIX cron expressions. Schedules are persisted to a `nexora_schedules` table and survive engine restarts. Requires `executionStore` to be configured.
 
@@ -545,7 +545,7 @@ This exposes four endpoints with no external dependencies:
 | `POST /api/dead-letters/{id}/replay` | Create a new execution from a dead letter and mark it as `REPLAYED` |
 | `POST /api/dead-letters/{id}/resolve` | Mark a dead letter as `RESOLVED` with an optional `{"reason":"..."}` body |
 
-> **Note**: The `/health/ready` endpoint is currently **Unreleased**.
+> **Note**: The `/health/ready` endpoint was added in v0.2.0.
 
 Example execute request:
 

@@ -4,11 +4,7 @@ title: Dead Letter Queue
 sidebar_position: 6
 ---
 
-# Dead Letter Queue (Unreleased version)
-
-:::info Unreleased Version
-This feature is implemented in the unreleased development version of Nexora.
-:::
+# Dead Letter Queue
 
 When an execution fails after exhausting all retries, Nexora writes a record to the **dead letter queue** (DLQ), the `nexora_dead_letters` table, and fires an `ExecutionDeadLetteredEvent` on the event bus. This gives operators a structured audit trail of every permanently failed execution and a way to replay or resolve them without querying the database directly.
 

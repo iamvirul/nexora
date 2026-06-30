@@ -6,7 +6,7 @@ sidebar_position: 3
 
 # Capability contracts
 
-> **Note**: Stateful circuit breaker options (`openDuration` and `probeInterval`) are currently **Unreleased**.
+> **Note**: Stateful circuit breaker options (`openDuration` and `probeInterval`) were added in v0.2.0.
 
 Capabilities declare their expected operational behaviour. The engine monitors every call and reroutes traffic when a capability breaches its contract:
 

@@ -18,12 +18,12 @@ nexora [--config <file>] <command>
 | `nexora plugins` | List active plugins |
 | `nexora observe` | Start UI/API/metrics server for live process observability |
 | `nexora demo` | Run the built-in feature demo |
-| `nexora dlq list` | List dead letter queue entries (default: PENDING) *(Unreleased)* |
-| `nexora dlq replay <id>` | Replay a dead-lettered execution *(Unreleased)* |
-| `nexora dlq resolve <id>` | Mark a dead letter as resolved *(Unreleased)* |
-| `nexora schedule add` | Register a recurring cron-based execution *(Unreleased)* |
-| `nexora schedule list` | List all schedules and their next fire time *(Unreleased)* |
-| `nexora schedule remove <id>` | Cancel a schedule immediately *(Unreleased)* |
+| `nexora dlq list` | List dead letter queue entries (default: PENDING) ** |
+| `nexora dlq replay <id>` | Replay a dead-lettered execution ** |
+| `nexora dlq resolve <id>` | Mark a dead letter as resolved ** |
+| `nexora schedule add` | Register a recurring cron-based execution ** |
+| `nexora schedule list` | List all schedules and their next fire time ** |
+| `nexora schedule remove <id>` | Cancel a schedule immediately ** |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 
@@ -57,7 +57,7 @@ By default Nexora looks for `nexora.json` in the working directory. Point to a d
 
 A step is included in the plan when its `matchesGoalContains` string appears in the goal. Dependencies between steps are declared in code using `StepDefinition`'s `dependsOn` set.
 
-## `nexora schedule`: Cron Scheduling (Unreleased)
+## `nexora schedule`: Cron Scheduling
 
 Requires a persistence store (`executionStore` in `nexora.json` or `withExecutionStore(...)` in code).
 

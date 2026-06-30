@@ -4,11 +4,7 @@ title: Cron Scheduling
 sidebar_position: 7
 ---
 
-# Cron Scheduling (Unreleased)
-
-:::info Unreleased Version
-This feature is implemented in the unreleased development version of Nexora.
-:::
+# Cron Scheduling
 
 Nexora's built-in cron scheduler lets you register recurring executions backed by the existing persistence layer. Schedules survive engine restarts and missed-fire behaviour is configurable per schedule.
 

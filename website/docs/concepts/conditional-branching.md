@@ -4,11 +4,7 @@ title: Conditional Branching
 sidebar_position: 5
 ---
 
-# Conditional Branching (Unreleased version)
-
-:::info Unreleased Version
-This feature is implemented in the unreleased development version of Nexora.
-:::
+# Conditional Branching
 
 Nexora provides built-in support for conditional branching, allowing you to dynamically skip or execute steps based on real-time execution context variables or outputs of previous steps. This provides dynamic flow control without having to write custom complex logic inside your capabilities.
 
