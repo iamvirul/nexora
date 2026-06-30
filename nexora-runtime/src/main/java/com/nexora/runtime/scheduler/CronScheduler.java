@@ -174,7 +174,7 @@ public final class CronScheduler implements AutoCloseable {
         CronExpression cron = CronExpression.parse(record.cronExpression());
         ZonedDateTime nextFire = cron.next(now);
         store.updateScheduleLastFired(scheduleId, now.toInstant(), nextFire.toInstant());
-        enqueue(scheduleId, cron, nextFire);
+        enqueue(scheduleId, nextFire);
     }
 
     private void executeAndPublish(String scheduleId, String goal, Map<String, Object> context) {
@@ -189,7 +189,7 @@ public final class CronScheduler implements AutoCloseable {
               });
     }
 
-    private void enqueue(String scheduleId, CronExpression cron, ZonedDateTime nextFire) {
+    private void enqueue(String scheduleId, ZonedDateTime nextFire) {
         long delayMs = java.time.Duration.between(Instant.now(), nextFire.toInstant()).toMillis();
         if (delayMs < 0) delayMs = 0;
         ScheduledFuture<?> future = scheduler.schedule(
