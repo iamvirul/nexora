@@ -81,7 +81,7 @@ jobs:
 
       - name: Push branch
         run: |
-          git push origin "${{ steps.version.outputs.branch }}"
+          git push --force-with-lease origin "${{ steps.version.outputs.branch }}"
 
       - name: Open pull request
         uses: actions/github-script@v9
