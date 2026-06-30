@@ -124,16 +124,17 @@ public class ScheduleCommand implements Callable<Integer> {
                 return 0;
             }
 
-            System.out.printf("%-36s  %-6s  %-20s  %-20s  %-12s  %s%n",
-                    "ID", "ACTIVE", "NEXT FIRE", "LAST FIRE", "POLICY", "GOAL");
-            System.out.println("-".repeat(120));
+            System.out.printf("%-36s  %-6s  %-20s  %-20s  %-12s  %-12s  %s%n",
+                    "ID", "ACTIVE", "NEXT FIRE", "LAST FIRE", "POLICY", "LAST STATUS", "GOAL");
+            System.out.println("-".repeat(136));
             for (ScheduleRecord r : records) {
-                System.out.printf("%-36s  %-6s  %-20s  %-20s  %-12s  %s%n",
+                System.out.printf("%-36s  %-6s  %-20s  %-20s  %-12s  %-12s  %s%n",
                         r.id(),
                         r.active() ? "YES" : "NO",
                         r.nextFireAt(),
                         r.lastFiredAt() != null ? r.lastFiredAt() : "-",
                         r.missedFirePolicy(),
+                        r.lastStatus(),
                         r.goal());
             }
             return 0;

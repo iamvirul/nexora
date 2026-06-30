@@ -146,6 +146,7 @@ class SchedulerIntegrationTest {
                 twoMinutesAgo.minusSeconds(10),
                 null,
                 twoMinutesAgo,
+                com.nexora.persistence.ScheduleStatus.NEVER_RUN,
                 true
         );
         store.createSchedule(stale);

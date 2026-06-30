@@ -13,6 +13,7 @@ public record ScheduleRecord(
         Instant createdAt,
         Instant lastFiredAt,
         Instant nextFireAt,
+        ScheduleStatus lastStatus,
         boolean active
 ) {
     public ScheduleRecord {
@@ -22,6 +23,7 @@ public record ScheduleRecord(
         Objects.requireNonNull(missedFirePolicy, "missedFirePolicy");
         Objects.requireNonNull(createdAt, "createdAt");
         Objects.requireNonNull(nextFireAt, "nextFireAt");
+        if (lastStatus == null) lastStatus = ScheduleStatus.NEVER_RUN;
         context = context == null ? Map.of() : Map.copyOf(context);
     }
 }
