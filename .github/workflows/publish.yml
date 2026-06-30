@@ -7,9 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.1.0)"
-        required: false
-        default: ""
+        description: "Release tag (e.g. v0.2.0)"
+        required: true
 
 jobs:
   publish:
@@ -19,6 +18,9 @@ jobs:
       contents: write
       packages: write
       pull-requests: write
+
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
 
     steps:
       - uses: actions/checkout@v7
@@ -34,6 +36,26 @@ jobs:
           server-id: github
           server-username: GITHUB_ACTOR
           server-password: GITHUB_TOKEN
+
+      # Resolve tag from push event or manual input, then strip SNAPSHOT from pom
+      - name: Resolve release tag and version
+        id: tag
+        run: |
+          TAG="${GITHUB_REF_NAME:-}"
+          if [ -z "$TAG" ] || [[ "$TAG" != v* ]]; then
+            TAG="${{ inputs.tag }}"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "No tag provided." >&2
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${TAG} (pom version -> ${VERSION})"
+
+      - name: Set release version in pom
+        run: mvn versions:set -DnewVersion=${{ steps.tag.outputs.version }} -DgenerateBackupPoms=false -q
 
       - name: Build & test all modules
         run: mvn install --no-transfer-progress
@@ -55,7 +77,6 @@ jobs:
         run: mvn deploy -pl nexora-plugin-spi -DskipTests --no-transfer-progress
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
 
       - name: Publish nexora-registry
         run: mvn deploy -pl nexora-registry -DskipTests --no-transfer-progress
@@ -131,25 +152,24 @@ jobs:
       - name: Extract release notes from CHANGELOG.md
         id: changelog
         run: |
-          TAG="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
-          VERSION="${TAG#v}"
+          VERSION="${{ steps.tag.outputs.version }}"
           NOTES=$(awk "/^## \\[${VERSION}\\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md 2>/dev/null || true)
           if [ -z "$NOTES" ]; then
-            # Fall back to the [Unreleased] block
             NOTES=$(awk '/^## \[Unreleased\]/{found=1; next} found && /^## /{exit} found{print}' CHANGELOG.md 2>/dev/null || true)
           fi
           if [ -z "$NOTES" ]; then
-            NOTES="Release ${TAG}"
+            NOTES="Release ${{ steps.tag.outputs.tag }}"
           fi
           echo "$NOTES" > release-notes.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          name: "Nexora ${{ github.ref_name }}"
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "Nexora ${{ steps.tag.outputs.tag }}"
           body_path: release-notes.txt
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
           files: |
             nexora-*/target/*.jar
         env:
@@ -173,8 +193,8 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'bump-version.yml',
-              ref: context.ref,
+              ref: 'main',
               inputs: {
-                released_tag: context.ref.replace('refs/tags/', '')
+                released_tag: '${{ needs.publish.outputs.tag }}'
               }
             });
