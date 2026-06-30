@@ -150,7 +150,7 @@ class SchedulerIntegrationTest {
         );
         store.createSchedule(stale);
 
-        CountDownLatch latch = new CountDownLatch(1);
+        int beforeCount = executions.get();
         NexoraEngine reloadedEngine = NexoraEngine.builder()
                 .withExecutionStore(store)
                 .withPlugin(buildPlugin())
@@ -159,13 +159,16 @@ class SchedulerIntegrationTest {
                         g -> g.equals("ping"),
                         Map.of(), null, Set.of(), null, null))
                 .build();
-        reloadedEngine.subscribe(ScheduledExecutionFiredEvent.class, e -> {
-            if (stale.id().equals(e.scheduleId())) latch.countDown();
-        });
 
-        assertThat(latch.await(5, TimeUnit.SECONDS))
-                .as("FIRE_ONCE catch-up should fire within 5s on reload")
-                .isTrue();
+        // Catch-up fires async via CompletableFuture; poll until the capability executes
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (executions.get() <= beforeCount && System.currentTimeMillis() < deadline) {
+            Thread.sleep(50);
+        }
+
+        assertThat(executions.get())
+                .as("FIRE_ONCE catch-up should execute the capability within 5s on reload")
+                .isGreaterThan(beforeCount);
         reloadedEngine.shutdown();
     }
 
