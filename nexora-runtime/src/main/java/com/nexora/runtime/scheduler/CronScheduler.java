@@ -78,7 +78,7 @@ public final class CronScheduler implements AutoCloseable {
                 true
         );
         store.createSchedule(record);
-        enqueue(record.id(), cron, nextFire);
+        enqueue(record.id(), nextFire);
 
         log.info("Schedule registered id={} cron='{}' nextFire={}", record.id(), cronExpression, nextFire);
         return new ScheduledExecution(record.id(), cronExpression, nextFire.toInstant(), this);
@@ -157,7 +157,7 @@ public final class CronScheduler implements AutoCloseable {
 
         ZonedDateTime nextFire = cron.next(now);
         store.updateScheduleLastFired(record.id(), now.toInstant(), nextFire.toInstant());
-        enqueue(record.id(), cron, nextFire);
+        enqueue(record.id(), nextFire);
     }
 
     private void onFire(String scheduleId) {
