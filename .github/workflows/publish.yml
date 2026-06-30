@@ -62,7 +62,7 @@ jobs:
           mvn versions:set -DnewVersion="${NEW_VERSION}" -DgenerateBackupPoms=false -q
           # versions:set updates <version> elements but not the individual nexora-*.version
           # properties in the parent pom — patch those explicitly
-          sed -i "s|<nexora-\(.*\)\.version>${OLD_VERSION}</nexora-\1\.version>|<nexora-\1.version>${NEW_VERSION}</nexora-\1.version>|g" pom.xml
+          sed -i "s|<nexora-\(.*\)\.version>[^<]*</nexora-\1\.version>|<nexora-\1.version>${NEW_VERSION}</nexora-\1.version>|g" pom.xml
 
       - name: Build & test all modules
         run: mvn install --no-transfer-progress
