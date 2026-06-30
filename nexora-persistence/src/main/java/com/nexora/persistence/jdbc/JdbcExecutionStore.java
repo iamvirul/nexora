@@ -9,6 +9,7 @@ import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.ExecutionStore;
 import com.nexora.persistence.MissedFirePolicy;
 import com.nexora.persistence.ScheduleRecord;
+import com.nexora.persistence.ScheduleStatus;
 import com.nexora.persistence.StepRecord;
 import com.nexora.persistence.StepState;
 import org.slf4j.Logger;
@@ -128,6 +129,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
                     created_at           TIMESTAMP     NOT NULL,
                     last_fired_at        TIMESTAMP,
                     next_fire_at         TIMESTAMP     NOT NULL,
+                    last_status          VARCHAR(20)   NOT NULL DEFAULT 'NEVER_RUN',
                     active               BOOLEAN       NOT NULL DEFAULT TRUE
                 )
             """);
@@ -388,8 +390,8 @@ public final class JdbcExecutionStore implements ExecutionStore {
         String sql = """
             INSERT INTO nexora_schedules
                 (id, cron_expression, goal, context_json, missed_fire_policy,
-                 created_at, last_fired_at, next_fire_at, active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 created_at, last_fired_at, next_fire_at, last_status, active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, record.id());
@@ -400,7 +402,8 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.setTimestamp(6, Timestamp.from(record.createdAt()));
             ps.setTimestamp(7, record.lastFiredAt() != null ? Timestamp.from(record.lastFiredAt()) : null);
             ps.setTimestamp(8, Timestamp.from(record.nextFireAt()));
-            ps.setBoolean(9, record.active());
+            ps.setString(9, record.lastStatus().name());
+            ps.setBoolean(10, record.active());
             ps.executeUpdate();
         } catch (Exception e) {
             log.error("Failed to create schedule id={}", record.id(), e);
@@ -492,13 +495,26 @@ public final class JdbcExecutionStore implements ExecutionStore {
 
     @Override
     public synchronized void deactivateSchedule(String id) {
-        String sql = "UPDATE nexora_schedules SET active = FALSE WHERE id = ?";
+        String sql = "UPDATE nexora_schedules SET active = FALSE, last_status = 'CANCELED' WHERE id = ?";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, id);
             ps.executeUpdate();
         } catch (SQLException e) {
             log.error("Failed to deactivate schedule id={}", id, e);
             throw new RuntimeException("Failed to deactivate schedule id=" + id, e);
+        }
+    }
+
+    @Override
+    public synchronized void updateScheduleStatus(String id, ScheduleStatus status) {
+        String sql = "UPDATE nexora_schedules SET last_status = ? WHERE id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, status.name());
+            ps.setString(2, id);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            log.error("Failed to update schedule status id={}", id, e);
+            throw new RuntimeException("Failed to update schedule status id=" + id, e);
         }
     }
 
@@ -516,6 +532,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 rs.getTimestamp("created_at").toInstant(),
                 lastFiredAt != null ? lastFiredAt.toInstant() : null,
                 rs.getTimestamp("next_fire_at").toInstant(),
+                parseScheduleStatus(rs.getString("last_status")),
                 rs.getBoolean("active")
         );
     }
@@ -526,6 +543,15 @@ public final class JdbcExecutionStore implements ExecutionStore {
         } catch (IllegalArgumentException e) {
             log.warn("Unknown missed_fire_policy '{}', defaulting to FIRE_ONCE", value);
             return MissedFirePolicy.FIRE_ONCE;
+        }
+    }
+
+    private static ScheduleStatus parseScheduleStatus(String value) {
+        try {
+            return ScheduleStatus.valueOf(value);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            log.warn("Unknown last_status '{}', defaulting to NEVER_RUN", value);
+            return ScheduleStatus.NEVER_RUN;
         }
     }
 

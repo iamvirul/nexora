@@ -95,6 +95,10 @@ public interface ExecutionStore extends AutoCloseable {
         throw new UnsupportedOperationException("Schedules not supported by this store implementation");
     }
 
+    default void updateScheduleStatus(String id, ScheduleStatus status) {
+        throw new UnsupportedOperationException("Schedules not supported by this store implementation");
+    }
+
     @Override
     void close();
 }

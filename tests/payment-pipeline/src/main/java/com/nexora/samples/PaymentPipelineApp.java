@@ -218,7 +218,8 @@ public class PaymentPipelineApp {
                                 "missedFirePolicy", r.missedFirePolicy().name(),
                                 "active", r.active(),
                                 "nextFireAt", r.nextFireAt().toString(),
-                                "lastFiredAt", r.lastFiredAt() != null ? r.lastFiredAt().toString() : ""))
+                                "lastFiredAt", r.lastFiredAt() != null ? r.lastFiredAt().toString() : "",
+                                "lastStatus", r.lastStatus().name()))
                         .toList();
                 sendJson(exchange, 200, Map.of("schedules", schedules));
             } else if ("POST".equalsIgnoreCase(method)) {

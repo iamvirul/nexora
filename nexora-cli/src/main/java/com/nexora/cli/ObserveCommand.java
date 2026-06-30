@@ -306,6 +306,7 @@ public class ObserveCommand implements Callable<Integer> {
                                 m.put("active",           r.active());
                                 m.put("nextFireAt",       r.nextFireAt().toString());
                                 m.put("lastFiredAt",      r.lastFiredAt() != null ? r.lastFiredAt().toString() : null);
+                                m.put("lastStatus",       r.lastStatus().name());
                                 return (Map<String, Object>) m;
                             })
                             .toList();

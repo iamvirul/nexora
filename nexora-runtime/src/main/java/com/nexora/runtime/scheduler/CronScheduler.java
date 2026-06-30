@@ -7,6 +7,7 @@ import com.nexora.event.ScheduledExecutionMissedEvent;
 import com.nexora.persistence.ExecutionStore;
 import com.nexora.persistence.MissedFirePolicy;
 import com.nexora.persistence.ScheduleRecord;
+import com.nexora.persistence.ScheduleStatus;
 import com.nexora.runtime.engine.ExecutionEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,6 +76,7 @@ public final class CronScheduler implements AutoCloseable {
                 now,
                 null,
                 nextFire.toInstant(),
+                ScheduleStatus.NEVER_RUN,
                 true
         );
         store.createSchedule(record);
@@ -134,6 +136,7 @@ public final class CronScheduler implements AutoCloseable {
             switch (record.missedFirePolicy()) {
                 case SKIP -> {
                     log.warn("Schedule id={} missed {} window(s); SKIP policy, not firing", record.id(), missed.size());
+                    store.updateScheduleStatus(record.id(), ScheduleStatus.MISSED);
                     eventBus.publish(new ScheduledExecutionMissedEvent(
                             record.id(), missed.size(), from, now.toInstant()));
                 }
@@ -187,7 +190,9 @@ public final class CronScheduler implements AutoCloseable {
               .whenComplete((result, ex) -> {
                   if (ex != null) {
                       log.error("Scheduled execution failed scheduleId={}", scheduleId, ex);
+                      store.updateScheduleStatus(scheduleId, ScheduleStatus.FAILED);
                   } else {
+                      store.updateScheduleStatus(scheduleId, ScheduleStatus.FIRED);
                       eventBus.publish(new ScheduledExecutionFiredEvent(
                               scheduleId, result.executionId(), Instant.now()));
                   }
