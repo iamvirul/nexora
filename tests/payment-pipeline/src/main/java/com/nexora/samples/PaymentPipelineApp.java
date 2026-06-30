@@ -6,6 +6,9 @@ import com.nexora.api.NexoraEngine;
 import com.nexora.api.observability.NexoraObservability;
 import com.nexora.core.capability.CapabilityContract;
 import com.nexora.core.capability.CapabilityResult;
+import com.nexora.core.intent.Intent;
+import com.nexora.event.ScheduledExecutionFiredEvent;
+import com.nexora.persistence.MissedFirePolicy;
 import com.nexora.core.plan.AddStepAmendment;
 import com.nexora.core.plan.InputBinding;
 import com.nexora.core.plan.Step;
@@ -204,6 +207,63 @@ public class PaymentPipelineApp {
             sendJson(exchange, 200, Map.of("items", items, "page", page, "size", size));
         });
 
+        http.createContext("/api/schedules", exchange -> {
+            String method = exchange.getRequestMethod();
+            if ("GET".equalsIgnoreCase(method)) {
+                var schedules = engine.listSchedules().stream()
+                        .map(r -> Map.of(
+                                "id", r.id(),
+                                "cronExpression", r.cronExpression(),
+                                "goal", r.goal(),
+                                "missedFirePolicy", r.missedFirePolicy().name(),
+                                "active", r.active(),
+                                "nextFireAt", r.nextFireAt().toString(),
+                                "lastFiredAt", r.lastFiredAt() != null ? r.lastFiredAt().toString() : "",
+                                "lastStatus", r.lastStatus().name()))
+                        .toList();
+                sendJson(exchange, 200, Map.of("schedules", schedules));
+            } else if ("POST".equalsIgnoreCase(method)) {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> body;
+                try (var in = exchange.getRequestBody()) {
+                    body = (java.util.Map<String, Object>) JSON.readValue(in, java.util.Map.class);
+                } catch (Exception e) {
+                    sendJson(exchange, 400, Map.of("error", "Invalid JSON"));
+                    return;
+                }
+                String cron = body.get("cronExpression") instanceof String s ? s : null;
+                String goal = body.get("goal") instanceof String s ? s : null;
+                if (cron == null || goal == null) {
+                    sendJson(exchange, 400, Map.of("error", "cronExpression and goal are required"));
+                    return;
+                }
+                Object rawPolicy = body.get("missedFirePolicy");
+                String policyStr = rawPolicy != null ? rawPolicy.toString() : "FIRE_ONCE";
+                MissedFirePolicy policy;
+                try { policy = MissedFirePolicy.valueOf(policyStr.toUpperCase()); }
+                catch (IllegalArgumentException e) { sendJson(exchange, 400, Map.of("error", "Invalid missedFirePolicy")); return; }
+                try {
+                    var handle = engine.schedule(cron, new Intent(goal, Map.of()), policy);
+                    sendJson(exchange, 201, Map.of("id", handle.id(), "nextFireAt", handle.nextFireTime().toString()));
+                } catch (IllegalArgumentException e) {
+                    sendJson(exchange, 400, Map.of("error", e.getMessage()));
+                }
+            } else {
+                sendText(exchange, 405, "Method Not Allowed");
+            }
+        });
+
+        http.createContext("/api/schedules/", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            String id = path.substring("/api/schedules/".length());
+            if ("DELETE".equalsIgnoreCase(exchange.getRequestMethod())) {
+                engine.cancelSchedule(id);
+                sendJson(exchange, 200, Map.of("cancelled", true, "id", id));
+            } else {
+                sendText(exchange, 405, "Method Not Allowed");
+            }
+        });
+
         http.createContext("/api/mock-webhook", exchange -> {
             System.out.println();
             System.out.println("  >>> WEBHOOK CALLBACK RECEIVED!");
@@ -248,6 +308,7 @@ public class PaymentPipelineApp {
         System.out.println("  6  Circuit Breaker   trigger failures to open the circuit, then test fallback routing");
         System.out.println("  7  Webhook Callback  dispatch webhook on execution completion with HMAC signature");
         System.out.println("  8  DLQ Replay        replays a dead-lettered execution from the DLQ");
+        System.out.println("  9  Cron Schedule     registers a recurring payment reconciliation job (every minute)");
         System.out.println();
         System.out.println("Firing test scenarios...");
         System.out.println();
@@ -349,6 +410,25 @@ public class PaymentPipelineApp {
             System.out.println("  No pending dead letters yet — try scenario 3 or 4 manually via the UI.");
         }
         sleep(200);
+
+        // Scenario 9 — cron schedule: reconciliation job fires every minute
+        System.out.println();
+        System.out.println("  [9/9] Cron Schedule — registering a recurring payment reconciliation job");
+        engine.subscribe(ScheduledExecutionFiredEvent.class, e ->
+            System.out.printf("%n  >>> SCHEDULED EXECUTION FIRED  scheduleId=%s  executionId=%s%n",
+                e.scheduleId(), e.executionId()));
+        var scheduleHandle = engine.schedule(
+                "* * * * *",
+                new Intent("process payment", Map.of(
+                        "requestId", "SCHED-RECONCILE",
+                        "amount", 1.00,
+                        "userId", "USR-RECONCILE")),
+                MissedFirePolicy.FIRE_ONCE);
+        System.out.printf("  Schedule registered id=%s cron='* * * * *' nextFire=%s%n",
+                scheduleHandle.id(), scheduleHandle.nextFireTime());
+        System.out.printf("  GET  http://localhost:8090/api/schedules         — list all schedules%n");
+        System.out.printf("  DELETE http://localhost:8090/api/schedules/%s  — cancel it%n", scheduleHandle.id());
+        System.out.printf("  (Scheduled executions will appear in the UI as they fire)%n");
 
         System.out.println();
         System.out.println("Ready. Open http://localhost:9464/ in your browser.");

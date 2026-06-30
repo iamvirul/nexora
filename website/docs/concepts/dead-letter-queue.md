@@ -10,16 +10,16 @@ sidebar_position: 6
 This feature is implemented in the unreleased development version of Nexora.
 :::
 
-When an execution fails after exhausting all retries, Nexora writes a record to the **dead letter queue** (DLQ) — the `nexora_dead_letters` table — and fires an `ExecutionDeadLetteredEvent` on the event bus. This gives operators a structured audit trail of every permanently failed execution and a way to replay or resolve them without querying the database directly.
+When an execution fails after exhausting all retries, Nexora writes a record to the **dead letter queue** (DLQ), the `nexora_dead_letters` table, and fires an `ExecutionDeadLetteredEvent` on the event bus. This gives operators a structured audit trail of every permanently failed execution and a way to replay or resolve them without querying the database directly.
 
 ---
 
 ## How It Works
 
-1. **Step Failure** — a step fails and retries are exhausted; `DagStepScheduler` reports `ExecutionStatus.FAILED` to the engine.
-2. **Dead Letter Write** — `ExecutionEngine` calls `ExecutionStore.createDeadLetter()` with the original `goal`, `context`, `failureCode`, and `failureMessage`.
-3. **Event Fire** — `ExecutionDeadLetteredEvent` is published on the event bus so any subscriber can trigger alerting.
-4. **Operator Action** — the operator uses the CLI or REST API to inspect, replay, or resolve the dead letter.
+1. **Step Failure**: a step fails and retries are exhausted; `DagStepScheduler` reports `ExecutionStatus.FAILED` to the engine.
+2. **Dead Letter Write**: `ExecutionEngine` calls `ExecutionStore.createDeadLetter()` with the original `goal`, `context`, `failureCode`, and `failureMessage`.
+3. **Event Fire**: `ExecutionDeadLetteredEvent` is published on the event bus so any subscriber can trigger alerting.
+4. **Operator Action**: the operator uses the CLI or REST API to inspect, replay, or resolve the dead letter.
 
 ---
 
@@ -127,7 +127,7 @@ Marks the dead letter as `RESOLVED` with an optional reason.
 ```bash
 curl -X POST http://localhost:9464/api/dead-letters/<id>/resolve \
   -H "content-type: application/json" \
-  -d '{"reason": "investigated and closed — no retry needed"}'
+  -d '{"reason": "investigated and closed, no retry needed"}'
 ```
 
 ---

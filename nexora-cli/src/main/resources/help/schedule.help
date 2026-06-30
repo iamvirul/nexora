@@ -1,0 +1,30 @@
+Manage recurring cron-based executions.
+
+  Requires a persistence store configured in nexora.json:
+    { "executionStore": "./nexora-data" }
+
+  Subcommands
+  ───────────
+  add     Register a new schedule
+  list    List all schedules and their next fire time
+  remove  Cancel a schedule immediately
+
+  Examples
+  ────────
+  Fire a nightly cleanup at midnight every day:
+    nexora schedule add --goal "nightly cleanup" --cron "0 0 * * *"
+
+  Poll an API every 5 minutes, skipping any missed windows on restart:
+    nexora schedule add --goal "poll api" --cron "*/5 * * * *" --policy SKIP
+
+  List all active schedules:
+    nexora schedule list --active-only
+
+  Cancel a schedule by ID:
+    nexora schedule remove 4f3a1c2d-...
+
+  Missed-fire policies
+  ────────────────────
+  FIRE_ONCE  Fire once to catch up after downtime (default)
+  SKIP       Drop missed windows and wait for the next slot
+  FIRE_ALL   Fire once for every missed window

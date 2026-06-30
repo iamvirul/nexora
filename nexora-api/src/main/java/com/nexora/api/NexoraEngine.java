@@ -34,6 +34,14 @@ import com.nexora.spi.Planner;
 import com.nexora.tracing.NoopTracer;
 import com.nexora.tracing.Tracer;
 
+import com.nexora.persistence.MissedFirePolicy;
+import com.nexora.persistence.ScheduleRecord;
+import com.nexora.runtime.scheduler.CronScheduler;
+import com.nexora.runtime.scheduler.ScheduledExecution;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -61,25 +69,30 @@ import java.util.concurrent.Executors;
  *       .thenAccept(result -> System.out.println(result.status()));
  * }</pre>
  */
-public final class NexoraEngine {
+public final class NexoraEngine implements AutoCloseable {
+
+    private static final Logger log = LoggerFactory.getLogger(NexoraEngine.class);
 
     private final ExecutionEngine engine;
     private final PluginManager pluginManager;
     private final ExecutionEventBus eventBus;
     private final CapabilityRegistry capabilityRegistry;
     private final CapabilityContractMonitor contractMonitor;
+    private final CronScheduler cronScheduler;
 
     private NexoraEngine(
             ExecutionEngine engine,
             PluginManager pluginManager,
             ExecutionEventBus eventBus,
             CapabilityRegistry capabilityRegistry,
-            CapabilityContractMonitor contractMonitor) {
+            CapabilityContractMonitor contractMonitor,
+            CronScheduler cronScheduler) {
         this.engine = engine;
         this.pluginManager = pluginManager;
         this.eventBus = eventBus;
         this.capabilityRegistry = capabilityRegistry;
         this.contractMonitor = contractMonitor;
+        this.cronScheduler = cronScheduler;
     }
 
     public CompletableFuture<ExecutionResult> execute(Intent intent) {
@@ -123,6 +136,74 @@ public final class NexoraEngine {
 
     public com.nexora.persistence.ExecutionStore getStore() {
         return engine.getStore();
+    }
+
+    /**
+     * Schedules a recurring execution of {@code intent} on the given cron expression.
+     *
+     * @param cronExpression 5-field UNIX cron (minute hour day-of-month month day-of-week)
+     * @param intent         intent to fire on each cron tick; only {@code goal} and {@code context} are persisted
+     *                       and replayed - per-call fields such as deadlines are ignored for recurring ticks
+     * @param missedFirePolicy behaviour when windows are missed after a restart
+     * @return a {@link ScheduledExecution} handle; call {@link ScheduledExecution#cancel()} to stop
+     * @throws IllegalStateException if no persistence store is configured
+     */
+    public ScheduledExecution schedule(String cronExpression, Intent intent, MissedFirePolicy missedFirePolicy) {
+        requireScheduler();
+        return cronScheduler.schedule(cronExpression, intent, missedFirePolicy);
+    }
+
+    /** Convenience: schedule with the default {@link MissedFirePolicy#FIRE_ONCE} policy. */
+    public ScheduledExecution schedule(String cronExpression, Intent intent) {
+        return schedule(cronExpression, intent, MissedFirePolicy.FIRE_ONCE);
+    }
+
+    /** Returns all schedules (active and inactive), most recently created first. */
+    public List<ScheduleRecord> listSchedules() {
+        requireScheduler();
+        return cronScheduler.listAll();
+    }
+
+    /** Returns active schedules only, ordered by next fire time. */
+    public List<ScheduleRecord> listActiveSchedules() {
+        requireScheduler();
+        return cronScheduler.listActive();
+    }
+
+    /** Cancels a schedule by id. Idempotent. */
+    public void cancelSchedule(String scheduleId) {
+        requireScheduler();
+        cronScheduler.cancel(scheduleId);
+    }
+
+    /**
+     * Shuts down the engine. Deactivates all plugins, stops the cron scheduler,
+     * and closes the execution store. Safe to call multiple times.
+     */
+    public void shutdown() {
+        pluginManager.activePluginIds().forEach(pluginManager::deactivatePlugin);
+        if (cronScheduler != null) {
+            cronScheduler.close();
+        }
+        if (engine.getStore() != null) {
+            try {
+                engine.getStore().close();
+            } catch (Exception e) {
+                log.warn("Error closing execution store during shutdown", e);
+            }
+        }
+    }
+
+    @Override
+    public void close() {
+        shutdown();
+    }
+
+    private void requireScheduler() {
+        if (cronScheduler == null) {
+            throw new IllegalStateException(
+                "Cron scheduling requires a persistence store. Call builder.withExecutionStore(...) first.");
+        }
     }
 
     public record HealthSnapshot(String capabilityId, CapabilityContractMonitor.CircuitState state, int sampleCount, double errorRate, Duration p99Latency) {
@@ -276,7 +357,12 @@ public final class NexoraEngine {
                     compositePlanner, capabilityRegistry, scheduler, eventBus,
                     executionStore, sagaOrchestrator, defaultPlanDeadline, executor, webhookSecret);
 
-            return new NexoraEngine(engine, pluginManager, eventBus, capabilityRegistry, contractMonitor);
+            // Cron scheduler (optional — requires a store)
+            CronScheduler cronScheduler = executionStore != null
+                    ? new CronScheduler(engine, executionStore, eventBus)
+                    : null;
+
+            return new NexoraEngine(engine, pluginManager, eventBus, capabilityRegistry, contractMonitor, cronScheduler);
         }
     }
 }

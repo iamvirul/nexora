@@ -1,10 +1,13 @@
 Start a local observability server for Nexora.
 
   Exposes:
-    /metrics      Prometheus scrape endpoint
-    /api/process  Live execution process snapshot JSON
-    /api/execute  Trigger execution via HTTP POST
-    /             Browser UI for live process view
+    /metrics             Prometheus scrape endpoint
+    /api/process         Live execution process snapshot JSON
+    /api/execute         Trigger execution via HTTP POST
+    /api/schedules       List, add, and cancel cron schedules
+    /api/dead-letters    Dead letter queue management
+    /health/ready        Readiness health check
+    /                    Browser UI for live process view
 
   Examples
   ────────
@@ -21,3 +24,11 @@ Start a local observability server for Nexora.
     curl -X POST http://localhost:9464/api/execute \
       -H "content-type: application/json" \
       -d '{"goal":"process order payment notification","context":{"orderId":"ORD-99"}}'
+
+  Register a nightly cron schedule (requires executionStore in nexora.json):
+    curl -X POST http://localhost:9464/api/schedules \
+      -H "content-type: application/json" \
+      -d '{"cronExpression":"0 0 * * *","goal":"nightly cleanup","missedFirePolicy":"FIRE_ONCE"}'
+
+  Cancel a schedule:
+    curl -X DELETE http://localhost:9464/api/schedules/<id>

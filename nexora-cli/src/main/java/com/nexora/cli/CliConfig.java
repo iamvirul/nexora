@@ -19,6 +19,8 @@ public class CliConfig {
     public List<StepConfig> steps = List.of();
     public RetryConfig retry = new RetryConfig();
     public String webhookSecret;
+    /** File path for the H2 embedded store (e.g. "./nexora-data"). Omit for no persistence. */
+    public String executionStore;
 
     public static class StepConfig {
         public String id;

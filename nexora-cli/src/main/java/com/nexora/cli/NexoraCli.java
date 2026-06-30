@@ -23,6 +23,7 @@ import java.util.concurrent.Callable;
                 ObserveCommand.class,
                 DemoCommand.class,
                 DlqCommand.class,
+                ScheduleCommand.class,
                 CommandLine.HelpCommand.class
         }
 )

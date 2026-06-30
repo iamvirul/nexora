@@ -12,7 +12,7 @@ Orchestration-based saga coordinator. When a plan fails mid-execution, the saga 
 
 1. Each step can declare a `compensateCapabilityId` in its `StepDefinition`.
 2. If the overall execution reaches a `FAILED` status, `SagaOrchestrator` collects all completed steps that declared a compensation capability.
-3. Compensations run sequentially in reverse topological order — the step closest to the failure compensates first, back toward the root.
+3. Compensations run sequentially in reverse topological order, the step closest to the failure compensates first, back toward the root.
 4. A failed compensation is logged and skipped; the remaining compensations still run.
 
 ## Enabling sagas
@@ -65,5 +65,5 @@ Subscribe to `CompensationStartedEvent`, `CompensationCompletedEvent`, and `Comp
 ## What sagas do not cover
 
 - Compensations that fail are logged and skipped; the engine does not retry them by default.
-- Sagas are sequential — if you need parallel compensation, implement that logic inside the compensation capability itself.
+- Sagas are sequential, if you need parallel compensation, implement that logic inside the compensation capability itself.
 - Sagas do not lock resources. If your capability interacts with external systems that require distributed locks, manage that at the application level.

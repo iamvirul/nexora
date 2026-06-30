@@ -44,6 +44,16 @@ All events extend `ExecutionEvent`.
 | `PluginActivatedEvent` | A plugin successfully initializes |
 | `PluginDeactivatedEvent` | A plugin shuts down |
 
+### Cron scheduling (Unreleased)
+
+| Event | Fired when |
+|---|---|
+| `ScheduledExecutionFiredEvent` | A schedule fires and the intent is dispatched to the engine |
+| `ScheduledExecutionMissedEvent` | A schedule had windows that were missed during downtime (only when policy is `SKIP`) |
+
+`ScheduledExecutionFiredEvent` carries `scheduleId()`, `executionId()`, and `firedAt()`.  
+`ScheduledExecutionMissedEvent` carries `scheduleId()`, `missedCount()`, `windowStart()`, and `windowEnd()`.
+
 ---
 
 ## Subscribing to events

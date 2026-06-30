@@ -19,10 +19,10 @@ Turns a `Plan` into concurrent execution. Steps without dependencies run in para
 3. When a step completes, apply any `PlanAmendment` entries atomically, then release newly unblocked steps.
 4. Repeat until the queue is empty or a non-retryable failure occurs.
 
-Amendment processing is atomic with the parent step's completion — there is no window in which a newly injected step can be missed by the scheduler.
+Amendment processing is atomic with the parent step's completion, there is no window in which a newly injected step can be missed by the scheduler.
 
 ```java
-// Internal wiring — you do not construct this directly.
+// Internal wiring, you do not construct this directly.
 // Use NexoraEngine.builder() which wires it for you.
 DagStepScheduler scheduler = new DagStepScheduler(
     capabilityRegistry,
