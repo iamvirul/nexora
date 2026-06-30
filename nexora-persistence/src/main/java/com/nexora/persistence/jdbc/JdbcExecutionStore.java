@@ -507,7 +507,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
 
     @Override
     public synchronized void updateScheduleStatus(String id, ScheduleStatus status) {
-        String sql = "UPDATE nexora_schedules SET last_status = ? WHERE id = ?";
+        String sql = "UPDATE nexora_schedules SET last_status = ? WHERE id = ? AND active = TRUE";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, status.name());
             ps.setString(2, id);
