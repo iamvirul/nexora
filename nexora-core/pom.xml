@@ -6,7 +6,7 @@
     <parent>
         <groupId>com.nexora</groupId>
         <artifactId>nexora</artifactId>
-        <version>0.2.0-SNAPSHOT</version>
+        <version>0.2.0</version>
     </parent>
 
     <artifactId>nexora-core</artifactId>
