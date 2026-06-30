@@ -22,14 +22,14 @@ This exposes four endpoints with no external dependencies:
 | `POST /api/execute` | Trigger an execution remotely |
 | `GET /health/ready` | Check health of all capabilities (returns 503 if any circuit is OPEN/HALF_OPEN) |
 | `GET /api/webhook-deliveries/{id}` | Audit log of webhook delivery attempts for an execution |
-| `GET /api/dead-letters` | List dead letter queue entries (paginated via `?page=` and `?size=`, filterable by `?state=PENDING\|RESOLVED\|REPLAYED\|ALL`) *(Unreleased)* |
-| `POST /api/dead-letters/{id}/replay` | Create a new execution from a dead letter *(Unreleased)* |
-| `POST /api/dead-letters/{id}/resolve` | Mark a dead letter as resolved *(Unreleased)* |
-| `GET /api/schedules` | List all cron schedules *(Unreleased)* |
-| `POST /api/schedules` | Register a new cron schedule *(Unreleased)* |
-| `DELETE /api/schedules/{id}` | Cancel a cron schedule *(Unreleased)* |
+| `GET /api/dead-letters` | List dead letter queue entries (paginated via `?page=` and `?size=`, filterable by `?state=PENDING\|RESOLVED\|REPLAYED\|ALL`) |
+| `POST /api/dead-letters/{id}/replay` | Create a new execution from a dead letter |
+| `POST /api/dead-letters/{id}/resolve` | Mark a dead letter as resolved |
+| `GET /api/schedules` | List all cron schedules |
+| `POST /api/schedules` | Register a new cron schedule |
+| `DELETE /api/schedules/{id}` | Cancel a cron schedule |
 
-> **Note**: The `/health/ready`, `/api/webhook-deliveries`, `/api/dead-letters`, and `/api/schedules` endpoints are currently **Unreleased**.
+> **Note**: The `/health/ready`, `/api/webhook-deliveries`, `/api/dead-letters`, and `/api/schedules` endpoints were added in v0.2.0.
 
 Example execute request with webhook callback:
 
@@ -44,7 +44,7 @@ curl -X POST http://localhost:9464/api/execute \
       }'
 ```
 
-## Webhook Callbacks (Unreleased version)
+## Webhook Callbacks
 
 Nexora allows you to register webhook URLs to be notified asynchronously when an execution reaches a terminal state (`COMPLETED`, `FAILED`, or `TIMED_OUT`). This is particularly useful when triggering executions remotely via the API and awaiting their outcome.
 
@@ -59,7 +59,7 @@ To use webhooks securely, configure an HMAC-SHA256 signature secret in your `nex
 
 Nexora will dispatch a JSON payload to your endpoint with the execution outcome. It signs the payload using the configured secret and passes the signature in the `nexora-signature` HTTP header for validation. Delivery attempts are persisted in the `nexora_webhook_deliveries` database table and can be queried for auditability via the API.
 
-## Cron Schedule API (Unreleased version)
+## Cron Schedule API
 
 Requires `executionStore` to be configured (see [CLI Reference](cli)). The dashboard includes a live **Cron Schedules** panel that auto-refreshes every 30 seconds.
 
@@ -80,7 +80,7 @@ See [Cron Scheduling](concepts/cron-scheduling) for the full reference including
 
 ---
 
-## Dead Letter Queue API (Unreleased version)
+## Dead Letter Queue API
 
 Permanently failed executions are captured in the dead letter queue. See [Dead Letter Queue](concepts/dead-letter-queue) for full documentation.
 

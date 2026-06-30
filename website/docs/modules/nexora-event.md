@@ -44,7 +44,7 @@ All events extend `ExecutionEvent`.
 | `PluginActivatedEvent` | A plugin successfully initializes |
 | `PluginDeactivatedEvent` | A plugin shuts down |
 
-### Cron scheduling (Unreleased)
+### Cron scheduling
 
 | Event | Fired when |
 |---|---|
