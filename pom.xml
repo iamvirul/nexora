@@ -33,14 +33,14 @@
         <!-- Saga / compensation — depends on executor, event -->
         <module>nexora-saga</module>
 
-        <!-- Runtime — orchestrates planner + executor + loader -->
+        <!-- Persistence — depends on core; required by runtime and api -->
+        <module>nexora-persistence</module>
+
+        <!-- Runtime — orchestrates planner + executor + loader + persistence -->
         <module>nexora-runtime</module>
 
         <!-- Public API facade -->
         <module>nexora-api</module>
-
-        <!-- Supplementary modules -->
-        <module>nexora-persistence</module>
         <module>nexora-cli</module>
         <module>nexora-all</module>
         <module>tests/payment-pipeline</module>
