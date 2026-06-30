@@ -39,6 +39,9 @@ import com.nexora.persistence.ScheduleRecord;
 import com.nexora.runtime.scheduler.CronScheduler;
 import com.nexora.runtime.scheduler.ScheduledExecution;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -66,7 +69,9 @@ import java.util.concurrent.Executors;
  *       .thenAccept(result -> System.out.println(result.status()));
  * }</pre>
  */
-public final class NexoraEngine {
+public final class NexoraEngine implements AutoCloseable {
+
+    private static final Logger log = LoggerFactory.getLogger(NexoraEngine.class);
 
     private final ExecutionEngine engine;
     private final PluginManager pluginManager;
@@ -170,10 +175,33 @@ public final class NexoraEngine {
         cronScheduler.cancel(scheduleId);
     }
 
+    /**
+     * Shuts down the engine. Deactivates all plugins, stops the cron scheduler,
+     * and closes the execution store. Safe to call multiple times.
+     */
+    public void shutdown() {
+        pluginManager.activePluginIds().forEach(pluginManager::deactivatePlugin);
+        if (cronScheduler != null) {
+            cronScheduler.close();
+        }
+        if (engine.getStore() != null) {
+            try {
+                engine.getStore().close();
+            } catch (Exception e) {
+                log.warn("Error closing execution store during shutdown", e);
+            }
+        }
+    }
+
+    @Override
+    public void close() {
+        shutdown();
+    }
+
     private void requireScheduler() {
         if (cronScheduler == null) {
             throw new IllegalStateException(
-                "Cron scheduling requires a persistence store — call builder.withExecutionStore(...)");
+                "Cron scheduling requires a persistence store. Call builder.withExecutionStore(...) first.");
         }
     }
 
