@@ -142,7 +142,8 @@ public final class NexoraEngine implements AutoCloseable {
      * Schedules a recurring execution of {@code intent} on the given cron expression.
      *
      * @param cronExpression 5-field UNIX cron (minute hour day-of-month month day-of-week)
-     * @param intent         intent to fire on each cron tick
+     * @param intent         intent to fire on each cron tick; only {@code goal} and {@code context} are persisted
+     *                       and replayed - per-call fields such as deadlines are ignored for recurring ticks
      * @param missedFirePolicy behaviour when windows are missed after a restart
      * @return a {@link ScheduledExecution} handle; call {@link ScheduledExecution#cancel()} to stop
      * @throws IllegalStateException if no persistence store is configured
