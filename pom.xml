@@ -62,7 +62,7 @@
         <jackson.annotations.version>2.18.8</jackson.annotations.version>
         <jackson.datatype.jsr310.version>2.22.0</jackson.datatype.jsr310.version>
         <websocket.version>1.6.0</websocket.version>
-        <logback.version>1.5.35</logback.version>
+        <logback.version>1.5.37</logback.version>
         <prometheus.version>0.16.0</prometheus.version>
         <h2.version>2.4.240</h2.version>
         
