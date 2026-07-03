@@ -6,9 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.2.1] - 2026-07-03
 - **Dependency Update** - Bumps ch.qos.logback:logback-classic from 1.5.35 to 1.5.37.
 
+## [0.2.0] - 2026-06-30
 ### Added
 
 #### Core Engine
@@ -108,3 +109,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 [Unreleased]: https://github.com/iamvirul/nexora/compare/v0.3.0...HEAD
 [0.1.0]: https://github.com/iamvirul/nexora/releases/tag/v0.1.0
+[0.2.0]: https://github.com/iamvirul/nexora/releases/tag/v0.2.0
+[0.2.1]: https://github.com/iamvirul/nexora/releases/tag/v0.2.1
