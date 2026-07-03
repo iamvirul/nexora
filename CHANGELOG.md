@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ---
 
 ## [Unreleased]
+- **Dependency Update** - Bumps ch.qos.logback:logback-classic from 1.5.35 to 1.5.37.
 
 ### Added
 
