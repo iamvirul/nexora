@@ -91,7 +91,9 @@ public final class SagaOrchestrator {
                 UUID.randomUUID().toString(),
                 buildCompensationInputs(step, ctx),
                 ctx.getTraceContext().childSpan(),
-                null
+                null,
+                ctx.getExecutionId(),
+                0
         );
 
         try {

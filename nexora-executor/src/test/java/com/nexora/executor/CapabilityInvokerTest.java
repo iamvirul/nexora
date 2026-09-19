@@ -85,7 +85,9 @@ class CapabilityInvokerTest {
                 java.util.UUID.randomUUID().toString(),
                 Map.of(),
                 TraceContext.root(),
-                Duration.ofSeconds(1)
+                Duration.ofSeconds(1),
+                "execution-1",
+                0
         );
     }
 
