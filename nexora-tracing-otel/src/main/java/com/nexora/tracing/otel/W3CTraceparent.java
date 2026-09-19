@@ -72,8 +72,12 @@ public final class W3CTraceparent {
             return Optional.empty();
         }
 
-        boolean sampled = (Integer.parseInt(traceFlags, 16) & 1) == 1;
-        return Optional.of(new Parsed(version, traceId, spanId, sampled));
+        try {
+            boolean sampled = (Integer.parseInt(traceFlags, 16) & 1) == 1;
+            return Optional.of(new Parsed(version, traceId, spanId, sampled));
+        } catch (NumberFormatException e) {
+            return Optional.empty();
+        }
     }
 
     /** Builds a root {@link TraceContext} from a parsed traceparent, with no baggage. */
