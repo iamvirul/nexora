@@ -17,6 +17,7 @@
         <!-- Infrastructure modules — depend only on core or spi -->
         <module>nexora-registry</module>
         <module>nexora-tracing</module>
+        <module>nexora-tracing-otel</module>
         <module>nexora-retry</module>
         <module>nexora-event</module>
 
@@ -71,6 +72,9 @@
         <nexora-plugin-spi.version>0.3.0-SNAPSHOT</nexora-plugin-spi.version>
         <nexora-registry.version>0.3.0-SNAPSHOT</nexora-registry.version>
         <nexora-tracing.version>0.3.0-SNAPSHOT</nexora-tracing.version>
+        <nexora-tracing-otel.version>0.3.0-SNAPSHOT</nexora-tracing-otel.version>
+        <opentelemetry.version>1.55.0</opentelemetry.version>
+        <testcontainers.version>1.21.4</testcontainers.version>
         <nexora-retry.version>0.3.0-SNAPSHOT</nexora-retry.version>
         <nexora-event.version>0.3.0-SNAPSHOT</nexora-event.version>
         <nexora-executor.version>0.3.0-SNAPSHOT</nexora-executor.version>
@@ -137,6 +141,11 @@
                 <groupId>com.nexora</groupId>
                 <artifactId>nexora-tracing</artifactId>
                 <version>${nexora-tracing.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.nexora</groupId>
+                <artifactId>nexora-tracing-otel</artifactId>
+                <version>${nexora-tracing-otel.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.nexora</groupId>

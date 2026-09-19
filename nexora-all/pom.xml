@@ -39,6 +39,10 @@
             </dependency>
         <dependency>
             <groupId>com.nexora</groupId>
+            <artifactId>nexora-tracing-otel</artifactId>
+            </dependency>
+        <dependency>
+            <groupId>com.nexora</groupId>
             <artifactId>nexora-retry</artifactId>
             </dependency>
         <dependency>
