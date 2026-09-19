@@ -1,5 +1,6 @@
 package com.nexora.api;
 
+import com.nexora.core.context.TraceContext;
 import com.nexora.core.execution.ExecutionResult;
 import com.nexora.core.intent.Intent;
 import com.nexora.event.ExecutionEventBus;
@@ -100,6 +101,14 @@ public final class NexoraEngine implements AutoCloseable {
 
     public CompletableFuture<ExecutionResult> execute(Intent intent) {
         return engine.execute(intent);
+    }
+
+    /**
+     * Executes {@code intent} continuing a trace propagated in from an inbound request
+     * (e.g. a {@code traceparent} header) instead of starting a fresh root trace.
+     */
+    public CompletableFuture<ExecutionResult> execute(Intent intent, TraceContext traceContext) {
+        return engine.execute(intent, traceContext);
     }
 
     public CompletableFuture<ExecutionResult> execute(String goal, Map<String, Object> context) {

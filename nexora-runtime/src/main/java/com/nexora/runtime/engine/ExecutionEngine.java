@@ -173,7 +173,15 @@ public final class ExecutionEngine {
     }
 
     public CompletableFuture<ExecutionResult> execute(Intent intent) {
-        TraceContext traceContext = TraceContext.root();
+        return execute(intent, TraceContext.root());
+    }
+
+    /**
+     * Executes {@code intent} using a caller-supplied root {@link TraceContext} — used to
+     * continue a trace propagated in from an inbound request (e.g. a {@code traceparent} header)
+     * rather than starting a fresh one.
+     */
+    public CompletableFuture<ExecutionResult> execute(Intent intent, TraceContext traceContext) {
         ExecutionContext ctx = new ExecutionContext(intent, traceContext);
 
         PlanningContext planningContext = new DefaultPlanningContext(capabilityRegistry, Map.of());

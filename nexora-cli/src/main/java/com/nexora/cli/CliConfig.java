@@ -18,6 +18,7 @@ public class CliConfig {
 
     public List<StepConfig> steps = List.of();
     public RetryConfig retry = new RetryConfig();
+    public OtelConfig otel = new OtelConfig();
     public String webhookSecret;
     /** File path for the H2 embedded store (e.g. "./nexora-data"). Omit for no persistence. */
     public String executionStore;
@@ -34,6 +35,11 @@ public class CliConfig {
         public long initialDelayMs = 200;
         public double multiplier = 2.0;
         public long maxDelayMs = 10_000;
+    }
+
+    /** OTLP endpoint, e.g. "http://localhost:4318". Falls back to OTEL_EXPORTER_OTLP_ENDPOINT when unset. */
+    public static class OtelConfig {
+        public String endpoint;
     }
 
     @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")

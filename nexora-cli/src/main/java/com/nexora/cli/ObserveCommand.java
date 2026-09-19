@@ -7,6 +7,7 @@ import com.nexora.api.observability.NexoraObservability;
 import com.nexora.core.intent.Intent;
 import com.nexora.persistence.MissedFirePolicy;
 import com.nexora.persistence.ScheduleRecord;
+import com.nexora.tracing.otel.W3CTraceparent;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.java_websocket.WebSocket;
@@ -24,6 +25,7 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 
@@ -125,19 +127,25 @@ public class ObserveCommand implements Callable<Integer> {
 
             Map<String, Object> context = request.context() == null ? Map.of() : request.context();
             com.nexora.core.intent.Intent intent = new com.nexora.core.intent.Intent(
-                    request.goal(), 
-                    context, 
-                    null, 
-                    request.webhookUrl(), 
+                    request.goal(),
+                    context,
+                    null,
+                    request.webhookUrl(),
                     request.webhookEvents()
             );
-            engine.execute(intent)
-                    .whenComplete((result, ex) -> {
-                        if (ex != null) {
-                            System.err.printf("Execution failed goal=%s error=%s%n",
-                                    request.goal(), ex.getMessage());
-                        }
-                    });
+
+            String traceparentHeader = exchange.getRequestHeaders().getFirst("traceparent");
+            java.util.Optional<W3CTraceparent.Parsed> parsedTraceparent = W3CTraceparent.parse(traceparentHeader);
+            CompletableFuture<com.nexora.core.execution.ExecutionResult> future = parsedTraceparent
+                    .map(parsed -> engine.execute(intent, W3CTraceparent.toTraceContext(parsed)))
+                    .orElseGet(() -> engine.execute(intent));
+
+            future.whenComplete((result, ex) -> {
+                if (ex != null) {
+                    System.err.printf("Execution failed goal=%s error=%s%n",
+                            request.goal(), ex.getMessage());
+                }
+            });
 
             sendJson(exchange, 202, Map.of(
                     "accepted", true,
