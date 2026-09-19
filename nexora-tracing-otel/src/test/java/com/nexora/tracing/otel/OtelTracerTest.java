@@ -89,4 +89,16 @@ class OtelTracerTest {
         assertThat(spans.get(0).getTraceId()).isEqualTo(W3CTraceparent.expandTraceId(remoteParent.traceId()));
         assertThat(spans.get(0).getParentSpanId()).isEqualTo(remoteParent.spanId());
     }
+
+    @Test
+    void remoteUnsampledParentPreservesSamplingDecision() {
+        TraceContext remoteParent = new TraceContext(
+                "aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb", null, java.util.Map.of(), false);
+
+        Span span = tracer.startSpan("capability.send-email", remoteParent);
+        assertThat(span.context().sampled()).isFalse();
+        span.end();
+
+        assertThat(exporter.getFinishedSpanItems()).isEmpty();
+    }
 }

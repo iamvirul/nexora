@@ -21,17 +21,27 @@ public final class W3CTraceparent {
 
     private static final String VERSION = "00";
     private static final String TRACE_FLAGS_SAMPLED = "01";
+    private static final String TRACE_FLAGS_NOT_SAMPLED = "00";
+    private static final String INVALID_VERSION = "ff";
+    private static final String INVALID_TRACE_ID = "00000000000000000000000000000000";
+    private static final String INVALID_SPAN_ID = "0000000000000000";
 
     private static final Pattern TRACEPARENT_PATTERN =
-            Pattern.compile("^[0-9a-f]{2}-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$");
+            Pattern.compile("^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})(.*)$");
 
     private W3CTraceparent() {}
 
-    public record Parsed(String traceId, String spanId) {}
+    public record Parsed(String version, String traceId, String spanId, boolean sampled) {
+        /** Creates a sampled version-00 value, preserving the original two-argument API. */
+        public Parsed(String traceId, String spanId) {
+            this(VERSION, traceId, spanId, true);
+        }
+    }
 
     /** Renders {@code context} as a {@code traceparent} header value. */
     public static String format(TraceContext context) {
-        return VERSION + "-" + expandTraceId(context.traceId()) + "-" + context.spanId() + "-" + TRACE_FLAGS_SAMPLED;
+        String traceFlags = context.sampled() ? TRACE_FLAGS_SAMPLED : TRACE_FLAGS_NOT_SAMPLED;
+        return VERSION + "-" + expandTraceId(context.traceId()) + "-" + context.spanId() + "-" + traceFlags;
     }
 
     /**
@@ -47,12 +57,28 @@ public final class W3CTraceparent {
         if (!matcher.matches()) {
             return Optional.empty();
         }
-        return Optional.of(new Parsed(matcher.group(1), matcher.group(2)));
+
+        String version = matcher.group(1);
+        String traceId = matcher.group(2);
+        String spanId = matcher.group(3);
+        String traceFlags = matcher.group(4);
+        String extension = matcher.group(5);
+
+        if (INVALID_VERSION.equals(version)
+                || INVALID_TRACE_ID.equals(traceId)
+                || INVALID_SPAN_ID.equals(spanId)
+                || (VERSION.equals(version) && !extension.isEmpty())
+                || (!extension.isEmpty() && extension.charAt(0) != '-')) {
+            return Optional.empty();
+        }
+
+        boolean sampled = (Integer.parseInt(traceFlags, 16) & 1) == 1;
+        return Optional.of(new Parsed(version, traceId, spanId, sampled));
     }
 
     /** Builds a root {@link TraceContext} from a parsed traceparent, with no baggage. */
     public static TraceContext toTraceContext(Parsed parsed) {
-        return new TraceContext(parsed.traceId(), parsed.spanId(), null, Map.of());
+        return new TraceContext(parsed.traceId(), parsed.spanId(), null, Map.of(), parsed.sampled());
     }
 
     /** Widens a trace id to the 32 hex chars the W3C format requires. Idempotent for already-32-char ids. */

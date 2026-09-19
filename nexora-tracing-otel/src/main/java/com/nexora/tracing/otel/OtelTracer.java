@@ -99,7 +99,7 @@ public final class OtelTracer implements Tracer, AutoCloseable {
         return SpanContext.createFromRemoteParent(
                 W3CTraceparent.expandTraceId(parent.traceId()),
                 parent.spanId(),
-                TraceFlags.getSampled(),
+                parent.sampled() ? TraceFlags.getSampled() : TraceFlags.getDefault(),
                 TraceState.getDefault());
     }
 
