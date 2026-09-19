@@ -1,10 +1,12 @@
 package com.nexora.runtime.webhook;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nexora.core.context.TraceContext;
 import com.nexora.core.execution.ExecutionStatus;
 import com.nexora.core.intent.Intent;
 import com.nexora.persistence.ExecutionStore;
 import com.nexora.persistence.WebhookDeliveryRecord;
+import com.nexora.tracing.otel.W3CTraceparent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -48,7 +50,7 @@ public class WebhookDeliveryService {
                 .build();
     }
 
-    public void deliverIfApplicable(String executionId, Intent intent, ExecutionStatus status, Duration duration) {
+    public void deliverIfApplicable(String executionId, Intent intent, ExecutionStatus status, Duration duration, TraceContext traceContext) {
         if (intent.getWebhookUrl() == null || intent.getWebhookUrl().isBlank()) {
             return;
         }
@@ -71,6 +73,7 @@ public class WebhookDeliveryService {
                     .uri(URI.create(targetUrl))
                     .header("Content-Type", "application/json")
                     .header("nexora-signature", signature)
+                    .header("traceparent", W3CTraceparent.format(traceContext))
                     .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8))
                     .timeout(Duration.ofSeconds(10))
                     .build();

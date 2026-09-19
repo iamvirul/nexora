@@ -250,7 +250,7 @@ public final class ExecutionEngine {
                 ));
                 writeDeadLetter(ctx.getExecutionId(), intent, "UNEXPECTED_ERROR",
                         ex.getMessage(), now);
-                webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.FAILED, elapsed);
+                webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.FAILED, elapsed, ctx.getTraceContext());
 
             } else if (result.status() == ExecutionStatus.TIMED_OUT) {
                 persistExecutionState(ctx.getExecutionId(), ExecutionState.TIMED_OUT, now);
@@ -259,7 +259,7 @@ public final class ExecutionEngine {
                         effectiveDeadline, elapsed, now));
                 log.warn("Execution timed out executionId={} elapsed={}ms deadline={}",
                         ctx.getExecutionId(), elapsed.toMillis(), effectiveDeadline);
-                webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.TIMED_OUT, elapsed);
+                webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.TIMED_OUT, elapsed, ctx.getTraceContext());
 
                 if (sagaOrchestrator != null) {
                     persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPENSATING, now);
@@ -291,7 +291,7 @@ public final class ExecutionEngine {
                 ));
                 writeDeadLetter(ctx.getExecutionId(), intent, "STEP_FAILED", failureMessage, now);
                 log.warn("Execution failed executionId={} failedStep={}", ctx.getExecutionId(), failedStep);
-                webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.FAILED, elapsed);
+                webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.FAILED, elapsed, ctx.getTraceContext());
                 if (sagaOrchestrator != null) {
                     persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPENSATING, now);
                     sagaOrchestrator.compensate(plan, result, ctx)
@@ -310,7 +310,7 @@ public final class ExecutionEngine {
                 ));
                 log.info("Execution completed executionId={} elapsed={}ms",
                         ctx.getExecutionId(), elapsed.toMillis());
-                webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.COMPLETED, elapsed);
+                webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.COMPLETED, elapsed, ctx.getTraceContext());
             }
         });
     }
