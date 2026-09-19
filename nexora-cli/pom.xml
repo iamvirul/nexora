@@ -22,6 +22,10 @@
             <artifactId>nexora-api</artifactId>
             </dependency>
         <dependency>
+            <groupId>com.nexora</groupId>
+            <artifactId>nexora-tracing-otel</artifactId>
+            </dependency>
+        <dependency>
             <groupId>info.picocli</groupId>
             <artifactId>picocli</artifactId>
             </dependency>

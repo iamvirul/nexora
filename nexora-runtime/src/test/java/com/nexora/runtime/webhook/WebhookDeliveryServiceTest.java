@@ -1,5 +1,6 @@
 package com.nexora.runtime.webhook;
 
+import com.nexora.core.context.TraceContext;
 import com.nexora.core.execution.ExecutionStatus;
 import com.nexora.core.intent.Intent;
 import com.nexora.persistence.ExecutionStore;
@@ -33,6 +34,7 @@ class WebhookDeliveryServiceTest {
     private int port;
     private AtomicReference<String> receivedBody;
     private AtomicReference<String> receivedSignature;
+    private AtomicReference<String> receivedTraceparent;
     private CountDownLatch latch;
     private ExecutionStore store;
 
@@ -40,12 +42,14 @@ class WebhookDeliveryServiceTest {
     void setUp() throws Exception {
         receivedBody = new AtomicReference<>();
         receivedSignature = new AtomicReference<>();
+        receivedTraceparent = new AtomicReference<>();
         latch = new CountDownLatch(1);
         store = JdbcExecutionStore.h2InMemory();
 
         server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/webhook", exchange -> {
             receivedSignature.set(exchange.getRequestHeaders().getFirst("nexora-signature"));
+            receivedTraceparent.set(exchange.getRequestHeaders().getFirst("traceparent"));
             try (InputStream is = exchange.getRequestBody()) {
                 receivedBody.set(new String(is.readAllBytes(), StandardCharsets.UTF_8));
             }
@@ -88,14 +92,20 @@ class WebhookDeliveryServiceTest {
         String webhookUrl = "http://localhost:" + port + "/webhook";
         Intent intent = new Intent("test_goal", Map.of(), null, webhookUrl, List.of(ExecutionStatus.COMPLETED));
 
+        TraceContext traceContext = TraceContext.root();
+
         // Note: passing execution id "exec-1"
-        service.deliverIfApplicable("exec-1", intent, ExecutionStatus.COMPLETED, Duration.ofMillis(100));
+        service.deliverIfApplicable("exec-1", intent, ExecutionStatus.COMPLETED, Duration.ofMillis(100), traceContext);
 
         // Wait for the server to receive the request
         assertTrue(latch.await(3, TimeUnit.SECONDS), "Webhook was not received in time");
 
         assertNotNull(receivedBody.get());
         assertNotNull(receivedSignature.get());
+        assertEquals(
+                "00-" + traceContext.traceId() + traceContext.traceId() + "-" + traceContext.spanId() + "-01",
+                receivedTraceparent.get(),
+                "traceparent header should propagate the execution's trace context");
 
         // Validate HMAC manually
         Mac mac = Mac.getInstance("HmacSHA256");

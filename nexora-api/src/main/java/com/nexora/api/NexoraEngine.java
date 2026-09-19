@@ -1,5 +1,6 @@
 package com.nexora.api;
 
+import com.nexora.core.context.TraceContext;
 import com.nexora.core.execution.ExecutionResult;
 import com.nexora.core.intent.Intent;
 import com.nexora.event.ExecutionEventBus;
@@ -79,6 +80,7 @@ public final class NexoraEngine implements AutoCloseable {
     private final CapabilityRegistry capabilityRegistry;
     private final CapabilityContractMonitor contractMonitor;
     private final CronScheduler cronScheduler;
+    private final Tracer tracer;
 
     private NexoraEngine(
             ExecutionEngine engine,
@@ -86,17 +88,27 @@ public final class NexoraEngine implements AutoCloseable {
             ExecutionEventBus eventBus,
             CapabilityRegistry capabilityRegistry,
             CapabilityContractMonitor contractMonitor,
-            CronScheduler cronScheduler) {
+            CronScheduler cronScheduler,
+            Tracer tracer) {
         this.engine = engine;
         this.pluginManager = pluginManager;
         this.eventBus = eventBus;
         this.capabilityRegistry = capabilityRegistry;
         this.contractMonitor = contractMonitor;
         this.cronScheduler = cronScheduler;
+        this.tracer = tracer;
     }
 
     public CompletableFuture<ExecutionResult> execute(Intent intent) {
         return engine.execute(intent);
+    }
+
+    /**
+     * Executes {@code intent} continuing a trace propagated in from an inbound request
+     * (e.g. a {@code traceparent} header) instead of starting a fresh root trace.
+     */
+    public CompletableFuture<ExecutionResult> execute(Intent intent, TraceContext traceContext) {
+        return engine.execute(intent, traceContext);
     }
 
     public CompletableFuture<ExecutionResult> execute(String goal, Map<String, Object> context) {
@@ -190,6 +202,13 @@ public final class NexoraEngine implements AutoCloseable {
                 engine.getStore().close();
             } catch (Exception e) {
                 log.warn("Error closing execution store during shutdown", e);
+            }
+        }
+        if (tracer instanceof AutoCloseable closeable) {
+            try {
+                closeable.close();
+            } catch (Exception e) {
+                log.warn("Error closing tracer during shutdown", e);
             }
         }
     }
@@ -322,10 +341,17 @@ public final class NexoraEngine implements AutoCloseable {
             // Contract monitor
             CapabilityContractMonitor contractMonitor = new CapabilityContractMonitor(eventBus, capabilityRegistry);
 
-            // Interceptor pipeline
+            // Interceptor pipeline — Retry must wrap Tracing so each retry attempt
+            // gets its own span with the correct attempt_number attribute.
+            if (tracer == NoopTracer.INSTANCE) {
+                String otlpEndpoint = System.getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
+                if (otlpEndpoint != null && !otlpEndpoint.isBlank()) {
+                    log.warn("OTEL_EXPORTER_OTLP_ENDPOINT is set but no OtelTracer was wired via withTracer(); falling back to NoopTracer");
+                }
+            }
             List<ExecutionInterceptor> interceptors = List.of(
-                    new TracingInterceptor(tracer),
                     new RetryInterceptor(retryPolicyRegistry),
+                    new TracingInterceptor(tracer),
                     new TimeoutInterceptor(executor, defaultTimeout)
             );
             InterceptorPipeline pipeline = new InterceptorPipeline(
@@ -362,7 +388,7 @@ public final class NexoraEngine implements AutoCloseable {
                     ? new CronScheduler(engine, executionStore, eventBus)
                     : null;
 
-            return new NexoraEngine(engine, pluginManager, eventBus, capabilityRegistry, contractMonitor, cronScheduler);
+            return new NexoraEngine(engine, pluginManager, eventBus, capabilityRegistry, contractMonitor, cronScheduler, tracer);
         }
     }
 }

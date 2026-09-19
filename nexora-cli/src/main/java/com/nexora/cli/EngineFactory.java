@@ -4,6 +4,7 @@ import com.nexora.api.NexoraEngine;
 import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import com.nexora.planner.model.StepDefinition;
 import com.nexora.retry.ExponentialBackoffPolicy;
+import com.nexora.tracing.otel.OtelTracer;
 
 import java.time.Duration;
 
@@ -21,6 +22,13 @@ final class EngineFactory {
 
         if (config.executionStore != null && !config.executionStore.isBlank()) {
             builder.withExecutionStore(JdbcExecutionStore.h2AutoServer(config.executionStore));
+        }
+
+        String otlpEndpoint = config.otel.endpoint != null && !config.otel.endpoint.isBlank()
+                ? config.otel.endpoint
+                : System.getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
+        if (otlpEndpoint != null && !otlpEndpoint.isBlank()) {
+            builder.withTracer(OtelTracer.forEndpoint(otlpEndpoint));
         }
 
         builder.withDefaultRetryPolicy(

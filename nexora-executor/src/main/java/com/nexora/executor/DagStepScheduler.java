@@ -278,7 +278,9 @@ public final class DagStepScheduler {
                 UUID.randomUUID().toString(),
                 resolvedInputs,
                 ctx.getTraceContext().childSpan(),
-                effectiveTimeout
+                effectiveTimeout,
+                ctx.getExecutionId(),
+                0
         );
 
         eventBus.publish(new StepStartedEvent(

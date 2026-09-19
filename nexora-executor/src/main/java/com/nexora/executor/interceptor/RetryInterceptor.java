@@ -28,7 +28,7 @@ public final class RetryInterceptor implements ExecutionInterceptor {
         int attempt = 0;
         while (true) {
             try {
-                CapabilityResult result = chain.proceed(request);
+                CapabilityResult result = chain.proceed(request.withAttempt(attempt));
                 if (result.succeeded() || !policy.shouldRetry(attempt, null)) {
                     return result;
                 }

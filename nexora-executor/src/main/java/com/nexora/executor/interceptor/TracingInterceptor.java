@@ -21,14 +21,16 @@ public final class TracingInterceptor implements ExecutionInterceptor {
     @Override
     public CapabilityResult intercept(CapabilityRequest request, InterceptorChain chain) {
         Span span = tracer.startSpan("capability." + request.capabilityId(), request.traceContext());
-        span.setAttribute("step.id", request.stepId());
-        span.setAttribute("capability.id", request.capabilityId());
+        span.setAttribute("execution_id", request.executionId());
+        span.setAttribute("step_id", request.stepId());
+        span.setAttribute("capability_id", request.capabilityId());
+        span.setAttribute("attempt_number", String.valueOf(request.attemptNumber()));
 
         try {
             CapabilityResult result = chain.proceed(request);
             span.setStatus(result.succeeded() ? SpanStatus.OK : SpanStatus.ERROR);
             if (!result.succeeded()) {
-                span.setAttribute("error.code", result.failureCode());
+                span.setAttribute("error_code", result.failureCode());
             }
             return result;
         } catch (Exception e) {
