@@ -73,7 +73,7 @@
         <nexora-registry.version>0.3.0-SNAPSHOT</nexora-registry.version>
         <nexora-tracing.version>0.3.0-SNAPSHOT</nexora-tracing.version>
         <nexora-tracing-otel.version>0.3.0-SNAPSHOT</nexora-tracing-otel.version>
-        <opentelemetry.version>1.55.0</opentelemetry.version>
+        <opentelemetry.version>1.66.0</opentelemetry.version>
         <testcontainers.version>1.21.4</testcontainers.version>
         <nexora-retry.version>0.3.0-SNAPSHOT</nexora-retry.version>
         <nexora-event.version>0.3.0-SNAPSHOT</nexora-event.version>
