@@ -32,6 +32,9 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
@@ -104,6 +107,21 @@ class CancellationIntegrationTest {
         ExecutionResult result = handle.result().get(WAIT_SECONDS, TimeUnit.SECONDS);
         assertThat(result.executionId()).isEqualTo(handle.executionId());
         assertThat(result.status()).isEqualTo(ExecutionStatus.CANCELLED);
+    }
+
+    @Test
+    void cancelIsNotStarvedWhenRunningStepHoldsTheOnlyExecutorThread() throws Exception {
+        ExecutorService singleThread = Executors.newSingleThreadExecutor();
+        try {
+            engine = buildEngine(false, singleThread);
+            ExecutionHandle handle = engine.submit(new Intent(ORDER_GOAL, Map.of()));
+            assertThat(blockStarted.await(WAIT_SECONDS, TimeUnit.SECONDS)).as("blocking step started").isTrue();
+
+            assertThat(engine.cancel(handle.executionId()).get(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+            assertThat(handle.result().get(WAIT_SECONDS, TimeUnit.SECONDS).status()).isEqualTo(ExecutionStatus.CANCELLED);
+        } finally {
+            singleThread.shutdownNow();
+        }
     }
 
     @Test
@@ -214,7 +232,12 @@ class CancellationIntegrationTest {
     }
 
     private NexoraEngine buildEngine(boolean sagaEnabled) {
+        return buildEngine(sagaEnabled, Executors.newVirtualThreadPerTaskExecutor());
+    }
+
+    private NexoraEngine buildEngine(boolean sagaEnabled, Executor executor) {
         NexoraEngine built = NexoraEngine.builder()
+                .withExecutor(executor)
                 .withExecutionStore(store)
                 .withSagaEnabled(sagaEnabled)
                 .withPlugin(testPlugin())

@@ -151,23 +151,31 @@ public final class NexoraEngine implements AutoCloseable {
      * are interrupted, and the execution finishes as {@code CANCELLED} (with saga compensation for
      * completed steps when enabled). Safe to call more than once.
      *
-     * <p>The returned future completes once the cancel request is accepted, not when the execution
-     * has fully stopped; wait on the execution's own future for that. It completes with
-     * {@code true} if the execution is being cancelled, {@code false} if it already finished (or is
-     * already stopping on its deadline), or exceptionally with {@link ExecutionNotFoundException}
-     * or {@link ExecutionNotOwnedException}.
+     * <p>The returned future is already complete when this method returns: it reflects whether the
+     * cancel request was accepted, not whether the execution has fully stopped; wait on the
+     * execution's own future for that. It completes with {@code true} if the execution is being
+     * cancelled, {@code false} if it already finished (or is already stopping on its deadline), or
+     * exceptionally with {@link ExecutionNotFoundException} or {@link ExecutionNotOwnedException}.
+     *
+     * <p>Runs on the calling thread. Halting a running execution is an in-memory flag flip; only ids
+     * this engine is not running fall back to a single store lookup.
      */
     public CompletableFuture<Boolean> cancel(String executionId) {
         if (executionId == null || executionId.isBlank()) {
             return CompletableFuture.failedFuture(new IllegalArgumentException("executionId must not be blank"));
         }
-        // Untracked ids fall back to a store lookup, which is blocking I/O: keep it off the caller's thread.
-        return CompletableFuture.supplyAsync(() -> switch (engine.cancel(executionId)) {
-            case CANCELLED -> true;
-            case ALREADY_TERMINAL -> false;
-            case NOT_FOUND -> throw new ExecutionNotFoundException(executionId);
-            case NOT_RUNNING_ON_THIS_ENGINE -> throw new ExecutionNotOwnedException(executionId);
-        }, executor);
+        // Never queue this on the step executor: when every worker is busy running steps (e.g. a
+        // single-thread executor), the cancel would wait behind the very step it has to interrupt.
+        try {
+            return switch (engine.cancel(executionId)) {
+                case CANCELLED -> CompletableFuture.completedFuture(true);
+                case ALREADY_TERMINAL -> CompletableFuture.completedFuture(false);
+                case NOT_FOUND -> CompletableFuture.failedFuture(new ExecutionNotFoundException(executionId));
+                case NOT_RUNNING_ON_THIS_ENGINE -> CompletableFuture.failedFuture(new ExecutionNotOwnedException(executionId));
+            };
+        } catch (RuntimeException e) {
+            return CompletableFuture.failedFuture(e);
+        }
     }
 
     public <E extends ExecutionEvent> Subscription subscribe(Class<E> eventType, EventHandler<E> handler) {
