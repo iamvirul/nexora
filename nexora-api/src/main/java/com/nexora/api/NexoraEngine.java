@@ -1,6 +1,7 @@
 package com.nexora.api;
 
 import com.nexora.core.context.TraceContext;
+import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.execution.ExecutionResult;
 import com.nexora.core.intent.Intent;
 import com.nexora.event.ExecutionEventBus;
@@ -117,6 +118,20 @@ public final class NexoraEngine implements AutoCloseable {
         return engine.execute(intent, traceContext);
     }
 
+    /**
+     * Starts {@code intent} and returns immediately with its execution id and result future.
+     * Use this instead of {@link #execute(Intent)} when the id is needed before the execution
+     * finishes, for example to report it to a client or to {@link #cancel(String)} it.
+     */
+    public ExecutionHandle submit(Intent intent) {
+        return engine.submit(intent, TraceContext.root());
+    }
+
+    /** {@link #submit(Intent)} continuing a trace propagated in from an inbound request. */
+    public ExecutionHandle submit(Intent intent, TraceContext traceContext) {
+        return engine.submit(intent, traceContext);
+    }
+
     public CompletableFuture<ExecutionResult> execute(String goal, Map<String, Object> context) {
         return engine.execute(new Intent(goal, context));
     }
@@ -129,6 +144,30 @@ public final class NexoraEngine implements AutoCloseable {
             Map<String, Object> context,
             Duration deadline) {
         return engine.execute(new Intent(goal, context, deadline));
+    }
+
+    /**
+     * Cancels a running execution: steps that have not started are never started, running steps
+     * are interrupted, and the execution finishes as {@code CANCELLED} (with saga compensation for
+     * completed steps when enabled). Safe to call more than once.
+     *
+     * <p>The returned future completes once the cancel request is accepted, not when the execution
+     * has fully stopped; wait on the execution's own future for that. It completes with
+     * {@code true} if the execution is being cancelled, {@code false} if it already finished (or is
+     * already stopping on its deadline), or exceptionally with {@link ExecutionNotFoundException}
+     * or {@link ExecutionNotOwnedException}.
+     */
+    public CompletableFuture<Boolean> cancel(String executionId) {
+        if (executionId == null || executionId.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("executionId must not be blank"));
+        }
+        // Untracked ids fall back to a store lookup, which is blocking I/O: keep it off the caller's thread.
+        return CompletableFuture.supplyAsync(() -> switch (engine.cancel(executionId)) {
+            case CANCELLED -> true;
+            case ALREADY_TERMINAL -> false;
+            case NOT_FOUND -> throw new ExecutionNotFoundException(executionId);
+            case NOT_RUNNING_ON_THIS_ENGINE -> throw new ExecutionNotOwnedException(executionId);
+        }, executor);
     }
 
     public <E extends ExecutionEvent> Subscription subscribe(Class<E> eventType, EventHandler<E> handler) {
