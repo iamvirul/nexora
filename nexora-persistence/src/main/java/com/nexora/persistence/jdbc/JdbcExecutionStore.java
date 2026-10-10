@@ -42,6 +42,8 @@ public final class JdbcExecutionStore implements ExecutionStore {
     private static final Logger log = LoggerFactory.getLogger(JdbcExecutionStore.class);
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
+    // Kept well under typical k8s probe timeouts so a stalled DB reports DOWN instead of hanging the probe.
+    private static final int HEALTH_CHECK_TIMEOUT_SECONDS = 2;
 
     private final Connection conn;
 
@@ -562,6 +564,16 @@ public final class JdbcExecutionStore implements ExecutionStore {
     @Override
     public synchronized void close() {
         try { conn.close(); } catch (SQLException ignored) {}
+    }
+
+    @Override
+    public synchronized boolean isHealthy() {
+        try {
+            return conn.isValid(HEALTH_CHECK_TIMEOUT_SECONDS);
+        } catch (SQLException e) {
+            log.warn("Persistence health check failed sqlState={}", e.getSQLState(), e);
+            return false;
+        }
     }
 
     private ExecutionRecord mapExecution(ResultSet rs) throws Exception {
