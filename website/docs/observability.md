@@ -19,7 +19,7 @@ This exposes four endpoints with no external dependencies:
 | `GET /` | Live process UI showing active executions, step timelines, and plan amendments |
 | `GET /metrics` | Prometheus text format scrape endpoint |
 | `GET /api/process` | Raw process snapshot as JSON |
-| `POST /api/execute` | Trigger an execution remotely |
+| `POST /api/execute` | Trigger an execution remotely; returns `202` with the new `executionId` |
 | `GET /health/live` | Liveness probe. Returns `200` while the process is serving HTTP |
 | `GET /health/ready` | Readiness probe. Returns `200` when persistence, plugins, and the executor are all UP, `503` with a per-check breakdown otherwise |
 | `GET /health` | Summary: overall status, Nexora version, readiness checks, and capability circuit states (informational) |
@@ -27,6 +27,7 @@ This exposes four endpoints with no external dependencies:
 | `GET /api/dead-letters` | List dead letter queue entries (paginated via `?page=` and `?size=`, filterable by `?state=PENDING\|RESOLVED\|REPLAYED\|ALL`) |
 | `POST /api/dead-letters/{id}/replay` | Create a new execution from a dead letter |
 | `POST /api/dead-letters/{id}/resolve` | Mark a dead letter as resolved |
+| `DELETE /api/executions/{id}` | Cancel a running execution (`200` cancelled, `404` unknown, `409` already finished). See [Execution Cancellation](concepts/execution-cancellation) |
 | `GET /api/schedules` | List all cron schedules |
 | `POST /api/schedules` | Register a new cron schedule |
 | `DELETE /api/schedules/{id}` | Cancel a cron schedule |
@@ -149,7 +150,8 @@ curl -X POST http://localhost:9464/api/dead-letters/<id>/resolve
 ### Metrics exposed include
 
 - `nexora_plan_started_total`, `nexora_plan_completed_total`, `nexora_plan_failed_total`
-- `nexora_plan_duration_seconds`: histogram by status (completed/failed)
+- `nexora_plan_duration_seconds`: histogram by status (completed/failed/timed_out/cancelled)
+- `nexora_plan_cancelled_total`: cancelled executions (not counted as failures)
 - `nexora_step_started_total`, `nexora_step_completed_total`, `nexora_step_failed_total`: all by capability ID
 - `nexora_step_duration_seconds`: histogram by capability ID and terminal status
 - `nexora_plan_amendments_total`: by amendment type (ADD_STEP, SKIP_STEP, MODIFY_INPUT)

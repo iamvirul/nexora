@@ -108,6 +108,19 @@ All active plugins are deactivated when the engine shuts down (`engine.shutdown(
 
 ---
 
+## Cancelling an execution
+
+```java
+CompletableFuture<ExecutionResult> execution = engine.execute(intent);
+
+engine.cancel(executionId).join(); // true if cancelled, false if already finished
+execution.join().status();         // CANCELLED
+```
+
+Pending steps never start and running steps are interrupted. Unknown ids fail with `ExecutionNotFoundException`. See [Execution Cancellation](../concepts/execution-cancellation) for the full reference.
+
+---
+
 ## Cron scheduling
 
 Requires a persistence store. Returns a `ScheduledExecution` handle with `id()`, `nextFireTime()`, and `cancel()`.

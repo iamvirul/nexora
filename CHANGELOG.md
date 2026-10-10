@@ -9,14 +9,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 ### Added
 
+#### Core Engine
+- **Execution cancellation** - `NexoraEngine.cancel(executionId)` returns `CompletableFuture<Boolean>` (`true` if cancelled, `false` if already finished; fails with `ExecutionNotFoundException` for unknown ids). Pending steps are never started, running steps are interrupted, the execution is persisted as `CANCELLED`, and `PlanCancelledEvent` fires. Saga compensation runs for completed steps when enabled. Cancelled executions are not dead-lettered. New `ExecutionStatus.CANCELLED` and `ExecutionState.CANCELLED` ([#33](https://github.com/iamvirul/nexora/issues/33))
+
 #### Observability
+- **`NexoraEngine.submit(intent)`** - Starts an execution and returns an `ExecutionHandle` (`executionId` + result future) immediately, so the id is known before the run finishes ([#33](https://github.com/iamvirul/nexora/issues/33))
+- **Cancel REST API, CLI, and UI** - `POST /api/execute` and DLQ replay now return the new `executionId`. The observe UI has a Cancel button on running executions, and the payment pipeline demo adds a cancellation scenario and a "Slow payment" preset. `DELETE /api/executions/{id}` on the observe server (`200` cancelled, `404` unknown, `409` already finished) and `nexora cancel <executionId> [--server URL]`. New `nexora_plan_cancelled_total` counter; cancels are not counted as failures ([#33](https://github.com/iamvirul/nexora/issues/33))
 - **Health check endpoints** - `GET /health/live` (liveness), `GET /health/ready` (readiness: persistence, plugins, executor; `503` with a per-check breakdown when any is DOWN), and `GET /health` (summary with version, checks, and capability circuit states). All three are unauthenticated. New `nexora_ready` gauge and `NexoraNotReady` alert ([#31](https://github.com/iamvirul/nexora/issues/31))
 
 ### Changed
 - **`/health/ready` semantics** - Readiness now reflects the engine's own dependencies instead of capability circuit state. An OPEN circuit no longer returns `503`; circuit states moved to the `capabilities` field of `GET /health` ([#31](https://github.com/iamvirul/nexora/issues/31))
 - **`PluginManager.loadPlugin(Path)` returns the plugin id** - Previously `void`. Source compatible; code compiled against an older `nexora-plugin-loader` must be recompiled ([#140](https://github.com/iamvirul/nexora/issues/140))
 
+- **`DagStepScheduler.schedule(Plan, ExecutionContext, AtomicBoolean)` replaced by `schedule(Plan, ExecutionContext, HaltSignal)`** - `HaltSignal` carries why the execution stopped (`DEADLINE` or `CANCELLED`) so the scheduler can report `TIMED_OUT` or `CANCELLED`. Deadline behaviour is unchanged ([#33](https://github.com/iamvirul/nexora/issues/33))
+- **Default webhook events include `CANCELLED`** - Intents without explicit `webhookEvents` are now notified when cancelled ([#33](https://github.com/iamvirul/nexora/issues/33))
+
 ### Fixed
+- **Timed-out capabilities kept running** - `TimeoutInterceptor` used `CompletableFuture.cancel(true)`, which does not interrupt the worker, so a capability that exceeded its timeout carried on in the background. It now runs on a `FutureTask` and is interrupted on timeout ([#33](https://github.com/iamvirul/nexora/issues/33))
+- **Retries after interruption** - `RetryInterceptor` no longer starts another attempt once the step thread has been interrupted ([#33](https://github.com/iamvirul/nexora/issues/33))
 - **Plugin jars never activated** - `NexoraEngine.Builder.withPluginJar()` loaded the jar but never activated the plugin, so its capabilities and planners were never registered and executions failed with `CAPABILITY_NOT_FOUND`. `build()` now activates jar plugins after inline plugins, in the order added, and fails with `PluginInitializationException` if activation fails ([#140](https://github.com/iamvirul/nexora/issues/140))
 
 ---

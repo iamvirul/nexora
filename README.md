@@ -118,6 +118,7 @@ nexora [--config <file>] <command>
 | `nexora schedule add` | Register a recurring cron-based execution |
 | `nexora schedule list` | List schedules and next fire times |
 | `nexora schedule remove <id>` | Cancel a schedule immediately |
+| `nexora cancel <executionId>` | Cancel an execution running in the observe server |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 
@@ -538,7 +539,7 @@ This exposes four endpoints with no external dependencies:
 | `GET /` | Live process UI showing active executions, step timelines, and plan amendments |
 | `GET /metrics` | Prometheus text format scrape endpoint |
 | `GET /api/process` | Raw process snapshot as JSON |
-| `POST /api/execute` | Trigger an execution remotely |
+| `POST /api/execute` | Trigger an execution remotely; returns `202` with the new `executionId` |
 | `GET /health/live` | Liveness probe. Returns `200` while the process is serving HTTP |
 | `GET /health/ready` | Readiness probe. Returns `200` when persistence, plugins, and the executor are all UP, `503` with a per-check breakdown otherwise |
 | `GET /health` | Summary: overall status, Nexora version, readiness checks, and capability circuit states (informational) |
@@ -546,6 +547,7 @@ This exposes four endpoints with no external dependencies:
 | `GET /api/dead-letters` | List dead letter queue entries (paginated, filterable by `?state=PENDING\|RESOLVED\|REPLAYED\|ALL`) |
 | `POST /api/dead-letters/{id}/replay` | Create a new execution from a dead letter and mark it as `REPLAYED` |
 | `POST /api/dead-letters/{id}/resolve` | Mark a dead letter as `RESOLVED` with an optional `{"reason":"..."}` body |
+| `DELETE /api/executions/{id}` | Cancel a running execution (`200` cancelled, `404` unknown, `409` already finished) |
 
 > **Note**: `/health/live` and `/health` were added in v0.3.0. In v0.3.0 `/health/ready` changed from reporting capability circuit state to reporting dependency readiness; circuit states are now under `capabilities` in `GET /health`.
 

@@ -22,6 +22,7 @@ const sidebars = {
         'concepts/reactive-amendments',
         'concepts/capability-contracts',
         'concepts/execution-deadline',
+        'concepts/execution-cancellation',
         'concepts/dead-letter-queue',
         'concepts/cron-scheduling',
       ],
