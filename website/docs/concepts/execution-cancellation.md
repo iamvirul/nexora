@@ -96,7 +96,7 @@ The observe UI shows a **Cancel** button on every running execution, which calls
 | `409` | `{"error":"Execution has already finished","executionId":"..."}` | Already terminal |
 | `409` | `{"error":"Execution is not running on this engine instance","executionId":"..."}` | Owned by another instance |
 
-> **Note**: Authentication will be enforced once [#30](https://github.com/iamvirul/nexora/issues/30) lands.
+> **Warning**: This endpoint currently has no caller authentication. Do not expose the observe server to untrusted networks. Authentication will be enforced once [#30](https://github.com/iamvirul/nexora/issues/30) lands.
 
 ---
 
