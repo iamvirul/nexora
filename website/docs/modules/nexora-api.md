@@ -111,10 +111,10 @@ All active plugins are deactivated when the engine shuts down (`engine.shutdown(
 ## Cancelling an execution
 
 ```java
-CompletableFuture<ExecutionResult> execution = engine.execute(intent);
+ExecutionHandle handle = engine.submit(intent);   // id is known immediately
 
-engine.cancel(executionId).join(); // true if cancelled, false if already finished
-execution.join().status();         // CANCELLED
+engine.cancel(handle.executionId()).join();      // true if cancelled, false if already finished
+handle.result().join().status();                 // CANCELLED
 ```
 
 Pending steps never start and running steps are interrupted. Unknown ids fail with `ExecutionNotFoundException`. See [Execution Cancellation](../concepts/execution-cancellation) for the full reference.
