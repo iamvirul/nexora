@@ -94,10 +94,10 @@ public CapabilityContract contract() {
 }
 ```
 
-Inspect current health via `NexoraEngine.contractHealth(capabilityId)`:
+Inspect current health via `NexoraEngine.capabilityHealth(capabilityId)`:
 
 ```java
-NexoraEngine.HealthSnapshot snap = engine.contractHealth("charge_card");
+NexoraEngine.HealthSnapshot snap = NexoraEngine.HealthSnapshot.from(engine.capabilityHealth("charge_card"));
 log.info("samples={} errorRate={} p99={}ms",
     snap.sampleCount(), snap.errorRate(), snap.p99Latency().toMillis());
 ```

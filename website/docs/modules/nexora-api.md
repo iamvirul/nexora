@@ -42,8 +42,8 @@ NexoraEngine engine = NexoraEngine.builder()
     // Custom executor (default: virtual threads)
     .withExecutor(Executors.newVirtualThreadPerTaskExecutor())
 
-    // Plugin directory (loads + activates all JARs in the directory)
-    .withPluginDirectory(Path.of("/etc/nexora/plugins"))
+    // Plugin JARs (loaded + activated in build(), after withPlugin() plugins, in the order added)
+    .withPluginJar(Path.of("/etc/nexora/plugins/payment-plugin-1.2.0.jar"))
 
     .build();
 ```
@@ -89,8 +89,8 @@ sub.cancel();
 ## Inspecting contract health
 
 ```java
-NexoraEngine.HealthSnapshot snap = engine.contractHealth("charge_card");
-// snap.sampleCount(), snap.errorRate(), snap.p99Latency()
+NexoraEngine.HealthSnapshot snap = NexoraEngine.HealthSnapshot.from(engine.capabilityHealth("charge_card"));
+// snap.state(), snap.sampleCount(), snap.errorRate(), snap.p99Latency()
 ```
 
 ---
@@ -98,10 +98,13 @@ NexoraEngine.HealthSnapshot snap = engine.contractHealth("charge_card");
 ## Plugin management at runtime
 
 ```java
-engine.loadPlugin(Path.of("/opt/plugins/v2-plugin.jar"));
-engine.activatePlugin("v2-plugin");
-engine.deactivatePlugin("v1-plugin");
+// Loads the JAR and activates the plugin with the given id
+engine.loadPlugin(Path.of("/opt/plugins/v2-plugin.jar"), "v2-plugin");
+
+engine.activePluginIds(); // [..., "v2-plugin"]
 ```
+
+All active plugins are deactivated when the engine shuts down (`engine.shutdown()` or `close()`). There is no public API to deactivate a single plugin at runtime.
 
 ---
 

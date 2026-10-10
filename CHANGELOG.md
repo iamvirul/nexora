@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - **`/health/ready` semantics** - Readiness now reflects the engine's own dependencies instead of capability circuit state. An OPEN circuit no longer returns `503`; circuit states moved to the `capabilities` field of `GET /health` ([#31](https://github.com/iamvirul/nexora/issues/31))
+- **`PluginManager.loadPlugin(Path)` returns the plugin id** - Previously `void`. Source compatible; code compiled against an older `nexora-plugin-loader` must be recompiled ([#140](https://github.com/iamvirul/nexora/issues/140))
+
+### Fixed
+- **Plugin jars never activated** - `NexoraEngine.Builder.withPluginJar()` loaded the jar but never activated the plugin, so its capabilities and planners were never registered and executions failed with `CAPABILITY_NOT_FOUND`. `build()` now activates jar plugins after inline plugins, in the order added, and fails with `PluginInitializationException` if activation fails ([#140](https://github.com/iamvirul/nexora/issues/140))
 
 ---
 

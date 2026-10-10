@@ -41,6 +41,16 @@ public class MyPlugin implements NexoraPlugin {
 }
 ```
 
+### Loading a plugin JAR at startup
+
+```java
+NexoraEngine engine = NexoraEngine.builder()
+        .withPluginJar(Path.of("my-plugin.jar"))
+        .build();
+```
+
+`build()` loads and activates each JAR after any `withPlugin()` plugins, in the order added, so list a plugin's required plugins first. If a plugin fails to initialize, `build()` throws `PluginInitializationException`.
+
 ### Loading a plugin JAR at runtime
 
 ```java

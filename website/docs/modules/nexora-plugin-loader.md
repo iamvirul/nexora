@@ -18,23 +18,23 @@ LOADED → activate() → ACTIVE → deactivate() → INACTIVE
 
 ### Loading a plugin from a JAR
 
+At startup, `build()` loads and activates each JAR after any `withPlugin()` plugins, in the order added. List a plugin's required plugins first. If a plugin fails to initialize, `build()` throws `PluginInitializationException`.
+
 ```java
 NexoraEngine engine = NexoraEngine.builder()
-    .withPluginDirectory(Path.of("/etc/nexora/plugins"))  // loads all JARs in dir
+    .withPluginJar(Path.of("/etc/nexora/plugins/payment-plugin-1.2.0.jar"))
     .build();
-
-// Or load a single JAR:
-engine.loadPlugin(Path.of("/opt/plugins/payment-plugin-1.2.0.jar"));
-engine.activatePlugin("payment-plugin");
 ```
 
-### Deactivating a plugin at runtime
+On a running engine, `loadPlugin` loads the JAR and activates the plugin with the given id:
 
 ```java
-engine.deactivatePlugin("payment-plugin");
-// All capabilities registered by payment-plugin are removed from the registry.
-// In-flight steps against those capabilities complete with their current invocation.
+engine.loadPlugin(Path.of("/opt/plugins/fraud-plugin-2.0.0.jar"), "fraud-plugin");
 ```
+
+### Deactivation
+
+All active plugins are deactivated when the engine shuts down (`engine.shutdown()` or `close()`). For each plugin, its capabilities and planners are removed from the registry, `shutdown()` is called, and its class loader is closed. There is no public `NexoraEngine` API to deactivate a single plugin at runtime.
 
 ---
 
@@ -66,6 +66,6 @@ new PluginDescriptor(
 
 1. Create a JAR with a class that implements `NexoraPlugin`.
 2. Add a service descriptor file: `META-INF/services/com.nexora.spi.NexoraPlugin` containing the fully qualified class name.
-3. Deploy the JAR to your plugin directory or pass the path to `engine.loadPlugin()`.
+3. Pass the JAR path to `NexoraEngine.Builder.withPluginJar()` at startup, or to `engine.loadPlugin(path, pluginId)` on a running engine.
 
 See [Writing Plugins](../writing-plugins) for a step-by-step guide.
