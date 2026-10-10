@@ -33,6 +33,8 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
+          # website/ is the docs site; its npm deps never ship with the Java artifacts
+          skip-dirs: website
           ignore-unfixed: true
           format: table
           exit-code: 1
