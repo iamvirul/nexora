@@ -25,4 +25,8 @@ public record ExecutionResult(
     public static ExecutionResult timedOut(String executionId, List<StepResult> stepResults) {
         return new ExecutionResult(executionId, ExecutionStatus.TIMED_OUT, stepResults);
     }
+
+    public static ExecutionResult cancelled(String executionId, List<StepResult> stepResults) {
+        return new ExecutionResult(executionId, ExecutionStatus.CANCELLED, stepResults);
+    }
 }
