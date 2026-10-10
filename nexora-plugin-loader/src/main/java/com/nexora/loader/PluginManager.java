@@ -201,6 +201,21 @@ public final class PluginManager {
         return Collections.unmodifiableList(result);
     }
 
+    /**
+     * Registered plugins that are not serving capabilities: loaded but never activated,
+     * stuck mid-activation (a capability provider threw after initialize), or FAILED.
+     * Used for readiness checks — any entry here means the engine is not fully ready.
+     */
+    public List<String> nonActivePluginIds() {
+        List<String> result = new ArrayList<>();
+        for (Map.Entry<String, PluginState> entry : plugins.entrySet()) {
+            if (entry.getValue().lifecycle() != PluginLifecycle.ACTIVE) {
+                result.add(entry.getKey());
+            }
+        }
+        return Collections.unmodifiableList(result);
+    }
+
     private PluginState requirePlugin(String pluginId) {
         PluginState state = plugins.get(pluginId);
         if (state == null) {
