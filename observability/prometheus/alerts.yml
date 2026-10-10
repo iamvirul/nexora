@@ -31,3 +31,15 @@ groups:
         annotations:
           summary: "Nexora has executions continuously active"
           description: "Active executions have stayed above 0 for 10 minutes and may be stuck."
+
+      - alert: NexoraNotReady
+        # Mirrors GET /health/ready — 1 when persistence, plugins, and the shared
+        # executor are all healthy, 0 otherwise. See nexora issue #31.
+        expr: nexora_ready == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: nexora
+        annotations:
+          summary: "Nexora is not ready"
+          description: "GET /health/ready has been reporting DOWN for at least 2 minutes. Check persistence, plugin, and executor health."
