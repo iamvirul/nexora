@@ -29,7 +29,7 @@ public final class RetryInterceptor implements ExecutionInterceptor {
         while (true) {
             try {
                 CapabilityResult result = chain.proceed(request.withAttempt(attempt));
-                if (result.succeeded() || !policy.shouldRetry(attempt, null)) {
+                if (result.succeeded() || isInterrupted() || !policy.shouldRetry(attempt, null)) {
                     return result;
                 }
                 log.warn("Capability returned failure, retrying. capability={} step={} attempt={} code={}",
@@ -37,13 +37,18 @@ public final class RetryInterceptor implements ExecutionInterceptor {
                 sleep(policy.backoffDelay(attempt));
                 attempt++;
             } catch (Exception e) {
-                if (!policy.shouldRetry(attempt, e)) throw e;
+                if (isInterrupted() || !policy.shouldRetry(attempt, e)) throw e;
                 log.warn("Capability threw, retrying. capability={} step={} attempt={}",
                         request.capabilityId(), request.stepId(), attempt, e);
                 sleep(policy.backoffDelay(attempt));
                 attempt++;
             }
         }
+    }
+
+    /** An interrupted step (execution cancelled) must not start another attempt. */
+    private static boolean isInterrupted() {
+        return Thread.currentThread().isInterrupted();
     }
 
     private static void sleep(java.time.Duration duration) {

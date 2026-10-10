@@ -23,8 +23,10 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -184,13 +186,139 @@ class DagStepSchedulerTest {
                     new Step("final", "final", Map.of(), null, Set.of("first"), null, null, null, null)
             ));
 
-            AtomicBoolean halted = new AtomicBoolean(true);
-            DagStepScheduler.ScheduleSession session = harness.scheduler.schedule(plan, context(), halted);
+            HaltSignal halt = new HaltSignal();
+            halt.halt(HaltSignal.Reason.DEADLINE);
+            DagStepScheduler.ScheduleSession session = harness.scheduler.schedule(plan, context(), halt);
             ExecutionResult result = session.future().join();
 
-            // When halted is true from the start, steps return TIMED_OUT immediately
+            // When halted from the start, steps return TIMED_OUT immediately
             assertEquals(ExecutionStatus.TIMED_OUT, result.status());
             assertEquals(0, finalCalls.get());
+        }
+    }
+
+    @Test
+    void cancelBeforeStartSuppressesEveryStep() {
+        CapabilityRegistry registry = new DefaultCapabilityRegistry();
+        AtomicInteger calls = new AtomicInteger();
+        registry.register(descriptor("work"), request -> {
+            calls.incrementAndGet();
+            return CapabilityResult.success("done");
+        });
+
+        try (TestHarness harness = new TestHarness(registry)) {
+            Plan plan = new Plan(List.of(Step.of("a", "work"), Step.of("b", "work")));
+            HaltSignal halt = new HaltSignal();
+            halt.halt(HaltSignal.Reason.CANCELLED);
+
+            ExecutionResult result = harness.scheduler.schedule(plan, context(), halt).future().join();
+
+            assertEquals(ExecutionStatus.CANCELLED, result.status());
+            assertEquals(0, calls.get());
+            assertTrue(result.stepResults().stream()
+                    .allMatch(r -> "CANCELLED".equals(r.capabilityResult().failureCode())));
+        }
+    }
+
+    @Test
+    void cancelInterruptsRunningStepAndNeverStartsDependents() throws Exception {
+        CapabilityRegistry registry = new DefaultCapabilityRegistry();
+        CountDownLatch slowStarted = new CountDownLatch(1);
+        AtomicBoolean slowInterrupted = new AtomicBoolean(false);
+        AtomicInteger dependentCalls = new AtomicInteger();
+
+        registry.register(descriptor("slow"), request -> {
+            slowStarted.countDown();
+            try {
+                new CountDownLatch(1).await(); // blocks until interrupted
+                return CapabilityResult.success("unreachable");
+            } catch (InterruptedException e) {
+                slowInterrupted.set(true);
+                Thread.currentThread().interrupt();
+                return CapabilityResult.failure("INTERRUPTED", "interrupted");
+            }
+        });
+        registry.register(descriptor("dependent"), request -> {
+            dependentCalls.incrementAndGet();
+            return CapabilityResult.success("dependent");
+        });
+
+        try (TestHarness harness = new TestHarness(registry)) {
+            Plan plan = new Plan(List.of(
+                    Step.of("slow", "slow"),
+                    new Step("dependent", "dependent", Map.of(), null, Set.of("slow"), null, null, null, null)
+            ));
+            HaltSignal halt = new HaltSignal();
+            DagStepScheduler.ScheduleSession session = harness.scheduler.schedule(plan, context(), halt);
+            assertTrue(slowStarted.await(5, TimeUnit.SECONDS), "slow step never started");
+
+            assertTrue(halt.halt(HaltSignal.Reason.CANCELLED));
+            ExecutionResult result = session.future().get(5, TimeUnit.SECONDS);
+
+            assertEquals(ExecutionStatus.CANCELLED, result.status());
+            assertTrue(slowInterrupted.get(), "running step was not interrupted");
+            assertEquals(0, dependentCalls.get());
+        }
+    }
+
+    @Test
+    void deadlineHaltLetsRunningStepFinishWithoutInterrupt() throws Exception {
+        CapabilityRegistry registry = new DefaultCapabilityRegistry();
+        CountDownLatch slowStarted = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicBoolean slowInterrupted = new AtomicBoolean(false);
+
+        registry.register(descriptor("slow"), request -> {
+            slowStarted.countDown();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                slowInterrupted.set(true);
+                Thread.currentThread().interrupt();
+            }
+            return CapabilityResult.success("slow");
+        });
+
+        try (TestHarness harness = new TestHarness(registry)) {
+            Plan plan = new Plan(List.of(Step.of("slow", "slow")));
+            HaltSignal halt = new HaltSignal();
+            DagStepScheduler.ScheduleSession session = harness.scheduler.schedule(plan, context(), halt);
+            assertTrue(slowStarted.await(5, TimeUnit.SECONDS), "slow step never started");
+
+            halt.halt(HaltSignal.Reason.DEADLINE);
+            release.countDown();
+            ExecutionResult result = session.future().get(5, TimeUnit.SECONDS);
+
+            assertEquals(ExecutionStatus.TIMED_OUT, result.status());
+            assertFalse(slowInterrupted.get(), "deadline must not interrupt running steps");
+        }
+    }
+
+    @Test
+    void haltIsRejectedOnceExecutionHasCompleted() {
+        CapabilityRegistry registry = new DefaultCapabilityRegistry();
+        registry.register(descriptor("work"), request -> CapabilityResult.success("done"));
+
+        try (TestHarness harness = new TestHarness(registry)) {
+            HaltSignal halt = new HaltSignal();
+            ExecutionResult result = harness.scheduler
+                    .schedule(new Plan(List.of(Step.of("a", "work"))), context(), halt)
+                    .future().join();
+
+            assertEquals(ExecutionStatus.COMPLETED, result.status());
+            assertFalse(halt.halt(HaltSignal.Reason.CANCELLED));
+        }
+    }
+
+    @Test
+    void emptyPlanHonoursCancelIssuedBeforeScheduling() {
+        try (TestHarness harness = new TestHarness(new DefaultCapabilityRegistry())) {
+            HaltSignal halt = new HaltSignal();
+            halt.halt(HaltSignal.Reason.CANCELLED);
+
+            ExecutionResult result = harness.scheduler.schedule(new Plan(List.of()), context(), halt).future().join();
+
+            assertEquals(ExecutionStatus.CANCELLED, result.status());
         }
     }
 

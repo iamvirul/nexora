@@ -57,6 +57,30 @@ class RetryInterceptorTest {
         assertThat(result.succeeded()).isTrue();
     }
 
+    @Test
+    void doesNotRetryOnceTheStepThreadIsInterrupted() {
+        RetryPolicyRegistry registry = new DefaultRetryPolicyRegistry();
+        registry.setDefault(new RetryPolicy() {
+            @Override public boolean shouldRetry(int attemptsMade, Throwable cause) { return true; }
+            @Override public Duration backoffDelay(int attemptsMade) { return Duration.ZERO; }
+        });
+        RetryInterceptor interceptor = new RetryInterceptor(registry);
+        List<Integer> seenAttempts = new ArrayList<>();
+
+        try {
+            CapabilityResult result = interceptor.intercept(request(), req -> {
+                seenAttempts.add(req.attemptNumber());
+                Thread.currentThread().interrupt(); // execution cancelled mid-attempt
+                return CapabilityResult.failure("INTERRUPTED", "interrupted");
+            });
+
+            assertThat(seenAttempts).containsExactly(0);
+            assertThat(result.failureCode()).isEqualTo("INTERRUPTED");
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
     private static CapabilityRequest request() {
         return new CapabilityRequest(
                 "cap", "step-1", "idem-1", Map.of(), TraceContext.root(),
