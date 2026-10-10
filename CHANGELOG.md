@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+### Added
+
+#### Observability
+- **Health check endpoints** - `GET /health/live` (liveness), `GET /health/ready` (readiness: persistence, plugins, executor; `503` with a per-check breakdown when any is DOWN), and `GET /health` (summary with version, checks, and capability circuit states). All three are unauthenticated. New `nexora_ready` gauge and `NexoraNotReady` alert ([#31](https://github.com/iamvirul/nexora/issues/31))
+
+### Changed
+- **`/health/ready` semantics** - Readiness now reflects the engine's own dependencies instead of capability circuit state. An OPEN circuit no longer returns `503`; circuit states moved to the `capabilities` field of `GET /health` ([#31](https://github.com/iamvirul/nexora/issues/31))
+
+---
+
 ## [0.2.1] - 2026-07-03
 - **Dependency Update** - Bumps ch.qos.logback:logback-classic from 1.5.35 to 1.5.37.
 
