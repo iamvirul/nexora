@@ -147,6 +147,21 @@
     .run-btn:hover    { background: #79b8ff; }
     .run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    .exec-cancel {
+      flex-shrink: 0;
+      background: transparent;
+      border: 1px solid var(--red);
+      border-radius: 4px;
+      color: var(--red);
+      font-size: 11px;
+      font-weight: 500;
+      padding: 2px 10px;
+      cursor: pointer;
+      font-family: var(--sans);
+    }
+    .exec-cancel:hover    { background: rgba(248,81,73,0.15); }
+    .exec-cancel:disabled { opacity: 0.4; cursor: default; }
+
     .flash { font-size: 12px; color: var(--muted); white-space: nowrap; }
 
     /* ── Two-column panels row ── */
@@ -253,6 +268,7 @@
     .badge.completed { background: rgba(88,166,255,0.15);   color: var(--green);  }
     .badge.failed    { background: rgba(248,81,73,0.15);   color: var(--red);    }
     .badge.timed_out { background: rgba(240,136,62,0.15);  color: var(--orange); }
+    .badge.cancelled { background: rgba(125,133,144,0.15); color: var(--muted);  }
     .badge.skipped   { background: rgba(210,153,34,0.15);  color: var(--yellow); }
     .badge.pending   { background: rgba(125,133,144,0.15); color: var(--muted);  }
 
@@ -707,7 +723,7 @@ function esc(v) {
 
 function sc(s) {
   s = (s||'').toLowerCase();
-  return ['running','completed','failed','skipped','pending','timed_out'].includes(s) ? s : 'pending';
+  return ['running','completed','failed','skipped','pending','timed_out','cancelled'].includes(s) ? s : 'pending';
 }
 
 function fmtDur(ms) {
@@ -752,6 +768,7 @@ function renderStats() {
     ['Running',   execs.filter(e => e.status === 'RUNNING').length],
     ['Completed', execs.filter(e => e.status === 'COMPLETED').length],
     ['Failed',    execs.filter(e => e.status === 'FAILED' || e.status === 'TIMED_OUT').length],
+    ['Cancelled', execs.filter(e => e.status === 'CANCELLED').length],
     ['Tracked',   execs.length],
     ['Updated',   fmtAgo(data.generatedAtMs)]
   ];
@@ -799,6 +816,9 @@ function buildExec(exec, open) {
         <span class="dur">${fmtDur(durMs)}</span>
         <span>${exec.totalSteps} steps</span>
       </div>
+      ${exec.status === 'RUNNING'
+          ? `<button class="exec-cancel" onclick="cancelExec(event,'${esc(exec.executionId)}',this)">Cancel</button>`
+          : ''}
       <span class="chevron">▶</span>
     </div>`;
 
@@ -1022,6 +1042,22 @@ schedAddForm.addEventListener('submit', async e => {
 loadSchedules();
 setInterval(loadSchedules, 30000);
 
+// ── Cancel ─────────────────────────────────────────────────────────────────────
+
+async function cancelExec(event, id, btn) {
+  event.stopPropagation(); // the button sits inside the expandable header
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/api/executions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const p = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(p.error || 'HTTP ' + r.status);
+    flash(`Cancellation requested · ${id.slice(0, 8)}`, true);
+  } catch (ex) {
+    flash(`Cancel failed: ${ex.message}`, false);
+    btn.disabled = false;
+  }
+}
+
 // ── Form ───────────────────────────────────────────────────────────────────────
 
 runForm.addEventListener('submit', async e => {
@@ -1044,7 +1080,7 @@ runForm.addEventListener('submit', async e => {
     });
     const p = await r.json();
     if (!r.ok || !p.accepted) throw new Error(p.error || 'HTTP ' + r.status);
-    flash('Accepted', true);
+    flash(p.executionId ? `Accepted · ${p.executionId.slice(0, 8)}` : 'Accepted', true);
   } catch (ex) {
     flash(ex.message, false);
   } finally {

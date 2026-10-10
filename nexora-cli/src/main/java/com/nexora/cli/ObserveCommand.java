@@ -4,10 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.nexora.api.NexoraEngine;
 import com.nexora.api.observability.NexoraObservability;
+import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.intent.Intent;
 import com.nexora.persistence.MissedFirePolicy;
 import com.nexora.persistence.ScheduleRecord;
-import com.nexora.tracing.otel.W3CTraceparent;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.java_websocket.WebSocket;
@@ -25,7 +25,6 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Callable;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 
@@ -36,7 +35,7 @@ import java.util.concurrent.Executors;
 )
 public class ObserveCommand implements Callable<Integer> {
 
-    private static final ObjectMapper JSON = new ObjectMapper()
+    static final ObjectMapper JSON = new ObjectMapper()
             .findAndRegisterModules()
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
@@ -105,60 +104,6 @@ public class ObserveCommand implements Callable<Integer> {
             send(exchange, 200, "application/json; charset=utf-8", payload);
         });
 
-        server.createContext("/api/execute", exchange -> {
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                sendText(exchange, 405, "Method Not Allowed");
-                return;
-            }
-
-            ExecuteRequest request;
-            try (InputStream body = exchange.getRequestBody()) {
-                request = JSON.readValue(body, ExecuteRequest.class);
-            } catch (Exception e) {
-                sendJson(exchange, 400, Map.of(
-                        "accepted", false,
-                        "error", "Invalid JSON request: " + e.getMessage()
-                ));
-                return;
-            }
-
-            if (request.goal() == null || request.goal().isBlank()) {
-                sendJson(exchange, 400, Map.of(
-                        "accepted", false,
-                        "error", "Field 'goal' is required"
-                ));
-                return;
-            }
-
-            Map<String, Object> context = request.context() == null ? Map.of() : request.context();
-            com.nexora.core.intent.Intent intent = new com.nexora.core.intent.Intent(
-                    request.goal(),
-                    context,
-                    null,
-                    request.webhookUrl(),
-                    request.webhookEvents()
-            );
-
-            String traceparentHeader = exchange.getRequestHeaders().getFirst("traceparent");
-            java.util.Optional<W3CTraceparent.Parsed> parsedTraceparent = W3CTraceparent.parse(traceparentHeader);
-            CompletableFuture<com.nexora.core.execution.ExecutionResult> future = parsedTraceparent
-                    .map(parsed -> engine.execute(intent, W3CTraceparent.toTraceContext(parsed)))
-                    .orElseGet(() -> engine.execute(intent));
-
-            future.whenComplete((result, ex) -> {
-                if (ex != null) {
-                    System.err.printf("Execution failed goal=%s error=%s%n",
-                            request.goal(), ex.getMessage());
-                }
-            });
-
-            sendJson(exchange, 202, Map.of(
-                    "accepted", true,
-                    "message", "Execution accepted",
-                    "goal", request.goal()
-            ));
-        });
-
         server.createContext("/api/webhook-deliveries/", exchange -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 try { sendText(exchange, 405, "Method Not Allowed"); } catch(Exception ignored) {}
@@ -208,11 +153,12 @@ public class ObserveCommand implements Callable<Integer> {
                     return;
                 }
                 com.nexora.core.intent.Intent replayIntent = new com.nexora.core.intent.Intent(dl.goal(), dl.context());
-                engine.execute(replayIntent).whenComplete((r, ex) -> {
+                ExecutionHandle replay = engine.submit(replayIntent);
+                replay.result().whenComplete((r, ex) -> {
                     if (ex != null) System.err.printf("DLQ replay failed id=%s error=%s%n", dlId, ex.getMessage());
                 });
                 dlqStore.updateDeadLetterState(dlId, com.nexora.persistence.DeadLetterReviewState.REPLAYED, null);
-                try { sendJson(exchange, 202, Map.of("accepted", true, "deadLetterId", dlId)); } catch(Exception ignored) {}
+                try { sendJson(exchange, 202, Map.of("accepted", true, "deadLetterId", dlId, "executionId", replay.executionId())); } catch(Exception ignored) {}
                 return;
             }
 
@@ -368,6 +314,7 @@ public class ObserveCommand implements Callable<Integer> {
         });
 
         new HealthEndpoints(engine, NEXORA_VERSION).register(server);
+        new ExecutionEndpoints(engine).register(server);
 
         server.createContext("/", exchange -> {
             String path = exchange.getRequestURI().getPath();
@@ -442,12 +389,6 @@ public class ObserveCommand implements Callable<Integer> {
                     .getBytes(StandardCharsets.UTF_8);
         }
     }
-
-    private record ExecuteRequest(
-            String goal, 
-            Map<String, Object> context, 
-            String webhookUrl, 
-            java.util.List<com.nexora.core.execution.ExecutionStatus> webhookEvents) {}
 
     private static final class SnapshotBroadcaster extends WebSocketServer {
 
