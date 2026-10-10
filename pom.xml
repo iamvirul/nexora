@@ -65,7 +65,7 @@
         <websocket.version>1.6.0</websocket.version>
         <logback.version>1.6.5</logback.version>
         <prometheus.version>0.16.0</prometheus.version>
-        <h2.version>2.5.250</h2.version>
+        <h2.version>2.5.252</h2.version>
         
         <!-- Internal Module Versions -->
         <nexora-core.version>0.3.0-SNAPSHOT</nexora-core.version>
