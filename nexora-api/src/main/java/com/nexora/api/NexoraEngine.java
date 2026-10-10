@@ -46,11 +46,14 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
@@ -81,6 +84,7 @@ public final class NexoraEngine implements AutoCloseable {
     private final CapabilityContractMonitor contractMonitor;
     private final CronScheduler cronScheduler;
     private final Tracer tracer;
+    private final Executor executor;
 
     private NexoraEngine(
             ExecutionEngine engine,
@@ -89,7 +93,8 @@ public final class NexoraEngine implements AutoCloseable {
             CapabilityRegistry capabilityRegistry,
             CapabilityContractMonitor contractMonitor,
             CronScheduler cronScheduler,
-            Tracer tracer) {
+            Tracer tracer,
+            Executor executor) {
         this.engine = engine;
         this.pluginManager = pluginManager;
         this.eventBus = eventBus;
@@ -97,6 +102,7 @@ public final class NexoraEngine implements AutoCloseable {
         this.contractMonitor = contractMonitor;
         this.cronScheduler = cronScheduler;
         this.tracer = tracer;
+        this.executor = executor;
     }
 
     public CompletableFuture<ExecutionResult> execute(Intent intent) {
@@ -148,6 +154,57 @@ public final class NexoraEngine implements AutoCloseable {
 
     public com.nexora.persistence.ExecutionStore getStore() {
         return engine.getStore();
+    }
+
+    /**
+     * Reports readiness of the engine's own dependencies: persistence, plugins, and the
+     * shared executor. A {@code null} persistence store (persistence disabled) is reported
+     * UP — there is nothing to check, not a degraded dependency.
+     *
+     * <p>Capability circuit breaker state is deliberately not part of readiness: an OPEN
+     * circuit means a downstream is failing, and pulling every instance out of rotation
+     * for that would turn a partial outage into a full one.
+     */
+    public ReadinessReport readiness() {
+        Map<String, HealthStatus> checks = new LinkedHashMap<>();
+
+        ExecutionStore store = engine.getStore();
+        checks.put(ReadinessReport.CHECK_PERSISTENCE, HealthStatus.of(store == null || store.isHealthy()));
+
+        checks.put(ReadinessReport.CHECK_PLUGINS, HealthStatus.of(pluginManager.nonActivePluginIds().isEmpty()));
+
+        boolean executorUp = !(executor instanceof ExecutorService service) || !service.isShutdown();
+        checks.put(ReadinessReport.CHECK_EXECUTOR, HealthStatus.of(executorUp));
+
+        return new ReadinessReport(checks);
+    }
+
+    public enum HealthStatus {
+        UP, DOWN;
+
+        static HealthStatus of(boolean healthy) {
+            return healthy ? UP : DOWN;
+        }
+    }
+
+    /** Per-dependency readiness, in a stable check order. Ready only when every check is UP. */
+    public record ReadinessReport(Map<String, HealthStatus> checks) {
+        public static final String CHECK_PERSISTENCE = "persistence";
+        public static final String CHECK_PLUGINS = "plugins";
+        public static final String CHECK_EXECUTOR = "executor";
+
+        public ReadinessReport {
+            Objects.requireNonNull(checks, "checks must not be null");
+            checks = Collections.unmodifiableMap(new LinkedHashMap<>(checks));
+        }
+
+        public boolean ready() {
+            return checks.values().stream().allMatch(HealthStatus.UP::equals);
+        }
+
+        public HealthStatus status() {
+            return HealthStatus.of(ready());
+        }
     }
 
     /**
@@ -388,7 +445,7 @@ public final class NexoraEngine implements AutoCloseable {
                     ? new CronScheduler(engine, executionStore, eventBus)
                     : null;
 
-            return new NexoraEngine(engine, pluginManager, eventBus, capabilityRegistry, contractMonitor, cronScheduler, tracer);
+            return new NexoraEngine(engine, pluginManager, eventBus, capabilityRegistry, contractMonitor, cronScheduler, tracer, executor);
         }
     }
 }

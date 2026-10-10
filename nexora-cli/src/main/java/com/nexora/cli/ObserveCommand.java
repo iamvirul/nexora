@@ -40,6 +40,11 @@ public class ObserveCommand implements Callable<Integer> {
             .findAndRegisterModules()
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
+    // Populated from the jar manifest (see nexora-cli's shade plugin config). Falls back to
+    // "unknown" for dev runs off exploded classes, where no manifest is on the classpath.
+    private static final String NEXORA_VERSION = Objects.requireNonNullElse(
+            ObserveCommand.class.getPackage().getImplementationVersion(), "unknown");
+
     @ParentCommand
     private NexoraCli parent;
 
@@ -362,22 +367,7 @@ public class ObserveCommand implements Callable<Integer> {
             }
         });
 
-        server.createContext("/health/ready", exchange -> {
-            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-                sendText(exchange, 405, "Method Not Allowed");
-                return;
-            }
-            java.util.List<NexoraEngine.HealthSnapshot> snapshots = engine.listCapabilities().stream()
-                    .map(c -> NexoraEngine.HealthSnapshot.from(engine.capabilityHealth(c.id())))
-                    .toList();
-            
-            boolean anyOpen = snapshots.stream().anyMatch(s -> s.state() == com.nexora.executor.CapabilityContractMonitor.CircuitState.OPEN || s.state() == com.nexora.executor.CapabilityContractMonitor.CircuitState.HALF_OPEN);
-            
-            sendJson(exchange, anyOpen ? 503 : 200, Map.of(
-                    "ready", !anyOpen,
-                    "capabilities", snapshots
-            ));
-        });
+        new HealthEndpoints(engine, NEXORA_VERSION).register(server);
 
         server.createContext("/", exchange -> {
             String path = exchange.getRequestURI().getPath();
@@ -405,7 +395,7 @@ public class ObserveCommand implements Callable<Integer> {
         System.out.printf("UI:        http://%s:%d/%n", hostForDisplay(host), port);
         System.out.printf("Metrics:   http://%s:%d/metrics%n", hostForDisplay(host), port);
         System.out.printf("Process:   http://%s:%d/api/process%n", hostForDisplay(host), port);
-        System.out.printf("Health:    http://%s:%d/health/ready%n", hostForDisplay(host), port);
+        System.out.printf("Health:    http://%s:%d/health (live: /health/live, ready: /health/ready)%n", hostForDisplay(host), port);
         System.out.printf("WebSocket: ws://%s:%d/%n", hostForDisplay(host), wsPort);
         System.out.println();
         System.out.println("Press Ctrl+C to stop.");
@@ -418,12 +408,12 @@ public class ObserveCommand implements Callable<Integer> {
         return "0.0.0.0".equals(host) ? "localhost" : host;
     }
 
-    private static void sendJson(HttpExchange exchange, int status, Object body) throws IOException {
+    static void sendJson(HttpExchange exchange, int status, Object body) throws IOException {
         byte[] payload = JSON.writeValueAsBytes(body);
         send(exchange, status, "application/json; charset=utf-8", payload);
     }
 
-    private static void sendText(HttpExchange exchange, int status, String body) throws IOException {
+    static void sendText(HttpExchange exchange, int status, String body) throws IOException {
         send(exchange, status, "text/plain; charset=utf-8", body.getBytes(StandardCharsets.UTF_8));
     }
 

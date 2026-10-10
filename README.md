@@ -539,13 +539,15 @@ This exposes four endpoints with no external dependencies:
 | `GET /metrics` | Prometheus text format scrape endpoint |
 | `GET /api/process` | Raw process snapshot as JSON |
 | `POST /api/execute` | Trigger an execution remotely |
-| `GET /health/ready` | Check health of all capabilities (returns 503 if any circuit is OPEN/HALF_OPEN) |
+| `GET /health/live` | Liveness probe. Returns `200` while the process is serving HTTP |
+| `GET /health/ready` | Readiness probe. Returns `200` when persistence, plugins, and the executor are all UP, `503` with a per-check breakdown otherwise |
+| `GET /health` | Summary: overall status, Nexora version, readiness checks, and capability circuit states (informational) |
 | `GET /api/webhook-deliveries/{id}` | Audit log of webhook delivery attempts for an execution |
 | `GET /api/dead-letters` | List dead letter queue entries (paginated, filterable by `?state=PENDING\|RESOLVED\|REPLAYED\|ALL`) |
 | `POST /api/dead-letters/{id}/replay` | Create a new execution from a dead letter and mark it as `REPLAYED` |
 | `POST /api/dead-letters/{id}/resolve` | Mark a dead letter as `RESOLVED` with an optional `{"reason":"..."}` body |
 
-> **Note**: The `/health/ready` endpoint was added in v0.2.0.
+> **Note**: `/health/live` and `/health` were added in v0.3.0. In v0.3.0 `/health/ready` changed from reporting capability circuit state to reporting dependency readiness; circuit states are now under `capabilities` in `GET /health`.
 
 Example execute request:
 

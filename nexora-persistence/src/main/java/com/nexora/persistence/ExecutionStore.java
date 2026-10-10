@@ -30,6 +30,14 @@ public interface ExecutionStore extends AutoCloseable {
 
     List<ExecutionRecord> findRecent(int limit);
 
+    /**
+     * Lightweight liveness check for readiness probes. Must not throw; implementations
+     * report an unreachable backend by returning {@code false} instead.
+     */
+    default boolean isHealthy() {
+        return true;
+    }
+
     // --- Dead Letter Queue ---
 
     /** Persists a new dead letter record in PENDING state. */

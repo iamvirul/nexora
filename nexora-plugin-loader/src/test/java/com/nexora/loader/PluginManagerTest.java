@@ -84,6 +84,47 @@ class PluginManagerTest {
         assertEquals(PluginLifecycle.ACTIVE, manager.getLifecycle("base-plugin"));
     }
 
+    @Test
+    void nonActivePluginIdsListsPluginsThatWereNeverActivated() {
+        PluginManager manager = new PluginManager(
+                new DefaultCapabilityRegistry(),
+                new InProcessEventBus(Runnable::run)
+        );
+
+        manager.registerPlugin(new TestPlugin("plugin-a", "planner-a"));
+        manager.registerPlugin(new TestPlugin("plugin-b", "planner-b"));
+        manager.activatePlugin("plugin-a");
+
+        assertEquals(List.of("plugin-b"), manager.nonActivePluginIds());
+    }
+
+    @Test
+    void nonActivePluginIdsIsEmptyWhenAllPluginsAreActive() {
+        PluginManager manager = new PluginManager(
+                new DefaultCapabilityRegistry(),
+                new InProcessEventBus(Runnable::run)
+        );
+
+        manager.registerPlugin(new TestPlugin("plugin-a", "planner-a"));
+        manager.activatePlugin("plugin-a");
+
+        assertEquals(List.of(), manager.nonActivePluginIds());
+    }
+
+    @Test
+    void nonActivePluginIdsIncludesPluginWhoseInitializationFailed() {
+        PluginManager manager = new PluginManager(
+                new DefaultCapabilityRegistry(),
+                new InProcessEventBus(Runnable::run)
+        );
+
+        manager.registerPlugin(new FailingPlugin("broken-plugin"));
+        assertThrows(PluginInitializationException.class, () -> manager.activatePlugin("broken-plugin"));
+
+        assertEquals(PluginLifecycle.FAILED, manager.getLifecycle("broken-plugin"));
+        assertEquals(List.of("broken-plugin"), manager.nonActivePluginIds());
+    }
+
     private static Set<String> plannerIds(PluginManager manager) {
         return manager.registeredPlanners().stream()
                 .map(p -> p.descriptor().id())
@@ -133,6 +174,39 @@ class PluginManagerTest {
                     return new TestPlanner(plannerId);
                 }
             });
+        }
+
+        @Override
+        public void shutdown() {
+            // no-op
+        }
+    }
+
+    private static final class FailingPlugin implements NexoraPlugin {
+        private final String pluginId;
+
+        private FailingPlugin(String pluginId) {
+            this.pluginId = pluginId;
+        }
+
+        @Override
+        public PluginDescriptor descriptor() {
+            return new PluginDescriptor(pluginId, "1.0.0", pluginId, List.of(), null);
+        }
+
+        @Override
+        public void initialize(PluginContext context) {
+            throw new IllegalStateException("simulated initialization failure");
+        }
+
+        @Override
+        public List<CapabilityProvider> capabilityProviders() {
+            return List.of();
+        }
+
+        @Override
+        public List<PlannerProvider> plannerProviders() {
+            return List.of();
         }
 
         @Override

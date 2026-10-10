@@ -60,13 +60,16 @@ public final class NexoraObservability implements AutoCloseable {
     private final Histogram planDurationSeconds;
     private final Histogram stepDurationSeconds;
     private final Gauge activeExecutionsGauge;
+    private final Gauge readyGauge;
     private final AtomicInteger activeExecutions = new AtomicInteger();
+    private final NexoraEngine engine;
 
     private NexoraObservability(
             NexoraEngine engine,
             int maxExecutions,
             int maxTimelineEventsPerExecution) {
         Objects.requireNonNull(engine, "engine must not be null");
+        this.engine = engine;
         if (maxExecutions < 1) {
             throw new IllegalArgumentException("maxExecutions must be >= 1");
         }
@@ -126,6 +129,10 @@ public final class NexoraObservability implements AutoCloseable {
                 .name("nexora_active_executions")
                 .help("Current number of active executions.")
                 .register(registry);
+        this.readyGauge = Gauge.build()
+                .name("nexora_ready")
+                .help("1 if the engine's dependencies (persistence, plugins, executor) are all healthy per /health/ready, 0 otherwise.")
+                .register(registry);
 
         subscriptions.add(engine.subscribe(PlanStartedEvent.class, this::onPlanStarted));
         subscriptions.add(engine.subscribe(PlanCompletedEvent.class, this::onPlanCompleted));
@@ -153,6 +160,7 @@ public final class NexoraObservability implements AutoCloseable {
     }
 
     public String scrapePrometheus() {
+        readyGauge.set(engine.readiness().ready() ? 1 : 0);
         StringWriter writer = new StringWriter();
         try {
             TextFormat.write004(writer, registry.metricFamilySamples());
