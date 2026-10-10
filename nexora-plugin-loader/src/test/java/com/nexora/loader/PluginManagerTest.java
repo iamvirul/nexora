@@ -14,9 +14,17 @@ import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
 import com.nexora.spi.PluginInitializationException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -125,6 +133,26 @@ class PluginManagerTest {
         assertEquals(List.of("broken-plugin"), manager.nonActivePluginIds());
     }
 
+    @Test
+    void loadPluginReturnsIdDeclaredByJarAndLeavesPluginLoaded(@TempDir Path tempDir) throws IOException {
+        PluginManager manager = new PluginManager(
+                new DefaultCapabilityRegistry(),
+                new InProcessEventBus(Runnable::run)
+        );
+        Path jar = tempDir.resolve("plugin.jar");
+        try (OutputStream out = Files.newOutputStream(jar);
+             JarOutputStream jarOut = new JarOutputStream(out)) {
+            jarOut.putNextEntry(new JarEntry("META-INF/services/" + NexoraPlugin.class.getName()));
+            jarOut.write(JarFixturePlugin.class.getName().getBytes(StandardCharsets.UTF_8));
+            jarOut.closeEntry();
+        }
+
+        String pluginId = manager.loadPlugin(jar);
+
+        assertEquals(JarFixturePlugin.PLUGIN_ID, pluginId);
+        assertEquals(PluginLifecycle.LOADED, manager.getLifecycle(pluginId));
+    }
+
     private static Set<String> plannerIds(PluginManager manager) {
         return manager.registeredPlanners().stream()
                 .map(p -> p.descriptor().id())
@@ -174,6 +202,36 @@ class PluginManagerTest {
                     return new TestPlanner(plannerId);
                 }
             });
+        }
+
+        @Override
+        public void shutdown() {
+            // no-op
+        }
+    }
+
+    /** Public with a no-arg constructor so ServiceLoader can instantiate it from a jar descriptor. */
+    public static final class JarFixturePlugin implements NexoraPlugin {
+        static final String PLUGIN_ID = "jar-fixture-plugin";
+
+        @Override
+        public PluginDescriptor descriptor() {
+            return new PluginDescriptor(PLUGIN_ID, "1.0.0", PLUGIN_ID, List.of(), null);
+        }
+
+        @Override
+        public void initialize(PluginContext context) {
+            // no-op
+        }
+
+        @Override
+        public List<CapabilityProvider> capabilityProviders() {
+            return List.of();
+        }
+
+        @Override
+        public List<PlannerProvider> plannerProviders() {
+            return List.of();
         }
 
         @Override

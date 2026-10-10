@@ -49,9 +49,11 @@ public final class PluginManager {
 
     /**
      * Loads a plugin JAR and transitions it to LOADED state.
-     * Does not initialize — call activatePlugin() after loading.
+     * Does not initialize — call activatePlugin() with the returned id after loading.
+     *
+     * @return the plugin id declared by the JAR's {@link NexoraPlugin#descriptor()}
      */
-    public void loadPlugin(Path pluginJar) {
+    public String loadPlugin(Path pluginJar) {
         Objects.requireNonNull(pluginJar, "pluginJar must not be null");
         log.info("Loading plugin from jar={}", pluginJar);
 
@@ -83,6 +85,7 @@ public final class PluginManager {
         PluginState state = new PluginState(plugin, classLoader, PluginLifecycle.LOADED);
         plugins.put(pluginId, state);
         log.info("Plugin loaded id={} version={}", pluginId, plugin.descriptor().version());
+        return pluginId;
     }
 
     /**
