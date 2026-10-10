@@ -361,6 +361,11 @@ public final class NexoraEngine implements AutoCloseable {
             return this;
         }
 
+        /**
+         * Loads and activates a plugin JAR during {@link #build()}. Jar plugins activate after all
+         * {@link #withPlugin(NexoraPlugin) inline plugins}, in the order added, so a jar plugin's
+         * required plugins must be inline or added earlier. Activation failure fails {@code build()}.
+         */
         public Builder withPluginJar(Path jar) {
             pluginJars.add(Objects.requireNonNull(jar));
             return this;
@@ -388,7 +393,7 @@ public final class NexoraEngine implements AutoCloseable {
             }
 
             for (Path jar : pluginJars) {
-                pluginManager.loadPlugin(jar);
+                pluginManager.activatePlugin(pluginManager.loadPlugin(jar));
             }
 
             // Retry
