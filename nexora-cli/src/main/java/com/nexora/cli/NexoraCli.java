@@ -24,6 +24,7 @@ import java.util.concurrent.Callable;
                 DemoCommand.class,
                 DlqCommand.class,
                 ScheduleCommand.class,
+                CancelCommand.class,
                 CommandLine.HelpCommand.class
         }
 )

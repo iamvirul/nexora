@@ -24,6 +24,7 @@ nexora [--config <file>] <command>
 | `nexora schedule add` | Register a recurring cron-based execution |
 | `nexora schedule list` | List all schedules and their next fire time |
 | `nexora schedule remove <id>` | Cancel a schedule immediately |
+| `nexora cancel <executionId>` | Cancel an execution running in the observe server |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 

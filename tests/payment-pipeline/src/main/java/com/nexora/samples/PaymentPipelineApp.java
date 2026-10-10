@@ -2,10 +2,13 @@ package com.nexora.samples;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.nexora.api.ExecutionNotFoundException;
+import com.nexora.api.ExecutionNotOwnedException;
 import com.nexora.api.NexoraEngine;
 import com.nexora.api.observability.NexoraObservability;
 import com.nexora.core.capability.CapabilityContract;
 import com.nexora.core.capability.CapabilityResult;
+import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.intent.Intent;
 import com.nexora.event.ScheduledExecutionFiredEvent;
 import com.nexora.persistence.MissedFirePolicy;
@@ -39,7 +42,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -69,6 +75,8 @@ import java.util.concurrent.atomic.AtomicLong;
  *   Goal:    process payment
  *   Context: {"requestId":"REQ-X","amount":450.00,"userId":"USR-99"}
  *   Flags:   "forceFailure":true | "forceBlockedUser":true | "forceVelocityFail":true
+ *            "slowUpstreamMs":30000 makes enrich_user_data wait, so the run can be cancelled
+ *            from the UI (Cancel button) or with DELETE /api/executions/{executionId}
  */
 public class PaymentPipelineApp {
 
@@ -138,9 +146,39 @@ public class PaymentPipelineApp {
                 return;
             }
             Map<String, Object> ctx = req.context() == null ? Map.of() : req.context();
-            engine.execute(req.goal(), ctx)
+            ExecutionHandle handle = engine.submit(new Intent(req.goal(), ctx));
+            handle.result()
                     .whenComplete((r, ex) -> { if (ex != null) System.err.println("Execution error: " + ex.getMessage()); });
-            sendJson(exchange, 202, Map.of("accepted", true, "goal", req.goal()));
+            sendJson(exchange, 202, Map.of("accepted", true, "goal", req.goal(), "executionId", handle.executionId()));
+        });
+
+        // Cancel a running execution: 200 cancelled, 404 unknown, 409 already finished
+        http.createContext("/api/executions/", exchange -> {
+            String id = exchange.getRequestURI().getPath().substring("/api/executions/".length());
+            if (id.isBlank() || id.contains("/")) { sendText(exchange, 404, "Not Found"); return; }
+            if (!"DELETE".equalsIgnoreCase(exchange.getRequestMethod())) { sendText(exchange, 405, "Method Not Allowed"); return; }
+            try {
+                boolean cancelled = engine.cancel(id).get(10, TimeUnit.SECONDS);
+                if (cancelled) {
+                    System.out.printf("%n  >>> CANCEL REQUESTED  executionId=%s%n", id);
+                    sendJson(exchange, 200, Map.of("cancelled", true, "executionId", id));
+                } else {
+                    sendJson(exchange, 409, Map.of("error", "Execution has already finished", "executionId", id));
+                }
+            } catch (ExecutionException e) {
+                if (e.getCause() instanceof ExecutionNotFoundException) {
+                    sendJson(exchange, 404, Map.of("error", "Execution not found", "executionId", id));
+                } else if (e.getCause() instanceof ExecutionNotOwnedException) {
+                    sendJson(exchange, 409, Map.of("error", "Execution is not running on this engine instance", "executionId", id));
+                } else {
+                    sendJson(exchange, 500, Map.of("error", "Cancel request failed", "executionId", id));
+                }
+            } catch (TimeoutException e) {
+                sendJson(exchange, 503, Map.of("error", "Cancel request timed out", "executionId", id));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                sendJson(exchange, 503, Map.of("error", "Cancel request interrupted", "executionId", id));
+            }
         });
 
         http.createContext("/api/dead-letters/", exchange -> {
@@ -155,9 +193,9 @@ public class PaymentPipelineApp {
                 if (dl.reviewState() != DeadLetterReviewState.PENDING) {
                     sendJson(exchange, 409, Map.of("error", "Not in PENDING state")); return;
                 }
-                engine.execute(dl.goal(), dl.context());
+                ExecutionHandle replay = engine.submit(new Intent(dl.goal(), dl.context()));
                 executionStore.updateDeadLetterState(dlId, DeadLetterReviewState.REPLAYED, null);
-                sendJson(exchange, 202, Map.of("accepted", true, "deadLetterId", dlId));
+                sendJson(exchange, 202, Map.of("accepted", true, "deadLetterId", dlId, "executionId", replay.executionId()));
                 return;
             }
             if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && remainder.endsWith("/resolve")) {
@@ -309,6 +347,7 @@ public class PaymentPipelineApp {
         System.out.println("  7  Webhook Callback  dispatch webhook on execution completion with HMAC signature");
         System.out.println("  8  DLQ Replay        replays a dead-lettered execution from the DLQ");
         System.out.println("  9  Cron Schedule     registers a recurring payment reconciliation job (every minute)");
+        System.out.println(" 10  Cancellation      slow profile lookup is cancelled mid-run, saga compensates finished steps");
         System.out.println();
         System.out.println("Firing test scenarios...");
         System.out.println();
@@ -430,6 +469,22 @@ public class PaymentPipelineApp {
         System.out.printf("  DELETE http://localhost:8090/api/schedules/%s  — cancel it%n", scheduleHandle.id());
         System.out.printf("  (Scheduled executions will appear in the UI as they fire)%n");
 
+        // Scenario 10 — cancellation: the profile lookup hangs, the run is cancelled after 1s.
+        // validate_request, check_velocity and screen_sanctions finish first and get compensated;
+        // run_fraud_check and everything after it never start.
+        System.out.println();
+        System.out.println("  [10/10] Cancellation — slow profile lookup (30s), cancelled after 1s");
+        ExecutionHandle slow = engine.submit(new Intent("process payment", Map.of(
+                "requestId", "REQ-CANCEL",
+                "amount", 120.00,
+                "userId", "USR-SLOW",
+                "slowUpstreamMs", 30_000)));
+        sleep(1000);
+        System.out.printf("  Cancelling executionId=%s -> accepted=%s%n",
+                slow.executionId(), engine.cancel(slow.executionId()).join());
+        slow.result().thenAccept(r -> System.out.printf("  Cancelled run finished with status=%s%n", r.status()));
+        System.out.println("  Try it yourself: press \"Slow payment\" then Run in the UI, and Cancel it from the list.");
+
         System.out.println();
         System.out.println("Ready. Open http://localhost:9464/ in your browser.");
         System.out.println("Submit more executions via the form. Press Ctrl+C to stop.");
@@ -457,7 +512,8 @@ public class PaymentPipelineApp {
                 .withStepDefinition(new StepDefinition(
                         "enrich_user_data", "enrich_user_data",
                         g -> g.contains("process"),
-                        Map.of("userId", InputBinding.fromContext("intent.context.userId")),
+                        Map.of("userId",         InputBinding.fromContext("intent.context.userId"),
+                               "slowUpstreamMs", InputBinding.fromContext("intent.context.slowUpstreamMs")),
                         "userProfile", Set.of(), null, null,
                         "enrich_user_data_compensate"))
                 // step 3 - starts immediately, parallel with steps 1-2
@@ -530,9 +586,21 @@ public class PaymentPipelineApp {
                         return CapabilityResult.success(Map.of("valid", true, "requestId", id));
                     }),
 
+                    // slowUpstreamMs simulates a hung profile service; it honours interrupts so
+                    // the run can be cancelled while this step is in flight.
                     cap("enrich_user_data", CapabilityContract.none(), req -> {
-                        sleep(60);
                         String userId = String.valueOf(req.inputs().get("userId"));
+                        long delayMs = req.inputs().get("slowUpstreamMs") instanceof Number n ? n.longValue() : 60;
+                        if (delayMs > 60) {
+                            System.out.printf("  [enrich_user_data] profile service slow for %s, waiting %dms%n", userId, delayMs);
+                        }
+                        try {
+                            Thread.sleep(delayMs);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            System.out.println("  [enrich_user_data] interrupted by cancel for " + userId);
+                            return CapabilityResult.failure("INTERRUPTED", "Profile lookup cancelled");
+                        }
                         System.out.println("  [enrich_user_data] profile loaded for " + userId);
                         return CapabilityResult.success(Map.of(
                                 "userId",   userId,

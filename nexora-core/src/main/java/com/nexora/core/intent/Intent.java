@@ -47,7 +47,7 @@ public class Intent {
         this.deadline = deadline;
         this.webhookUrl = (webhookUrl == null || webhookUrl.trim().isEmpty()) ? null : webhookUrl;
         this.webhookEvents = webhookEvents == null || webhookEvents.isEmpty()
-                ? List.of(ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.TIMED_OUT)
+                ? List.of(ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.TIMED_OUT, ExecutionStatus.CANCELLED)
                 : List.copyOf(webhookEvents);
     }
 

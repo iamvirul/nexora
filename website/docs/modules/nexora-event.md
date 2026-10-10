@@ -19,6 +19,8 @@ All events extend `ExecutionEvent`.
 | `PlanStartedEvent` | Engine begins executing a plan |
 | `PlanCompletedEvent` | All steps finished successfully |
 | `PlanFailedEvent` | One or more steps failed and execution halted |
+| `PlanTimedOutEvent` | The plan deadline expired before all steps finished |
+| `PlanCancelledEvent` | The execution was cancelled and its in-flight steps have drained |
 | `PlanAmendedEvent` | A step returned an amendment (add/skip/modify) |
 
 ### Step lifecycle

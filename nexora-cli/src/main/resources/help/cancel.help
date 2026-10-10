@@ -1,0 +1,23 @@
+Cancel an execution running inside a `nexora observe` server.
+
+  Steps that have not started are never started, running steps are
+  interrupted, and the execution finishes as CANCELLED. If saga is
+  enabled, completed steps are compensated.
+
+  This command talks to the observe server over HTTP
+  (DELETE /api/executions/{id}) because executions live in the memory
+  of the process that started them.
+
+  Exit codes
+  ──────────
+  0  Cancellation requested (also when the execution was already being cancelled)
+  1  Not found, already finished, or the server could not be reached
+  2  Invalid arguments
+
+  Examples
+  ────────
+  Cancel an execution on the local observe server:
+    nexora cancel 4f3a1c2d-...
+
+  Cancel on a remote observe server:
+    nexora cancel 4f3a1c2d-... --server http://nexora.internal:9464

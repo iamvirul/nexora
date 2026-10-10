@@ -6,12 +6,21 @@ import com.nexora.executor.ExecutionInterceptor;
 import com.nexora.executor.InterceptorChain;
 
 import java.time.Duration;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+/**
+ * Enforces a per-capability timeout by running the rest of the chain on {@code executor} and
+ * waiting at most the timeout for it.
+ *
+ * <p>Uses a {@link FutureTask} rather than a {@code CompletableFuture} because only
+ * {@code FutureTask.cancel(true)} actually interrupts the worker thread. On timeout, or when the
+ * waiting step thread is itself interrupted (execution cancelled), the capability is interrupted
+ * instead of being left running in the background.
+ */
 public final class TimeoutInterceptor implements ExecutionInterceptor {
 
     private final Executor executor;
@@ -29,18 +38,19 @@ public final class TimeoutInterceptor implements ExecutionInterceptor {
             return chain.proceed(request);
         }
 
-        CompletableFuture<CapabilityResult> future = CompletableFuture
-                .supplyAsync(() -> chain.proceed(request), executor);
+        FutureTask<CapabilityResult> task = new FutureTask<>(() -> chain.proceed(request));
+        executor.execute(task);
 
         try {
-            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            return task.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
-            future.cancel(true);
+            task.cancel(true);
             return CapabilityResult.failure(
                     "EXECUTION_TIMEOUT",
                     "Capability " + request.capabilityId() + " exceeded timeout of " + timeout
             );
         } catch (InterruptedException e) {
+            task.cancel(true);
             Thread.currentThread().interrupt();
             return CapabilityResult.failure("INTERRUPTED", "Execution was interrupted");
         } catch (ExecutionException e) {

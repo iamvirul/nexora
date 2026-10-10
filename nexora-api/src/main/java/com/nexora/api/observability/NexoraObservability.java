@@ -2,6 +2,7 @@ package com.nexora.api.observability;
 
 import com.nexora.api.NexoraEngine;
 import com.nexora.event.PlanAmendedEvent;
+import com.nexora.event.PlanCancelledEvent;
 import com.nexora.event.PlanCompletedEvent;
 import com.nexora.event.PlanFailedEvent;
 import com.nexora.event.PlanStartedEvent;
@@ -53,6 +54,7 @@ public final class NexoraObservability implements AutoCloseable {
     private final Counter planStartedTotal;
     private final Counter planCompletedTotal;
     private final Counter planFailedTotal;
+    private final Counter planCancelledTotal;
     private final Counter planAmendmentsTotal;
     private final Counter stepStartedTotal;
     private final Counter stepCompletedTotal;
@@ -92,6 +94,11 @@ public final class NexoraObservability implements AutoCloseable {
         this.planFailedTotal = Counter.build()
                 .name("nexora_plan_failed_total")
                 .help("Total number of execution plans that failed.")
+                .register(registry);
+        // Separate from failures: a cancel is a deliberate stop and must not trip failure-rate alerts.
+        this.planCancelledTotal = Counter.build()
+                .name("nexora_plan_cancelled_total")
+                .help("Total number of execution plans cancelled.")
                 .register(registry);
         this.planAmendmentsTotal = Counter.build()
                 .name("nexora_plan_amendments_total")
@@ -138,6 +145,7 @@ public final class NexoraObservability implements AutoCloseable {
         subscriptions.add(engine.subscribe(PlanCompletedEvent.class, this::onPlanCompleted));
         subscriptions.add(engine.subscribe(PlanFailedEvent.class, this::onPlanFailed));
         subscriptions.add(engine.subscribe(PlanTimedOutEvent.class, this::onPlanTimedOut));
+        subscriptions.add(engine.subscribe(PlanCancelledEvent.class, this::onPlanCancelled));
         subscriptions.add(engine.subscribe(PlanAmendedEvent.class, this::onPlanAmended));
         subscriptions.add(engine.subscribe(StepStartedEvent.class, this::onStepStarted));
         subscriptions.add(engine.subscribe(StepCompletedEvent.class, this::onStepCompleted));
@@ -233,6 +241,14 @@ public final class NexoraObservability implements AutoCloseable {
         planDurationSeconds.labels("timed_out").observe(seconds(event.elapsed().toNanos()));
         activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
         processTracker.onPlanTimedOut(event);
+        broadcastSnapshot();
+    }
+
+    private void onPlanCancelled(PlanCancelledEvent event) {
+        planCancelledTotal.inc();
+        planDurationSeconds.labels("cancelled").observe(seconds(event.elapsed().toNanos()));
+        activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
+        processTracker.onPlanCancelled(event);
         broadcastSnapshot();
     }
 
@@ -387,6 +403,15 @@ public final class NexoraObservability implements AutoCloseable {
             execution.appendTimeline(event.occurredAt().toEpochMilli(), "plan_timed_out", "Execution timed out (exceeded deadline)");
         }
 
+        void onPlanCancelled(PlanCancelledEvent event) {
+            MutableExecution execution = executions.get(event.executionId());
+            if (execution == null) return;
+            if (execution.markCancelled(event.occurredAt().toEpochMilli())) {
+                activeExecutions.updateAndGet(v -> Math.max(0, v - 1));
+            }
+            execution.appendTimeline(event.occurredAt().toEpochMilli(), "plan_cancelled", "Execution cancelled");
+        }
+
         void onPlanAmended(PlanAmendedEvent event) {
             MutableExecution execution = executions.get(event.executionId());
             if (execution == null) return;
@@ -457,6 +482,7 @@ public final class NexoraObservability implements AutoCloseable {
         private static final String STATUS_COMPLETED = "COMPLETED";
         private static final String STATUS_FAILED = "FAILED";
         private static final String STATUS_TIMED_OUT = "TIMED_OUT";
+        private static final String STATUS_CANCELLED = "CANCELLED";
 
         private final String executionId;
         private final Deque<TimelineSnapshot> timeline = new ConcurrentLinkedDeque<>();
@@ -530,6 +556,13 @@ public final class NexoraObservability implements AutoCloseable {
         private synchronized boolean markTimedOut(long finishedAtMs) {
             if (!STATUS_RUNNING.equals(status)) return false;
             this.status = STATUS_TIMED_OUT;
+            this.finishedAtMs = finishedAtMs;
+            return true;
+        }
+
+        private synchronized boolean markCancelled(long finishedAtMs) {
+            if (!STATUS_RUNNING.equals(status)) return false;
+            this.status = STATUS_CANCELLED;
             this.finishedAtMs = finishedAtMs;
             return true;
         }

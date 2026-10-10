@@ -96,7 +96,7 @@ return CapabilityResult.success(output, List.of(
 ```java
 ExecutionResult result = engine.execute(intent).join();
 
-result.status();                       // COMPLETED | FAILED | PARTIAL
+result.status();                       // COMPLETED | FAILED | TIMED_OUT | CANCELLED
 result.stepResults();                  // List<StepResult>
 result.stepResults().stream()
       .filter(s -> s.status() == StepStatus.FAILED)

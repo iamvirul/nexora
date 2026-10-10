@@ -5,6 +5,7 @@ public enum ExecutionState {
     COMPLETED,
     FAILED,
     TIMED_OUT,
+    CANCELLED,
     COMPENSATING,
     COMPENSATED
 }
