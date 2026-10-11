@@ -507,6 +507,11 @@ public class ObserveCommand implements Callable<Integer> {
                 sendText(exchange, 404, "Not Found");
                 return;
             }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.getResponseHeaders().set("Allow", "GET");
+                sendText(exchange, 405, "Method Not Allowed");
+                return;
+            }
             send(exchange, 200, "text/html; charset=utf-8", indexHtml);
         });
     }

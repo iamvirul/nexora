@@ -106,7 +106,7 @@ paths:
           description: One or more execution states, comma-separated, case-insensitive.
           schema:
             type: string
-            examples: [FAILED,CANCELLED]
+            examples: ['FAILED,CANCELLED']
         - name: goal
           in: query
           description: Case-insensitive substring of the goal.
@@ -779,6 +779,8 @@ paths:
                   value: <!DOCTYPE html><html>...</html>
         '404':
           $ref: '#/components/responses/NotFoundText'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
 
   /openapi.yaml:
     get:
