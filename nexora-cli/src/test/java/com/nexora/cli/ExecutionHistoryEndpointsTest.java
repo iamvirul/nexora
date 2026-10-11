@@ -125,6 +125,7 @@ class ExecutionHistoryEndpointsTest {
                 "from=yesterday",
                 "from=2026-10-01T11:00:00Z&to=2026-10-01T10:00:00Z",
                 "cursor=not-a-cursor",
+                "limit=", "cursor=", "status=", "from=",
                 "goal=" + "x".repeat(201)
         };
         for (String query : invalid) {

@@ -49,10 +49,12 @@ record ExecutionHistoryQuery(ExecutionFilter filter, int pageSize) {
         }
         for (String pair : rawQuery.split("&")) {
             String[] kv = pair.split("=", 2);
-            if (kv.length == 2 && !kv[1].isEmpty()) {
-                params.put(URLDecoder.decode(kv[0], StandardCharsets.UTF_8),
-                        URLDecoder.decode(kv[1], StandardCharsets.UTF_8));
+            if (kv[0].isEmpty()) {
+                continue;
             }
+            // Keep empty values ("?limit=") so they are validated instead of silently defaulted.
+            params.put(URLDecoder.decode(kv[0], StandardCharsets.UTF_8),
+                    kv.length == 2 ? URLDecoder.decode(kv[1], StandardCharsets.UTF_8) : "");
         }
         return params;
     }
