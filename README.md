@@ -55,6 +55,14 @@ mvn install -DskipTests
 
 The CLI fat JAR ends up at `nexora-cli/target/nexora.jar`.
 
+Java code is formatted with [palantir-java-format](https://github.com/palantir/palantir-java-format) through Spotless. `mvn verify` (and CI) fails on unformatted code; fix it with:
+
+```bash
+mvn spotless:apply
+```
+
+In IntelliJ, install the **palantir-java-format** plugin and enable it in Settings > palantir-java-format, so Reformat Code and format-on-save produce the same result.
+
 ## Try it immediately
 
 No config file needed. The `demo` command showcases all three differentiating features in a single run:

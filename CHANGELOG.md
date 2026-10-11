@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Health check endpoints** - `GET /health/live` (liveness), `GET /health/ready` (readiness: persistence, plugins, executor; `503` with a per-check breakdown when any is DOWN), and `GET /health` (summary with version, checks, and capability circuit states). All three are unauthenticated. New `nexora_ready` gauge and `NexoraNotReady` alert ([#31](https://github.com/iamvirul/nexora/issues/31))
 
 ### Changed
+- **Code formatting enforced** - All Java code is formatted with palantir-java-format via the Spotless Maven plugin. `mvn verify` fails on unformatted code; run `mvn spotless:apply` to fix
 - **`/health/ready` semantics** - Readiness now reflects the engine's own dependencies instead of capability circuit state. An OPEN circuit no longer returns `503`; circuit states moved to the `capabilities` field of `GET /health` ([#31](https://github.com/iamvirul/nexora/issues/31))
 - **`PluginManager.loadPlugin(Path)` returns the plugin id** - Previously `void`. Source compatible; code compiled against an older `nexora-plugin-loader` must be recompiled ([#140](https://github.com/iamvirul/nexora/issues/140))
 
