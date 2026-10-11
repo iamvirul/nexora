@@ -34,6 +34,11 @@
             <artifactId>jackson-databind</artifactId>
             </dependency>
         <dependency>
+            <!-- ISO-8601 Instants in the execution history API; picked up by findAndRegisterModules() -->
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.java-websocket</groupId>
             <artifactId>Java-WebSocket</artifactId>
             </dependency>
