@@ -121,6 +121,17 @@ Pending steps never start and running steps are interrupted. Unknown ids fail wi
 
 ---
 
+## Replaying an execution
+
+```java
+ExecutionHandle replay = engine.replay(failedExecutionId); // new id, same goal and context
+replay.result().join();
+```
+
+Allowed for `FAILED`, `TIMED_OUT`, `CANCELLED` and `COMPENSATED` executions. Steps that completed reuse their idempotency keys unless the original was compensated. See [Execution Replay](../concepts/execution-replay).
+
+---
+
 ## Cron scheduling
 
 Requires a persistence store. Returns a `ScheduledExecution` handle with `id()`, `nextFireTime()`, and `cancel()`.

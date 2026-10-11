@@ -25,6 +25,7 @@ nexora [--config <file>] <command>
 | `nexora schedule list` | List all schedules and their next fire time |
 | `nexora schedule remove <id>` | Cancel a schedule immediately |
 | `nexora cancel <executionId>` | Cancel an execution running in the observe server |
+| `nexora replay <executionId>` | Replay a failed, timed-out, cancelled or compensated execution through the observe server |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 

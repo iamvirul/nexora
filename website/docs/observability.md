@@ -30,6 +30,7 @@ This exposes four endpoints with no external dependencies:
 | `GET /api/executions` | Execution history, newest first, cursor-paginated (see [Execution History API](#execution-history-api)); filter by `status`, `goal`, `from`, `to`, `limit` |
 | `GET /api/executions/{id}` | One execution with its step records (`404` if unknown) |
 | `DELETE /api/executions/{id}` | Cancel a running execution (`200` cancelled, `404` unknown, `409` already finished). See [Execution Cancellation](concepts/execution-cancellation) |
+| `POST /api/executions/{id}/replay` | Replay a failed, timed-out, cancelled or compensated execution (`202` with the new `executionId`, `409` otherwise). See [Execution Replay](concepts/execution-replay) |
 | `GET /api/schedules` | List all cron schedules |
 | `POST /api/schedules` | Register a new cron schedule |
 | `DELETE /api/schedules/{id}` | Cancel a cron schedule |
