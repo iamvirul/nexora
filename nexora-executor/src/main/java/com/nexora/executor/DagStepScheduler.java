@@ -21,9 +21,6 @@ import com.nexora.event.StepFailedEvent;
 import com.nexora.event.StepStartedEvent;
 import com.nexora.retry.RetryPolicyRegistry;
 import com.nexora.spi.CapabilityRegistry;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -32,12 +29,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Schedules plan steps as a DAG, executing independent steps in parallel.
@@ -96,9 +94,7 @@ public final class DagStepScheduler {
      * all steps finish.
      */
     public record ScheduleSession(
-            CompletableFuture<ExecutionResult> future,
-            Supplier<List<StepResult>> partialResults
-    ) {}
+            CompletableFuture<ExecutionResult> future, Supplier<List<StepResult>> partialResults) {}
 
     /** Schedules the plan with no way to stop it early. */
     public CompletableFuture<ExecutionResult> schedule(Plan plan, ExecutionContext ctx) {
@@ -164,41 +160,46 @@ public final class DagStepScheduler {
         CompletableFuture<Void> prerequisite = buildPrerequisite(step, futures);
 
         CompletableFuture<StepResult> stepFuture = prerequisite
-                .thenApplyAsync(ignored -> {
-                    // Registering and checking the halt is one atomic step, so a cancel either
-                    // sees this thread (and interrupts it) or the step never starts.
-                    if (!halt.enterStep()) {
-                        return suppressedResult(step, halt.reason().orElseThrow());
-                    }
-                    try {
-                        if (skippedSteps.contains(step.id())) {
-                            log.info("Step skipped by amendment id={}", step.id());
-                            return new StepResult(step.id(),
-                                    CapabilityResult.skipped("Step skipped by plan amendment"));
-                        }
-                        if (step.condition() != null && !step.condition().evaluate(ctx)) {
-                            log.info("Step skipped by condition id={}", step.id());
-                            return new StepResult(step.id(),
-                                    CapabilityResult.skipped("Step condition evaluated to false"));
-                        }
-                        return executeStep(step, ctx);
-                    } finally {
-                        halt.exitStep();
-                    }
-                }, executor)
+                .thenApplyAsync(
+                        ignored -> {
+                            // Registering and checking the halt is one atomic step, so a cancel either
+                            // sees this thread (and interrupts it) or the step never starts.
+                            if (!halt.enterStep()) {
+                                return suppressedResult(step, halt.reason().orElseThrow());
+                            }
+                            try {
+                                if (skippedSteps.contains(step.id())) {
+                                    log.info("Step skipped by amendment id={}", step.id());
+                                    return new StepResult(
+                                            step.id(), CapabilityResult.skipped("Step skipped by plan amendment"));
+                                }
+                                if (step.condition() != null
+                                        && !step.condition().evaluate(ctx)) {
+                                    log.info("Step skipped by condition id={}", step.id());
+                                    return new StepResult(
+                                            step.id(), CapabilityResult.skipped("Step condition evaluated to false"));
+                                }
+                                return executeStep(step, ctx);
+                            } finally {
+                                halt.exitStep();
+                            }
+                        },
+                        executor)
                 .handle((result, ex) -> {
                     if (ex != null) {
                         Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
-                        log.error("Step threw unexpectedly id={} capability={}",
-                                step.id(), step.capabilityId(), cause);
+                        log.error("Step threw unexpectedly id={} capability={}", step.id(), step.capabilityId(), cause);
                         eventBus.publish(new StepFailedEvent(
-                                ctx.getExecutionId(), step.id(), step.capabilityId(),
+                                ctx.getExecutionId(),
+                                step.id(),
+                                step.capabilityId(),
                                 ctx.getTraceContext().traceId(),
-                                "INTERNAL_ERROR", cause.getMessage(),
-                                java.time.Duration.ZERO, java.time.Instant.now()
-                        ));
-                        return new StepResult(step.id(),
-                                CapabilityResult.failure("INTERNAL_ERROR", cause.getMessage()));
+                                "INTERNAL_ERROR",
+                                cause.getMessage(),
+                                java.time.Duration.ZERO,
+                                java.time.Instant.now()));
+                        return new StepResult(
+                                step.id(), CapabilityResult.failure("INTERNAL_ERROR", cause.getMessage()));
                     }
                     return result;
                 })
@@ -206,8 +207,15 @@ public final class DagStepScheduler {
                     if (result != null) {
                         completedResults.put(step.id(), result);
                         // Process amendments before decrementing — keeps pending count consistent
-                        applyAmendments(result.capabilityResult().amendments(),
-                                futures, completedResults, skippedSteps, pending, onStepDone, ctx, halt);
+                        applyAmendments(
+                                result.capabilityResult().amendments(),
+                                futures,
+                                completedResults,
+                                skippedSteps,
+                                pending,
+                                onStepDone,
+                                ctx,
+                                halt);
                     }
                     onStepDone.run();
                 });
@@ -229,29 +237,40 @@ public final class DagStepScheduler {
             switch (amendment) {
                 case AddStepAmendment add -> {
                     if (futures.containsKey(add.step().id())) {
-                        log.warn("AddStepAmendment ignored — step id already exists: {}", add.step().id());
+                        log.warn(
+                                "AddStepAmendment ignored — step id already exists: {}",
+                                add.step().id());
                         continue;
                     }
                     log.info("Plan amendment: adding step id={}", add.step().id());
                     pending.incrementAndGet();
                     eventBus.publish(new PlanAmendedEvent(
-                            ctx.getExecutionId(), ctx.getTraceContext().traceId(),
-                            "ADD_STEP", add.step().id(), Instant.now()));
+                            ctx.getExecutionId(),
+                            ctx.getTraceContext().traceId(),
+                            "ADD_STEP",
+                            add.step().id(),
+                            Instant.now()));
                     submitStep(add.step(), futures, completedResults, skippedSteps, pending, onStepDone, ctx, halt);
                 }
                 case SkipStepAmendment skip -> {
                     log.info("Plan amendment: skipping step id={}", skip.stepId());
                     skippedSteps.add(skip.stepId());
                     eventBus.publish(new PlanAmendedEvent(
-                            ctx.getExecutionId(), ctx.getTraceContext().traceId(),
-                            "SKIP_STEP", skip.stepId(), Instant.now()));
+                            ctx.getExecutionId(),
+                            ctx.getTraceContext().traceId(),
+                            "SKIP_STEP",
+                            skip.stepId(),
+                            Instant.now()));
                 }
                 case ModifyInputAmendment modify -> {
                     log.info("Plan amendment: modifying input stepId={} key={}", modify.stepId(), modify.inputKey());
                     ctx.putInputOverride(modify.stepId(), modify.inputKey(), modify.value());
                     eventBus.publish(new PlanAmendedEvent(
-                            ctx.getExecutionId(), ctx.getTraceContext().traceId(),
-                            "MODIFY_INPUT", modify.stepId(), Instant.now()));
+                            ctx.getExecutionId(),
+                            ctx.getTraceContext().traceId(),
+                            "MODIFY_INPUT",
+                            modify.stepId(),
+                            Instant.now()));
                 }
             }
         }
@@ -260,14 +279,18 @@ public final class DagStepScheduler {
     private static StepResult suppressedResult(Step step, HaltSignal.Reason reason) {
         log.debug("Step suppressed by halt id={} reason={}", step.id(), reason);
         return switch (reason) {
-            case DEADLINE -> new StepResult(step.id(),
-                    CapabilityResult.failure("TIMED_OUT", "Execution deadline expired before step started"));
-            case CANCELLED -> new StepResult(step.id(),
-                    CapabilityResult.failure("CANCELLED", "Execution cancelled before step started"));
+            case DEADLINE ->
+                new StepResult(
+                        step.id(),
+                        CapabilityResult.failure("TIMED_OUT", "Execution deadline expired before step started"));
+            case CANCELLED ->
+                new StepResult(
+                        step.id(), CapabilityResult.failure("CANCELLED", "Execution cancelled before step started"));
         };
     }
 
-    private static ExecutionResult haltedResult(HaltSignal.Reason reason, String executionId, List<StepResult> results) {
+    private static ExecutionResult haltedResult(
+            HaltSignal.Reason reason, String executionId, List<StepResult> results) {
         return switch (reason) {
             case DEADLINE -> ExecutionResult.timedOut(executionId, results);
             case CANCELLED -> ExecutionResult.cancelled(executionId, results);
@@ -275,13 +298,18 @@ public final class DagStepScheduler {
     }
 
     private StepResult executeStep(Step step, ExecutionContext ctx) {
-        log.debug("Starting step id={} capability={} executionId={}",
-                step.id(), step.capabilityId(), ctx.getExecutionId());
+        log.debug(
+                "Starting step id={} capability={} executionId={}",
+                step.id(),
+                step.capabilityId(),
+                ctx.getExecutionId());
 
         Map<String, Object> resolvedInputs = resolveInputs(step, ctx);
 
-        Duration effectiveTimeout = step.timeout() != null ? step.timeout()
-                : capabilityRegistry.findDescriptor(step.capabilityId())
+        Duration effectiveTimeout = step.timeout() != null
+                ? step.timeout()
+                : capabilityRegistry
+                        .findDescriptor(step.capabilityId())
                         .filter(d -> d.contract().hasLatencySla())
                         .map(d -> d.contract().expectedP99Latency())
                         .orElse(null);
@@ -289,20 +317,21 @@ public final class DagStepScheduler {
         CapabilityRequest request = new CapabilityRequest(
                 step.capabilityId(),
                 step.id(),
-                UUID.randomUUID().toString(),
+                ctx.idempotencyKeyFor(step.id()),
                 resolvedInputs,
                 ctx.getTraceContext().childSpan(),
                 effectiveTimeout,
                 ctx.getExecutionId(),
-                0
-        );
+                0);
 
         eventBus.publish(new StepStartedEvent(
-                ctx.getExecutionId(), step.id(), step.capabilityId(),
+                ctx.getExecutionId(),
+                step.id(),
+                step.capabilityId(),
                 request.idempotencyKey(),
-                request.traceContext().traceId(), request.traceContext().spanId(),
-                Instant.now()
-        ));
+                request.traceContext().traceId(),
+                request.traceContext().spanId(),
+                Instant.now()));
 
         Instant start = Instant.now();
         CapabilityResult result = pipeline.execute(request);
@@ -315,19 +344,24 @@ public final class DagStepScheduler {
             ctx.recordStepOutput(step.id(), result.output());
 
             eventBus.publish(new StepCompletedEvent(
-                    ctx.getExecutionId(), step.id(), step.capabilityId(),
-                    request.traceContext().traceId(), elapsed, Instant.now()
-            ));
+                    ctx.getExecutionId(),
+                    step.id(),
+                    step.capabilityId(),
+                    request.traceContext().traceId(),
+                    elapsed,
+                    Instant.now()));
             log.debug("Step completed id={} elapsed={}ms", step.id(), elapsed.toMillis());
         } else {
             eventBus.publish(new StepFailedEvent(
-                    ctx.getExecutionId(), step.id(), step.capabilityId(),
+                    ctx.getExecutionId(),
+                    step.id(),
+                    step.capabilityId(),
                     request.traceContext().traceId(),
-                    result.failureCode(), result.failureMessage(),
-                    elapsed, Instant.now()
-            ));
-            log.warn("Step failed id={} code={} message={}",
-                    step.id(), result.failureCode(), result.failureMessage());
+                    result.failureCode(),
+                    result.failureMessage(),
+                    elapsed,
+                    Instant.now()));
+            log.warn("Step failed id={} code={} message={}", step.id(), result.failureCode(), result.failureMessage());
         }
 
         return new StepResult(step.id(), result);
@@ -339,17 +373,18 @@ public final class DagStepScheduler {
         Map<String, Object> overrides = ctx.getInputOverrides(step.id());
         for (Map.Entry<String, InputBinding> entry : step.inputs().entrySet()) {
             String key = entry.getKey();
-            resolved.put(key, overrides.containsKey(key)
-                    ? overrides.get(key)
-                    : entry.getValue().resolve(ctx));
+            resolved.put(
+                    key,
+                    overrides.containsKey(key)
+                            ? overrides.get(key)
+                            : entry.getValue().resolve(ctx));
         }
         overrides.forEach(resolved::putIfAbsent);
         return resolved;
     }
 
     private CompletableFuture<Void> buildPrerequisite(
-            Step step,
-            ConcurrentHashMap<String, CompletableFuture<StepResult>> futures) {
+            Step step, ConcurrentHashMap<String, CompletableFuture<StepResult>> futures) {
 
         if (step.dependsOn().isEmpty()) {
             return CompletableFuture.completedFuture(null);
@@ -359,10 +394,9 @@ public final class DagStepScheduler {
         for (String depId : step.dependsOn()) {
             CompletableFuture<StepResult> dep = futures.get(depId);
             if (dep == null) {
-                throw new IllegalStateException(
-                        "Step '" + step.id() + "' declares dependency on '" + depId +
-                        "' but that step is not in the plan. " +
-                        "AddStepAmendment dependencies must reference existing steps.");
+                throw new IllegalStateException("Step '" + step.id() + "' declares dependency on '" + depId
+                        + "' but that step is not in the plan. "
+                        + "AddStepAmendment dependencies must reference existing steps.");
             }
             deps.add(dep);
         }
@@ -370,9 +404,7 @@ public final class DagStepScheduler {
         return CompletableFuture.allOf(deps.toArray(new CompletableFuture[0]));
     }
 
-    private ExecutionResult collectResults(
-            String executionId,
-            ConcurrentHashMap<String, StepResult> completedResults) {
+    private ExecutionResult collectResults(String executionId, ConcurrentHashMap<String, StepResult> completedResults) {
 
         List<StepResult> results = new ArrayList<>(completedResults.values());
         ExecutionStatus overallStatus = ExecutionStatus.COMPLETED;
@@ -411,8 +443,7 @@ public final class DagStepScheduler {
             for (String dep : step.dependsOn()) {
                 int depColor = color.getOrDefault(dep, 0);
                 if (depColor == 1) {
-                    throw new IllegalStateException(
-                            "Cycle detected in plan dependency graph involving step: " + dep);
+                    throw new IllegalStateException("Cycle detected in plan dependency graph involving step: " + dep);
                 }
                 if (depColor == 0) {
                     dfsCheckCycle(dep, stepById, color);

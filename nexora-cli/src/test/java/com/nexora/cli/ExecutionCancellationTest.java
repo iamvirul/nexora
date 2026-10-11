@@ -1,5 +1,8 @@
 package com.nexora.cli;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexora.api.NexoraEngine;
@@ -17,11 +20,6 @@ import com.nexora.spi.NexoraPlugin;
 import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
 import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import picocli.CommandLine;
-
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -36,9 +34,10 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import picocli.CommandLine;
 
 /**
  * End-to-end tests for cancellation over HTTP: a real engine with a real store behind
@@ -92,12 +91,15 @@ class ExecutionCancellationTest {
 
         assertEquals(200, response.statusCode());
         assertTrue(json(response).get("cancelled").asBoolean());
-        assertEquals(ExecutionStatus.CANCELLED, execution.get(WAIT_SECONDS, TimeUnit.SECONDS).status());
+        assertEquals(
+                ExecutionStatus.CANCELLED,
+                execution.get(WAIT_SECONDS, TimeUnit.SECONDS).status());
     }
 
     @Test
     void deleteReturns409ForFinishedExecution() throws Exception {
-        ExecutionResult finished = engine.execute(new Intent("quick job", Map.of())).get(WAIT_SECONDS, TimeUnit.SECONDS);
+        ExecutionResult finished =
+                engine.execute(new Intent("quick job", Map.of())).get(WAIT_SECONDS, TimeUnit.SECONDS);
 
         HttpResponse<String> response = delete(finished.executionId());
 
@@ -123,7 +125,8 @@ class ExecutionCancellationTest {
     @Test
     void unsupportedMethodsAreRejectedWithAllowHeader() throws Exception {
         HttpRequest put = HttpRequest.newBuilder(executionUri("anything"))
-                .PUT(HttpRequest.BodyPublishers.noBody()).build();
+                .PUT(HttpRequest.BodyPublishers.noBody())
+                .build();
 
         HttpResponse<String> response = client.send(put, HttpResponse.BodyHandlers.ofString());
 
@@ -170,12 +173,15 @@ class ExecutionCancellationTest {
                 .POST(HttpRequest.BodyPublishers.ofString("{not json"))
                 .build();
 
-        assertEquals(400, client.send(post, HttpResponse.BodyHandlers.ofString()).statusCode());
+        assertEquals(
+                400, client.send(post, HttpResponse.BodyHandlers.ofString()).statusCode());
     }
 
     @Test
     void executeEndpointRejectsGet() throws Exception {
-        HttpRequest get = HttpRequest.newBuilder(URI.create(serverUrl() + ExecutionEndpoints.EXECUTE_PATH)).GET().build();
+        HttpRequest get = HttpRequest.newBuilder(URI.create(serverUrl() + ExecutionEndpoints.EXECUTE_PATH))
+                .GET()
+                .build();
 
         HttpResponse<String> response = client.send(get, HttpResponse.BodyHandlers.ofString());
 
@@ -190,16 +196,18 @@ class ExecutionCancellationTest {
 
         CommandResult result = runCancelCommand(executionId, "--server", serverUrl());
 
-        assertEquals(CancelCommand.EXIT_OK, result.exitCode(), result.err());
+        assertEquals(ObserveServerClient.EXIT_OK, result.exitCode(), result.err());
         assertTrue(result.out().contains("Cancellation requested"), result.out());
-        assertEquals(ExecutionStatus.CANCELLED, execution.get(WAIT_SECONDS, TimeUnit.SECONDS).status());
+        assertEquals(
+                ExecutionStatus.CANCELLED,
+                execution.get(WAIT_SECONDS, TimeUnit.SECONDS).status());
     }
 
     @Test
     void cancelCommandReportsUnknownExecution() {
         CommandResult result = runCancelCommand("no-such-execution", "--server", serverUrl());
 
-        assertEquals(CancelCommand.EXIT_FAILED, result.exitCode());
+        assertEquals(ObserveServerClient.EXIT_FAILED, result.exitCode());
         assertTrue(result.err().contains("no execution found"), result.err());
     }
 
@@ -212,7 +220,7 @@ class ExecutionCancellationTest {
 
         CommandResult result = runCancelCommand("any-id", "--server", "http://" + LOOPBACK + ":" + closedPort);
 
-        assertEquals(CancelCommand.EXIT_FAILED, result.exitCode());
+        assertEquals(ObserveServerClient.EXIT_FAILED, result.exitCode());
         assertTrue(result.err().contains("could not reach"), result.err());
     }
 
@@ -220,7 +228,7 @@ class ExecutionCancellationTest {
     void cancelCommandRejectsNonHttpServerUrl() {
         CommandResult result = runCancelCommand("any-id", "--server", "file:///etc/passwd");
 
-        assertEquals(CancelCommand.EXIT_USAGE, result.exitCode());
+        assertEquals(ObserveServerClient.EXIT_USAGE, result.exitCode());
         assertTrue(result.err().contains("--server must be an http(s) URL"), result.err());
     }
 
@@ -234,7 +242,8 @@ class ExecutionCancellationTest {
     }
 
     private HttpResponse<String> delete(String executionId) throws Exception {
-        HttpRequest request = HttpRequest.newBuilder(executionUri(executionId)).DELETE().build();
+        HttpRequest request =
+                HttpRequest.newBuilder(executionUri(executionId)).DELETE().build();
         return client.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
@@ -264,11 +273,16 @@ class ExecutionCancellationTest {
 
     private NexoraPlugin blockingPlugin() {
         return new NexoraPlugin() {
-            @Override public PluginDescriptor descriptor() {
+            @Override
+            public PluginDescriptor descriptor() {
                 return new PluginDescriptor("cancel-cli-test", "1.0", "cancel cli test plugin", List.of(), null);
             }
-            @Override public void initialize(PluginContext ctx) {}
-            @Override public List<CapabilityProvider> capabilityProviders() {
+
+            @Override
+            public void initialize(PluginContext ctx) {}
+
+            @Override
+            public List<CapabilityProvider> capabilityProviders() {
                 return List.of(
                         provider("block", req -> {
                             blockStarted.countDown();
@@ -282,16 +296,21 @@ class ExecutionCancellationTest {
                         }),
                         provider("quick", req -> CapabilityResult.success("done")));
             }
-            @Override public void shutdown() {}
+
+            @Override
+            public void shutdown() {}
         };
     }
 
     private static CapabilityProvider provider(String id, Capability capability) {
         return new CapabilityProvider() {
-            @Override public CapabilityDescriptor descriptor() {
+            @Override
+            public CapabilityDescriptor descriptor() {
                 return new CapabilityDescriptor(id, id, List.of(), List.of(), true, false);
             }
-            @Override public Capability create(PluginContext ctx) {
+
+            @Override
+            public Capability create(PluginContext ctx) {
                 return capability;
             }
         };

@@ -1,5 +1,8 @@
 package com.nexora.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.nexora.core.capability.CapabilityResult;
 import com.nexora.core.intent.Intent;
 import com.nexora.event.ScheduledExecutionFiredEvent;
@@ -14,11 +17,6 @@ import com.nexora.spi.CapabilityProvider;
 import com.nexora.spi.NexoraPlugin;
 import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
-
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -27,9 +25,10 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 class SchedulerIntegrationTest {
 
@@ -43,10 +42,8 @@ class SchedulerIntegrationTest {
         engine = NexoraEngine.builder()
                 .withExecutionStore(store)
                 .withPlugin(buildPlugin())
-                .withStepDefinition(new StepDefinition(
-                        "ping", "ping",
-                        g -> g.equals("ping"),
-                        Map.of(), null, Set.of(), null, null))
+                .withStepDefinition(
+                        new StepDefinition("ping", "ping", g -> g.equals("ping"), Map.of(), null, Set.of(), null, null))
                 .build();
     }
 
@@ -80,9 +77,8 @@ class SchedulerIntegrationTest {
 
     @Test
     void schedule_withoutStore_throws() {
-        NexoraEngine noStoreEngine = NexoraEngine.builder()
-                .withPlugin(buildPlugin())
-                .build();
+        NexoraEngine noStoreEngine =
+                NexoraEngine.builder().withPlugin(buildPlugin()).build();
         assertThatThrownBy(() -> noStoreEngine.schedule("* * * * *", new Intent("ping", Map.of())))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("persistence store");
@@ -111,8 +107,8 @@ class SchedulerIntegrationTest {
 
     @Test
     void multipleSchedules_allPersisted() {
-        engine.schedule("* * * * *",   new Intent("ping", Map.of()));
-        engine.schedule("0 0 * * *",   new Intent("ping", Map.of()));
+        engine.schedule("* * * * *", new Intent("ping", Map.of()));
+        engine.schedule("0 0 * * *", new Intent("ping", Map.of()));
         engine.schedule("0 9 * * 1-5", new Intent("ping", Map.of()));
 
         assertThat(engine.listActiveSchedules()).hasSize(3);
@@ -147,18 +143,15 @@ class SchedulerIntegrationTest {
                 null,
                 twoMinutesAgo,
                 com.nexora.persistence.ScheduleStatus.NEVER_RUN,
-                true
-        );
+                true);
         store.createSchedule(stale);
 
         int beforeCount = executions.get();
         NexoraEngine reloadedEngine = NexoraEngine.builder()
                 .withExecutionStore(store)
                 .withPlugin(buildPlugin())
-                .withStepDefinition(new StepDefinition(
-                        "ping", "ping",
-                        g -> g.equals("ping"),
-                        Map.of(), null, Set.of(), null, null))
+                .withStepDefinition(
+                        new StepDefinition("ping", "ping", g -> g.equals("ping"), Map.of(), null, Set.of(), null, null))
                 .build();
 
         // Catch-up fires async via CompletableFuture; poll until the capability executes
@@ -177,17 +170,27 @@ class SchedulerIntegrationTest {
 
     NexoraPlugin buildPlugin() {
         return new NexoraPlugin() {
-            @Override public PluginDescriptor descriptor() {
+            @Override
+            public PluginDescriptor descriptor() {
                 return new PluginDescriptor("test-plugin", "1.0", "test", List.of(), null);
             }
-            @Override public void initialize(PluginContext ctx) {}
-            @Override public void shutdown() {}
-            @Override public List<CapabilityProvider> capabilityProviders() {
+
+            @Override
+            public void initialize(PluginContext ctx) {}
+
+            @Override
+            public void shutdown() {}
+
+            @Override
+            public List<CapabilityProvider> capabilityProviders() {
                 return List.of(new CapabilityProvider() {
-                    @Override public CapabilityDescriptor descriptor() {
+                    @Override
+                    public CapabilityDescriptor descriptor() {
                         return new CapabilityDescriptor("ping", "ping", List.of(), List.of(), true, false);
                     }
-                    @Override public Capability create(PluginContext ctx) {
+
+                    @Override
+                    public Capability create(PluginContext ctx) {
                         return req -> {
                             executions.incrementAndGet();
                             return CapabilityResult.success("pong");

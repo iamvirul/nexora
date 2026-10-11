@@ -1,19 +1,18 @@
 package com.nexora.core.capability;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.nexora.core.plan.PlanAmendment;
 import com.nexora.core.plan.SkipStepAmendment;
-import org.junit.jupiter.api.Test;
-
 import java.util.Map;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
 
 class CapabilityResultTest {
 
     @Test
     void shouldCreateSuccessResult() {
         CapabilityResult result = CapabilityResult.success(Map.of("status", "OK"));
-        
+
         assertThat(result.succeeded()).isTrue();
         assertThat((Map<String, String>) result.output()).containsEntry("status", "OK");
         assertThat(result.amendments()).isEmpty();
@@ -23,7 +22,7 @@ class CapabilityResultTest {
     void shouldCreateSuccessResultWithAmendments() {
         PlanAmendment skip = new SkipStepAmendment("step-1");
         CapabilityResult result = CapabilityResult.success(Map.of(), java.util.List.of(skip));
-        
+
         assertThat(result.succeeded()).isTrue();
         assertThat(result.amendments()).containsExactly(skip);
     }
@@ -31,7 +30,7 @@ class CapabilityResultTest {
     @Test
     void shouldCreateFailureResult() {
         CapabilityResult result = CapabilityResult.failure("ERROR_CODE", "Something failed");
-        
+
         assertThat(result.succeeded()).isFalse();
         assertThat(result.failureCode()).isEqualTo("ERROR_CODE");
         assertThat(result.failureMessage()).isEqualTo("Something failed");
@@ -40,7 +39,7 @@ class CapabilityResultTest {
     @Test
     void failureResultHasNullOutput() {
         CapabilityResult result = CapabilityResult.failure("ERR", "msg");
-        
+
         assertThat(result.output()).isNull();
     }
 }

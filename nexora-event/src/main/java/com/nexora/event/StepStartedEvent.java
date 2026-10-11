@@ -9,5 +9,5 @@ public record StepStartedEvent(
         String idempotencyKey,
         String traceId,
         String spanId,
-        Instant occurredAt
-) implements ExecutionEvent {}
+        Instant occurredAt)
+        implements ExecutionEvent {}

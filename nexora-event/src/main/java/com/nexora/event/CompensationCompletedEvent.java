@@ -9,5 +9,5 @@ public record CompensationCompletedEvent(
         String stepId,
         String compensateCapabilityId,
         Duration elapsed,
-        Instant occurredAt
-) implements ExecutionEvent {}
+        Instant occurredAt)
+        implements ExecutionEvent {}

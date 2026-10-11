@@ -1,5 +1,7 @@
 package com.nexora.tracing.otel;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.nexora.core.context.TraceContext;
 import com.nexora.tracing.Span;
 import com.nexora.tracing.SpanStatus;
@@ -9,13 +11,10 @@ import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.data.StatusData;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
-import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 class OtelTracerTest {
 
@@ -28,7 +27,8 @@ class OtelTracerTest {
         SdkTracerProvider provider = SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
-        OpenTelemetrySdk sdk = OpenTelemetrySdk.builder().setTracerProvider(provider).build();
+        OpenTelemetrySdk sdk =
+                OpenTelemetrySdk.builder().setTracerProvider(provider).build();
         tracer = OtelTracer.forSdk(sdk);
     }
 
@@ -72,8 +72,14 @@ class OtelTracerTest {
         String traceId = spans.get(0).getTraceId();
         assertThat(spans).allSatisfy(s -> assertThat(s.getTraceId()).isEqualTo(traceId));
 
-        SpanData childData = spans.stream().filter(s -> s.getName().equals("capability.send-email")).findFirst().orElseThrow();
-        SpanData parentData = spans.stream().filter(s -> s.getName().equals("plan.execute")).findFirst().orElseThrow();
+        SpanData childData = spans.stream()
+                .filter(s -> s.getName().equals("capability.send-email"))
+                .findFirst()
+                .orElseThrow();
+        SpanData parentData = spans.stream()
+                .filter(s -> s.getName().equals("plan.execute"))
+                .findFirst()
+                .orElseThrow();
         assertThat(childData.getParentSpanId()).isEqualTo(parentData.getSpanId());
     }
 
@@ -92,8 +98,8 @@ class OtelTracerTest {
 
     @Test
     void remoteUnsampledParentPreservesSamplingDecision() {
-        TraceContext remoteParent = new TraceContext(
-                "aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb", null, java.util.Map.of(), false);
+        TraceContext remoteParent =
+                new TraceContext("aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb", null, java.util.Map.of(), false);
 
         Span span = tracer.startSpan("capability.send-email", remoteParent);
         assertThat(span.context().sampled()).isFalse();

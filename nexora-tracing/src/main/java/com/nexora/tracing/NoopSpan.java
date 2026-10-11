@@ -11,10 +11,27 @@ final class NoopSpan implements Span {
         this.context = context;
     }
 
-    @Override public TraceContext context() { return context; }
-    @Override public void setAttribute(String key, String value) {}
-    @Override public void recordException(Throwable t) {}
-    @Override public void setStatus(SpanStatus status) { this.status = status; }
-    @Override public SpanStatus status() { return status; }
-    @Override public void end() {}
+    @Override
+    public TraceContext context() {
+        return context;
+    }
+
+    @Override
+    public void setAttribute(String key, String value) {}
+
+    @Override
+    public void recordException(Throwable t) {}
+
+    @Override
+    public void setStatus(SpanStatus status) {
+        this.status = status;
+    }
+
+    @Override
+    public SpanStatus status() {
+        return status;
+    }
+
+    @Override
+    public void end() {}
 }

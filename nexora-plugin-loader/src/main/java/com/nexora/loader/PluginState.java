@@ -1,7 +1,6 @@
 package com.nexora.loader;
 
 import com.nexora.spi.NexoraPlugin;
-
 import java.net.URLClassLoader;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -21,7 +20,15 @@ final class PluginState {
         lifecycle.set(next);
     }
 
-    NexoraPlugin plugin() { return plugin; }
-    URLClassLoader classLoader() { return classLoader; }
-    PluginLifecycle lifecycle() { return lifecycle.get(); }
+    NexoraPlugin plugin() {
+        return plugin;
+    }
+
+    URLClassLoader classLoader() {
+        return classLoader;
+    }
+
+    PluginLifecycle lifecycle() {
+        return lifecycle.get();
+    }
 }

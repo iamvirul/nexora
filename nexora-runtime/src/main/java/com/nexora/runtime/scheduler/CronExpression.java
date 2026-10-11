@@ -36,28 +36,28 @@ public final class CronExpression {
         String[] fields = this.expression.split("\\s+");
         if (fields.length != 5) {
             throw new IllegalArgumentException(
-                "Cron expression must have exactly 5 fields (got " + fields.length + "): " + expression);
+                    "Cron expression must have exactly 5 fields (got " + fields.length + "): " + expression);
         }
-        this.minutes      = parseField(fields[0], 0, 59);
-        this.hours        = parseField(fields[1], 0, 23);
-        this.daysOfMonth  = parseField(fields[2], 1, 31);
-        this.months       = parseField(fields[3], 1, 12);
-        this.daysOfWeek   = normalizeDow(parseField(fields[4], 0, 7));
+        this.minutes = parseField(fields[0], 0, 59);
+        this.hours = parseField(fields[1], 0, 23);
+        this.daysOfMonth = parseField(fields[2], 1, 31);
+        this.months = parseField(fields[3], 1, 12);
+        this.daysOfWeek = normalizeDow(parseField(fields[4], 0, 7));
         this.anyDayOfMonth = "*".equals(fields[2]);
-        this.anyDayOfWeek  = "*".equals(fields[4]);
+        this.anyDayOfWeek = "*".equals(fields[4]);
     }
 
     /** Returns the next fire time strictly after {@code from}, in UTC. */
     public ZonedDateTime next(ZonedDateTime from) {
         ZonedDateTime candidate = from.withZoneSameInstant(ZoneOffset.UTC)
-                                      .truncatedTo(ChronoUnit.MINUTES)
-                                      .plusMinutes(1);
+                .truncatedTo(ChronoUnit.MINUTES)
+                .plusMinutes(1);
         ZonedDateTime limit = candidate.plusYears(4);
 
         while (candidate.isBefore(limit)) {
             if (!months.contains(candidate.getMonthValue())) {
-                candidate = candidate.withDayOfMonth(1).withHour(0).withMinute(0)
-                                     .plusMonths(1);
+                candidate =
+                        candidate.withDayOfMonth(1).withHour(0).withMinute(0).plusMonths(1);
                 continue;
             }
             if (!dayMatches(candidate)) {
@@ -74,18 +74,17 @@ public final class CronExpression {
             }
             return candidate;
         }
-        throw new IllegalStateException(
-            "No next fire time found within 4 years for expression: " + expression);
+        throw new IllegalStateException("No next fire time found within 4 years for expression: " + expression);
     }
 
     private boolean dayMatches(ZonedDateTime dt) {
         int dom = dt.getDayOfMonth();
         int jdow = dt.getDayOfWeek().getValue(); // 1=Mon..7=Sun
-        int dow = jdow == 7 ? 0 : jdow;          // convert to cron 0=Sun
+        int dow = jdow == 7 ? 0 : jdow; // convert to cron 0=Sun
 
         if (anyDayOfMonth && anyDayOfWeek) return true;
         if (anyDayOfMonth) return daysOfWeek.contains(dow);
-        if (anyDayOfWeek)  return daysOfMonth.contains(dom);
+        if (anyDayOfWeek) return daysOfMonth.contains(dom);
         // both restricted: OR semantics
         return daysOfMonth.contains(dom) || daysOfWeek.contains(dow);
     }
@@ -99,16 +98,19 @@ public final class CronExpression {
                 if (step < 1) throw new IllegalArgumentException("Step must be >= 1: " + part);
                 int start = "*".equals(sp[0]) ? min : Integer.parseInt(sp[0]);
                 if (start < min || start > max)
-                    throw new IllegalArgumentException("Value " + start + " out of range [" + min + "," + max + "] in: " + part);
+                    throw new IllegalArgumentException(
+                            "Value " + start + " out of range [" + min + "," + max + "] in: " + part);
                 for (int i = start; i <= max; i += step) result.add(i);
             } else if (part.contains("-")) {
                 String[] rp = part.split("-", 2);
                 int from = Integer.parseInt(rp[0]);
-                int to   = Integer.parseInt(rp[1]);
+                int to = Integer.parseInt(rp[1]);
                 if (from < min || from > max)
-                    throw new IllegalArgumentException("Value " + from + " out of range [" + min + "," + max + "] in: " + part);
+                    throw new IllegalArgumentException(
+                            "Value " + from + " out of range [" + min + "," + max + "] in: " + part);
                 if (to < min || to > max)
-                    throw new IllegalArgumentException("Value " + to + " out of range [" + min + "," + max + "] in: " + part);
+                    throw new IllegalArgumentException(
+                            "Value " + to + " out of range [" + min + "," + max + "] in: " + part);
                 if (from > to)
                     throw new IllegalArgumentException("Range start " + from + " > end " + to + " in: " + part);
                 for (int i = from; i <= to; i++) result.add(i);
@@ -117,7 +119,8 @@ public final class CronExpression {
             } else {
                 int val = Integer.parseInt(part);
                 if (val < min || val > max)
-                    throw new IllegalArgumentException("Value " + val + " out of range [" + min + "," + max + "] in field: " + field);
+                    throw new IllegalArgumentException(
+                            "Value " + val + " out of range [" + min + "," + max + "] in field: " + field);
                 result.add(val);
             }
         }

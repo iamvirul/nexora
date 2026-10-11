@@ -6,7 +6,6 @@ import com.nexora.spi.Planner;
 import com.nexora.spi.PlannerDescriptor;
 import com.nexora.spi.PlanningContext;
 import com.nexora.spi.PlanningException;
-
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;

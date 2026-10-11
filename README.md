@@ -55,6 +55,14 @@ mvn install -DskipTests
 
 The CLI fat JAR ends up at `nexora-cli/target/nexora.jar`.
 
+Java code is formatted with [palantir-java-format](https://github.com/palantir/palantir-java-format) through Spotless. `mvn verify` (and CI) fails on unformatted code; fix it with:
+
+```bash
+mvn spotless:apply
+```
+
+In IntelliJ, install the **palantir-java-format** plugin and enable it in Settings > palantir-java-format, so Reformat Code and format-on-save produce the same result.
+
 ## Try it immediately
 
 No config file needed. The `demo` command showcases all three differentiating features in a single run:
@@ -119,6 +127,7 @@ nexora [--config <file>] <command>
 | `nexora schedule list` | List schedules and next fire times |
 | `nexora schedule remove <id>` | Cancel a schedule immediately |
 | `nexora cancel <executionId>` | Cancel an execution running in the observe server |
+| `nexora replay <executionId>` | Replay a failed, timed-out, cancelled or compensated execution through the observe server |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 
@@ -550,6 +559,7 @@ This exposes four endpoints with no external dependencies:
 | `GET /api/executions` | Execution history, newest first, cursor-paginated; filter by `status`, `goal`, `from`, `to`, `limit` |
 | `GET /api/executions/{id}` | One execution with its step records (`404` if unknown) |
 | `DELETE /api/executions/{id}` | Cancel a running execution (`200` cancelled, `404` unknown, `409` already finished) |
+| `POST /api/executions/{id}/replay` | Replay a failed, timed-out, cancelled or compensated execution (`202` with the new `executionId`, `409` otherwise) |
 
 > **Note**: `/health/live` and `/health` were added in v0.3.0. In v0.3.0 `/health/ready` changed from reporting capability circuit state to reporting dependency readiness; circuit states are now under `capabilities` in `GET /health`.
 

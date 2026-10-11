@@ -1,7 +1,6 @@
 package com.nexora.core.context;
 
 import com.nexora.core.intent.Intent;
-
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -16,12 +15,32 @@ public final class ExecutionContext {
     private final ConcurrentHashMap<String, Object> data = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Object> stepOutputs = new ConcurrentHashMap<>();
     // stepId -> (inputKey -> overrideValue), populated by ModifyInputAmendment
-    private final ConcurrentHashMap<String, ConcurrentHashMap<String, Object>> inputOverrides = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ConcurrentHashMap<String, Object>> inputOverrides =
+            new ConcurrentHashMap<>();
+    // stepId -> idempotency key carried over from the execution being replayed
+    private final Map<String, String> reusedIdempotencyKeys;
 
     public ExecutionContext(Intent intent, TraceContext traceContext) {
+        this(intent, traceContext, Map.of());
+    }
+
+    /**
+     * @param reusedIdempotencyKeys idempotency keys to reuse per step id, so a replay sends a step the
+     *                              same key it completed with before and the capability can skip
+     *                              repeating its side effect
+     */
+    public ExecutionContext(Intent intent, TraceContext traceContext, Map<String, String> reusedIdempotencyKeys) {
         this.executionId = UUID.randomUUID().toString();
         this.intent = Objects.requireNonNull(intent, "intent must not be null");
         this.traceContext = Objects.requireNonNull(traceContext, "traceContext must not be null");
+        this.reusedIdempotencyKeys =
+                Map.copyOf(Objects.requireNonNull(reusedIdempotencyKeys, "reusedIdempotencyKeys must not be null"));
+    }
+
+    /** The reused key for {@code stepId} when replaying a step that already completed, otherwise a fresh one. */
+    public String idempotencyKeyFor(String stepId) {
+        String reused = reusedIdempotencyKeys.get(stepId);
+        return reused != null ? reused : UUID.randomUUID().toString();
     }
 
     public void put(String key, Object value) {
@@ -70,9 +89,7 @@ public final class ExecutionContext {
         String[] parts = subPath.split("\\.", 2);
         return switch (parts[0]) {
             case "goal" -> intent.getGoal();
-            case "context" -> parts.length > 1
-                    ? intent.getContext().get(parts[1])
-                    : intent.getContext();
+            case "context" -> parts.length > 1 ? intent.getContext().get(parts[1]) : intent.getContext();
             default -> null;
         };
     }
@@ -86,7 +103,15 @@ public final class ExecutionContext {
         return overrides != null ? Map.copyOf(overrides) : Map.of();
     }
 
-    public String getExecutionId() { return executionId; }
-    public Intent getIntent() { return intent; }
-    public TraceContext getTraceContext() { return traceContext; }
+    public String getExecutionId() {
+        return executionId;
+    }
+
+    public Intent getIntent() {
+        return intent;
+    }
+
+    public TraceContext getTraceContext() {
+        return traceContext;
+    }
 }

@@ -7,11 +7,6 @@ import com.nexora.core.intent.Intent;
 import com.nexora.persistence.ExecutionStore;
 import com.nexora.persistence.WebhookDeliveryRecord;
 import com.nexora.tracing.otel.W3CTraceparent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -25,6 +20,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class WebhookDeliveryService {
 
@@ -50,7 +49,8 @@ public class WebhookDeliveryService {
                 .build();
     }
 
-    public void deliverIfApplicable(String executionId, Intent intent, ExecutionStatus status, Duration duration, TraceContext traceContext) {
+    public void deliverIfApplicable(
+            String executionId, Intent intent, ExecutionStatus status, Duration duration, TraceContext traceContext) {
         if (intent.getWebhookUrl() == null || intent.getWebhookUrl().isBlank()) {
             return;
         }
@@ -63,8 +63,7 @@ public class WebhookDeliveryService {
                 "executionId", executionId,
                 "status", status.name(),
                 "goal", intent.getGoal(),
-                "durationMs", duration.toMillis()
-        );
+                "durationMs", duration.toMillis());
 
         try {
             String payload = JSON.writeValueAsString(payloadMap);
@@ -85,9 +84,14 @@ public class WebhookDeliveryService {
             if (store != null) {
                 try {
                     store.recordWebhookDelivery(new WebhookDeliveryRecord(
-                            UUID.randomUUID().toString(), executionId, targetUrl, 0, 0, false,
-                            Instant.now(), "Preparation failed: " + e.getMessage()
-                    ));
+                            UUID.randomUUID().toString(),
+                            executionId,
+                            targetUrl,
+                            0,
+                            0,
+                            false,
+                            Instant.now(),
+                            "Preparation failed: " + e.getMessage()));
                 } catch (Exception storeEx) {
                     log.error("Failed to store webhook delivery executionId={}", executionId, storeEx);
                 }
@@ -99,41 +103,39 @@ public class WebhookDeliveryService {
         Instant now = Instant.now();
         String deliveryId = UUID.randomUUID().toString();
 
-        httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .whenComplete((response, error) -> {
-                    boolean success = false;
-                    int statusCode = 0;
-                    String errorMessage = null;
+        httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()).whenComplete((response, error) -> {
+            boolean success = false;
+            int statusCode = 0;
+            String errorMessage = null;
 
-                    if (error != null) {
-                        errorMessage = error.getMessage();
-                        log.warn("Failed to prepare webhook delivery targetUrl={}", url);
-                    } else {
-                        statusCode = response.statusCode();
-                        if (statusCode >= 200 && statusCode < 300) {
-                            success = true;
-                        } else {
-                            errorMessage = "HTTP " + statusCode;
-                            log.warn("Failed to prepare webhook delivery targetUrl={}", url);
-                        }
-                    }
+            if (error != null) {
+                errorMessage = error.getMessage();
+                log.warn("Failed to prepare webhook delivery targetUrl={}", url);
+            } else {
+                statusCode = response.statusCode();
+                if (statusCode >= 200 && statusCode < 300) {
+                    success = true;
+                } else {
+                    errorMessage = "HTTP " + statusCode;
+                    log.warn("Failed to prepare webhook delivery targetUrl={}", url);
+                }
+            }
 
-                    if (store != null) {
-                        try {
-                            store.recordWebhookDelivery(new WebhookDeliveryRecord(
-                                    deliveryId, executionId, url, statusCode, attempt, success, now, errorMessage
-                            ));
-                        } catch (Exception e) {
-                            log.error("Failed to store webhook delivery executionId={}", executionId, e);
-                        }
-                    }
+            if (store != null) {
+                try {
+                    store.recordWebhookDelivery(new WebhookDeliveryRecord(
+                            deliveryId, executionId, url, statusCode, attempt, success, now, errorMessage));
+                } catch (Exception e) {
+                    log.error("Failed to store webhook delivery executionId={}", executionId, e);
+                }
+            }
 
-                    if (!success && attempt < 3) {
-                        long backoffMs = (long) (200 * Math.pow(2, attempt - 1));
-                        CompletableFuture.delayedExecutor(backoffMs, TimeUnit.MILLISECONDS, executor)
-                                .execute(() -> attemptDelivery(request, executionId, url, attempt + 1));
-                    }
-                });
+            if (!success && attempt < 3) {
+                long backoffMs = (long) (200 * Math.pow(2, attempt - 1));
+                CompletableFuture.delayedExecutor(backoffMs, TimeUnit.MILLISECONDS, executor)
+                        .execute(() -> attemptDelivery(request, executionId, url, attempt + 1));
+            }
+        });
     }
 
     private String generateHmacSha256(String data, String secret) throws Exception {

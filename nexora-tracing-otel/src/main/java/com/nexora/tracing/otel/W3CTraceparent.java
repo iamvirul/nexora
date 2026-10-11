@@ -1,7 +1,6 @@
 package com.nexora.tracing.otel;
 
 import com.nexora.core.context.TraceContext;
-
 import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Pattern;

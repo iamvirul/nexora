@@ -17,11 +17,17 @@ public final class ScheduledExecution {
         this.owner = owner;
     }
 
-    public String id() { return id; }
+    public String id() {
+        return id;
+    }
 
-    public String cronExpression() { return cronExpression; }
+    public String cronExpression() {
+        return cronExpression;
+    }
 
-    public Instant nextFireTime() { return nextFireTime; }
+    public Instant nextFireTime() {
+        return nextFireTime;
+    }
 
     /** Cancels this schedule. Future firings will not occur. Idempotent. */
     public void cancel() {

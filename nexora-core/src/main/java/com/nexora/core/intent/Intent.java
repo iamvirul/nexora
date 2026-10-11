@@ -1,11 +1,10 @@
 package com.nexora.core.intent;
 
+import com.nexora.core.execution.ExecutionStatus;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-
-import com.nexora.core.execution.ExecutionStatus;
 
 public class Intent {
 
@@ -37,17 +36,25 @@ public class Intent {
     /**
      * Creates an Intent with an explicit per-intent deadline and webhook configuration.
      */
-    public Intent(String goal, Map<String, Object> context, Duration deadline, String webhookUrl, List<ExecutionStatus> webhookEvents) {
+    public Intent(
+            String goal,
+            Map<String, Object> context,
+            Duration deadline,
+            String webhookUrl,
+            List<ExecutionStatus> webhookEvents) {
         this.goal = Objects.requireNonNull(goal, "goal must not be null");
         this.context = context == null ? Map.of() : Map.copyOf(context);
         if (deadline != null && deadline.compareTo(Duration.ZERO) <= 0) {
-            throw new IllegalArgumentException(
-                    "deadline must be a positive duration, got: " + deadline);
+            throw new IllegalArgumentException("deadline must be a positive duration, got: " + deadline);
         }
         this.deadline = deadline;
         this.webhookUrl = (webhookUrl == null || webhookUrl.trim().isEmpty()) ? null : webhookUrl;
         this.webhookEvents = webhookEvents == null || webhookEvents.isEmpty()
-                ? List.of(ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.TIMED_OUT, ExecutionStatus.CANCELLED)
+                ? List.of(
+                        ExecutionStatus.COMPLETED,
+                        ExecutionStatus.FAILED,
+                        ExecutionStatus.TIMED_OUT,
+                        ExecutionStatus.CANCELLED)
                 : List.copyOf(webhookEvents);
     }
 

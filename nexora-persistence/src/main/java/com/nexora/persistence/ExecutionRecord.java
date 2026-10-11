@@ -13,8 +13,7 @@ public record ExecutionRecord(
         ExecutionState state,
         Instant startedAt,
         Instant completedAt,
-        List<StepRecord> steps
-) {
+        List<StepRecord> steps) {
     public ExecutionRecord {
         Objects.requireNonNull(executionId);
         Objects.requireNonNull(state);
@@ -23,9 +22,9 @@ public record ExecutionRecord(
         steps = steps == null ? List.of() : List.copyOf(steps);
     }
 
-    public static ExecutionRecord started(String executionId, String traceId, String goal,
-                                          Map<String, Object> context, Instant startedAt) {
-        return new ExecutionRecord(executionId, traceId, goal, context,
-                ExecutionState.RUNNING, startedAt, null, List.of());
+    public static ExecutionRecord started(
+            String executionId, String traceId, String goal, Map<String, Object> context, Instant startedAt) {
+        return new ExecutionRecord(
+                executionId, traceId, goal, context, ExecutionState.RUNNING, startedAt, null, List.of());
     }
 }

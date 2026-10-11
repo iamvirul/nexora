@@ -12,9 +12,5 @@ import java.time.Instant;
  * <p>Saga compensation (if enabled) will follow this event.
  */
 public record PlanTimedOutEvent(
-        String executionId,
-        String traceId,
-        Duration deadline,
-        Duration elapsed,
-        Instant occurredAt
-) implements ExecutionEvent {}
+        String executionId, String traceId, Duration deadline, Duration elapsed, Instant occurredAt)
+        implements ExecutionEvent {}

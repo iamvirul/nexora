@@ -9,9 +9,6 @@ import com.nexora.persistence.MissedFirePolicy;
 import com.nexora.persistence.ScheduleRecord;
 import com.nexora.persistence.ScheduleStatus;
 import com.nexora.runtime.engine.ExecutionEngine;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
@@ -24,6 +21,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * In-process cron scheduler backed by the {@link ExecutionStore}.
@@ -77,8 +76,7 @@ public final class CronScheduler implements AutoCloseable {
                 null,
                 nextFire.toInstant(),
                 ScheduleStatus.NEVER_RUN,
-                true
-        );
+                true);
         store.createSchedule(record);
         enqueue(record.id(), nextFire);
 
@@ -137,20 +135,26 @@ public final class CronScheduler implements AutoCloseable {
                 case SKIP -> {
                     log.warn("Schedule id={} missed {} window(s); SKIP policy, not firing", record.id(), missed.size());
                     store.updateScheduleStatus(record.id(), ScheduleStatus.MISSED);
-                    eventBus.publish(new ScheduledExecutionMissedEvent(
-                            record.id(), missed.size(), from, now.toInstant()));
+                    eventBus.publish(
+                            new ScheduledExecutionMissedEvent(record.id(), missed.size(), from, now.toInstant()));
                 }
                 case FIRE_ONCE -> {
-                    log.info("Schedule id={} missed {} window(s); FIRE_ONCE, firing once now", record.id(), missed.size());
+                    log.info(
+                            "Schedule id={} missed {} window(s); FIRE_ONCE, firing once now",
+                            record.id(),
+                            missed.size());
                     executeAndPublish(record.id(), record.goal(), record.context());
                     int extra = missed.size() - 1;
                     if (extra > 0) {
-                        eventBus.publish(new ScheduledExecutionMissedEvent(
-                                record.id(), extra, from, now.toInstant()));
+                        eventBus.publish(new ScheduledExecutionMissedEvent(record.id(), extra, from, now.toInstant()));
                     }
                 }
                 case FIRE_ALL -> {
-                    log.info("Schedule id={} missed {} window(s); FIRE_ALL, firing {} time(s)", record.id(), missed.size(), missed.size());
+                    log.info(
+                            "Schedule id={} missed {} window(s); FIRE_ALL, firing {} time(s)",
+                            record.id(),
+                            missed.size(),
+                            missed.size());
                     for (int i = 0; i < missed.size(); i++) {
                         executeAndPublish(record.id(), record.goal(), record.context());
                     }
@@ -186,24 +190,22 @@ public final class CronScheduler implements AutoCloseable {
     }
 
     private void executeAndPublish(String scheduleId, String goal, Map<String, Object> context) {
-        engine.execute(new Intent(goal, context))
-              .whenComplete((result, ex) -> {
-                  if (ex != null) {
-                      log.error("Scheduled execution failed scheduleId={}", scheduleId, ex);
-                      store.updateScheduleStatus(scheduleId, ScheduleStatus.FAILED);
-                  } else {
-                      store.updateScheduleStatus(scheduleId, ScheduleStatus.FIRED);
-                      eventBus.publish(new ScheduledExecutionFiredEvent(
-                              scheduleId, result.executionId(), Instant.now()));
-                  }
-              });
+        engine.execute(new Intent(goal, context)).whenComplete((result, ex) -> {
+            if (ex != null) {
+                log.error("Scheduled execution failed scheduleId={}", scheduleId, ex);
+                store.updateScheduleStatus(scheduleId, ScheduleStatus.FAILED);
+            } else {
+                store.updateScheduleStatus(scheduleId, ScheduleStatus.FIRED);
+                eventBus.publish(new ScheduledExecutionFiredEvent(scheduleId, result.executionId(), Instant.now()));
+            }
+        });
     }
 
     private void enqueue(String scheduleId, ZonedDateTime nextFire) {
-        long delayMs = java.time.Duration.between(Instant.now(), nextFire.toInstant()).toMillis();
+        long delayMs =
+                java.time.Duration.between(Instant.now(), nextFire.toInstant()).toMillis();
         if (delayMs < 0) delayMs = 0;
-        ScheduledFuture<?> future = scheduler.schedule(
-                () -> onFire(scheduleId), delayMs, TimeUnit.MILLISECONDS);
+        ScheduledFuture<?> future = scheduler.schedule(() -> onFire(scheduleId), delayMs, TimeUnit.MILLISECONDS);
         activeFutures.put(scheduleId, future);
         log.debug("Enqueued schedule id={} next={} delayMs={}", scheduleId, nextFire, delayMs);
     }

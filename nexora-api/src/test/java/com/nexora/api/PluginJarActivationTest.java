@@ -1,5 +1,8 @@
 package com.nexora.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.nexora.core.capability.CapabilityResult;
 import com.nexora.core.execution.ExecutionResult;
 import com.nexora.core.execution.ExecutionStatus;
@@ -12,9 +15,6 @@ import com.nexora.spi.NexoraPlugin;
 import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
 import com.nexora.spi.PluginInitializationException;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -25,9 +25,8 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Regression tests for #140: plugins added via {@link NexoraEngine.Builder#withPluginJar(Path)}
@@ -65,8 +64,8 @@ class PluginJarActivationTest {
                         .build())
                 .build()) {
 
-            ExecutionResult result = engine.execute(new Intent("echo hello", Map.of()))
-                    .get(10, TimeUnit.SECONDS);
+            ExecutionResult result =
+                    engine.execute(new Intent("echo hello", Map.of())).get(10, TimeUnit.SECONDS);
 
             assertThat(result.status()).isEqualTo(ExecutionStatus.COMPLETED);
         }
@@ -103,7 +102,7 @@ class PluginJarActivationTest {
     private Path pluginJar(String fileName, Class<? extends NexoraPlugin> pluginClass) throws IOException {
         Path jar = tempDir.resolve(fileName);
         try (OutputStream out = Files.newOutputStream(jar);
-             JarOutputStream jarOut = new JarOutputStream(out)) {
+                JarOutputStream jarOut = new JarOutputStream(out)) {
             jarOut.putNextEntry(new JarEntry(SERVICE_FILE));
             jarOut.write(pluginClass.getName().getBytes(StandardCharsets.UTF_8));
             jarOut.closeEntry();
@@ -175,8 +174,8 @@ class PluginJarActivationTest {
 
         @Override
         public PluginDescriptor descriptor() {
-            return new PluginDescriptor(PLUGIN_ID, "1.0.0", "Requires the echo plugin",
-                    List.of(EchoJarPlugin.PLUGIN_ID), null);
+            return new PluginDescriptor(
+                    PLUGIN_ID, "1.0.0", "Requires the echo plugin", List.of(EchoJarPlugin.PLUGIN_ID), null);
         }
 
         @Override

@@ -17,9 +17,9 @@ import com.nexora.event.PlanTimedOutEvent;
 import com.nexora.event.StepCompletedEvent;
 import com.nexora.event.StepFailedEvent;
 import com.nexora.event.StepStartedEvent;
-import com.nexora.persistence.DeadLetterRecord;
 import com.nexora.executor.DagStepScheduler;
 import com.nexora.executor.HaltSignal;
+import com.nexora.persistence.DeadLetterRecord;
 import com.nexora.persistence.ExecutionRecord;
 import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.ExecutionStore;
@@ -30,9 +30,6 @@ import com.nexora.saga.SagaOrchestrator;
 import com.nexora.spi.CapabilityRegistry;
 import com.nexora.spi.Planner;
 import com.nexora.spi.PlanningContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -43,6 +40,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class ExecutionEngine {
 
@@ -52,13 +51,17 @@ public final class ExecutionEngine {
     private final CapabilityRegistry capabilityRegistry;
     private final DagStepScheduler scheduler;
     private final ExecutionEventBus eventBus;
-    private final ExecutionStore store;              // null = persistence disabled
+    private final ExecutionStore store; // null = persistence disabled
     private final SagaOrchestrator sagaOrchestrator; // null = saga disabled
-    private final Duration defaultPlanDeadline;      // null = no engine-wide deadline
+    private final Duration defaultPlanDeadline; // null = no engine-wide deadline
     private final Executor executor;
     private final WebhookDeliveryService webhookDeliveryService;
     // Executions currently running on this engine; entries are removed once terminal handling is done.
     private final ConcurrentHashMap<String, HaltSignal> runningExecutions = new ConcurrentHashMap<>();
+
+    private static final int STATE_WRITE_ATTEMPTS = 3;
+    private static final Duration STATE_WRITE_RETRY_DELAY = Duration.ofMillis(100);
+    private static final CompletableFuture<Void> NO_COMPENSATION = CompletableFuture.completedFuture(null);
 
     public ExecutionEngine(
             Planner planner,
@@ -118,42 +121,44 @@ public final class ExecutionEngine {
     }
 
     private void wireStoreSubscriptions() {
-        eventBus.subscribe(StepStartedEvent.class, e -> {
+        // Synchronous, in publish order: the step-start row (with its idempotency key) is written
+        // before the capability runs, completion can never land before start, and every step row is
+        // in the store by the time the execution's result completes, which replay relies on.
+        eventBus.subscribeSync(StepStartedEvent.class, e -> {
             try {
-                store.upsertStep(e.executionId(),
+                store.upsertStep(
+                        e.executionId(),
                         StepRecord.started(e.stepId(), e.capabilityId(), e.idempotencyKey(), e.occurredAt()));
             } catch (Exception ex) {
                 log.warn("Persistence: failed to record step start stepId={}", e.stepId(), ex);
             }
         });
-        eventBus.subscribe(StepCompletedEvent.class, e -> {
+        eventBus.subscribeSync(StepCompletedEvent.class, e -> {
             try {
-                StepRecord running = StepRecord.started(e.stepId(), e.capabilityId(), null,
-                        e.occurredAt().minus(e.elapsed()));
+                StepRecord running = StepRecord.started(
+                        e.stepId(), e.capabilityId(), null, e.occurredAt().minus(e.elapsed()));
                 store.upsertStep(e.executionId(), running.completed(e.occurredAt()));
             } catch (Exception ex) {
                 log.warn("Persistence: failed to record step completion stepId={}", e.stepId(), ex);
             }
         });
-        eventBus.subscribe(StepFailedEvent.class, e -> {
+        eventBus.subscribeSync(StepFailedEvent.class, e -> {
             try {
-                StepRecord running = StepRecord.started(e.stepId(), e.capabilityId(), null,
-                        e.occurredAt().minus(e.elapsed()));
-                store.upsertStep(e.executionId(),
-                        running.failed(e.failureCode(), e.failureMessage(), e.occurredAt()));
+                StepRecord running = StepRecord.started(
+                        e.stepId(), e.capabilityId(), null, e.occurredAt().minus(e.elapsed()));
+                store.upsertStep(e.executionId(), running.failed(e.failureCode(), e.failureMessage(), e.occurredAt()));
             } catch (Exception ex) {
                 log.warn("Persistence: failed to record step failure stepId={}", e.stepId(), ex);
             }
         });
     }
 
-    private void writeDeadLetter(String executionId, Intent intent, String failureCode,
-                                 String failureMessage, Instant failedAt) {
+    private void writeDeadLetter(
+            String executionId, Intent intent, String failureCode, String failureMessage, Instant failedAt) {
         if (store == null) return;
         String dlId = UUID.randomUUID().toString();
         DeadLetterRecord dl = DeadLetterRecord.pending(
-                dlId, executionId, intent.getGoal(), intent.getContext(),
-                failureCode, failureMessage, failedAt);
+                dlId, executionId, intent.getGoal(), intent.getContext(), failureCode, failureMessage, failedAt);
         try {
             store.createDeadLetter(dl);
         } catch (Exception e) {
@@ -164,13 +169,71 @@ public final class ExecutionEngine {
         log.warn("Execution dead-lettered executionId={} deadLetterId={} code={}", executionId, dlId, failureCode);
     }
 
+    /**
+     * Writes an execution state, retrying transient store failures. A lost terminal state is not
+     * harmless: a record left at COMPENSATING blocks replay, and one left at FAILED after
+     * compensation would let replay reuse keys for work that was rolled back.
+     */
     private void persistExecutionState(String executionId, ExecutionState state, Instant completedAt) {
         if (store == null) return;
-        try {
-            store.updateExecution(executionId, state, completedAt);
-        } catch (Exception e) {
-            log.warn("Persistence: failed to update execution state executionId={}", executionId, e);
+        for (int attempt = 1; ; attempt++) {
+            try {
+                store.updateExecution(executionId, state, completedAt);
+                return;
+            } catch (RuntimeException e) {
+                if (attempt >= STATE_WRITE_ATTEMPTS) {
+                    log.error(
+                            "Persistence: giving up on execution state write executionId={} state={} attempts={}",
+                            executionId,
+                            state,
+                            attempt,
+                            e);
+                    return;
+                }
+                log.warn(
+                        "Persistence: execution state write failed, retrying executionId={} state={} attempt={}",
+                        executionId,
+                        state,
+                        attempt,
+                        e);
+                if (!sleepBeforeRetry(attempt)) {
+                    log.error(
+                            "Persistence: interrupted before retrying execution state write executionId={} state={}",
+                            executionId,
+                            state);
+                    return;
+                }
+            }
         }
+    }
+
+    private static boolean sleepBeforeRetry(int attempt) {
+        try {
+            Thread.sleep(STATE_WRITE_RETRY_DELAY.toMillis() * attempt);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    /**
+     * Runs saga compensation when enabled. The returned future completes only after COMPENSATED
+     * has been written, so the caller can keep the execution tracked until then.
+     */
+    private CompletableFuture<Void> compensateIfEnabled(Plan plan, ExecutionResult result, ExecutionContext ctx) {
+        if (sagaOrchestrator == null) {
+            return NO_COMPENSATION;
+        }
+        String executionId = ctx.getExecutionId();
+        persistExecutionState(executionId, ExecutionState.COMPENSATING, Instant.now());
+        return sagaOrchestrator.compensate(plan, result, ctx).handle((v, err) -> {
+            if (err != null) {
+                log.error("Saga compensation threw executionId={} status={}", executionId, result.status(), err);
+            }
+            persistExecutionState(executionId, ExecutionState.COMPENSATED, Instant.now());
+            return null;
+        });
     }
 
     public ExecutionStore getStore() {
@@ -199,6 +262,11 @@ public final class ExecutionEngine {
         return halt.reason().filter(HaltSignal.Reason.CANCELLED::equals).isPresent()
                 ? CancellationOutcome.CANCELLED
                 : CancellationOutcome.ALREADY_TERMINAL;
+    }
+
+    /** True while the execution is running on this engine, including its terminal handling. */
+    public boolean isRunning(String executionId) {
+        return runningExecutions.containsKey(executionId);
     }
 
     private CancellationOutcome outcomeForUntrackedExecution(String executionId) {
@@ -230,20 +298,25 @@ public final class ExecutionEngine {
      * id (for tracking or {@link #cancel(String)}) before the execution finishes.
      */
     public ExecutionHandle submit(Intent intent, TraceContext traceContext) {
-        ExecutionContext ctx = new ExecutionContext(intent, traceContext);
+        return submit(intent, traceContext, Map.of());
+    }
+
+    /**
+     * {@link #submit(Intent, TraceContext)} that sends the given steps their original idempotency
+     * keys. Used by replay so steps that completed before are not repeated by idempotent capabilities.
+     */
+    public ExecutionHandle submit(Intent intent, TraceContext traceContext, Map<String, String> reusedIdempotencyKeys) {
+        ExecutionContext ctx = new ExecutionContext(intent, traceContext, reusedIdempotencyKeys);
 
         PlanningContext planningContext = new DefaultPlanningContext(capabilityRegistry, Map.of());
         Plan plan = planner.plan(intent, planningContext);
         Instant planStart = Instant.now();
 
         // Per-intent deadline takes priority; fall back to engine-wide default.
-        Duration effectiveDeadline = intent.getDeadline() != null
-                ? intent.getDeadline()
-                : defaultPlanDeadline;
+        Duration effectiveDeadline = intent.getDeadline() != null ? intent.getDeadline() : defaultPlanDeadline;
 
         if (effectiveDeadline != null) {
-            log.info("Execution deadline set executionId={} deadline={}",
-                    ctx.getExecutionId(), effectiveDeadline);
+            log.info("Execution deadline set executionId={} deadline={}", ctx.getExecutionId(), effectiveDeadline);
         }
 
         // Shared between the deadline watchdog, cancel(), and the scheduler. Registered before the
@@ -251,14 +324,20 @@ public final class ExecutionEngine {
         HaltSignal halt = new HaltSignal();
         runningExecutions.put(ctx.getExecutionId(), halt);
 
-        log.info("Starting execution executionId={} traceId={} goal={}",
-                ctx.getExecutionId(), traceContext.traceId(), intent.getGoal());
+        log.info(
+                "Starting execution executionId={} traceId={} goal={}",
+                ctx.getExecutionId(),
+                traceContext.traceId(),
+                intent.getGoal());
 
         if (store != null) {
             try {
                 store.createExecution(ExecutionRecord.started(
-                        ctx.getExecutionId(), traceContext.traceId(),
-                        intent.getGoal(), intent.getContext(), planStart));
+                        ctx.getExecutionId(),
+                        traceContext.traceId(),
+                        intent.getGoal(),
+                        intent.getContext(),
+                        planStart));
             } catch (Exception e) {
                 log.warn("Persistence: failed to create execution record executionId={}", ctx.getExecutionId(), e);
             }
@@ -278,35 +357,49 @@ public final class ExecutionEngine {
         if (effectiveDeadline != null && executor != null) {
             // Run the watchdog on the existing executor after the deadline duration.
             // CompletableFuture.delayedExecutor requires no dedicated ScheduledExecutorService.
-            Executor watchdogExecutor = CompletableFuture.delayedExecutor(
-                    effectiveDeadline.toMillis(), TimeUnit.MILLISECONDS, executor);
+            Executor watchdogExecutor =
+                    CompletableFuture.delayedExecutor(effectiveDeadline.toMillis(), TimeUnit.MILLISECONDS, executor);
 
             Duration capturedDeadline = effectiveDeadline; // effectively final for lambda
-            CompletableFuture.runAsync(() -> {
-                // Short-circuit: if the execution already finished naturally, nothing to do.
-                if (scheduledFuture.isDone()) return;
+            CompletableFuture.runAsync(
+                    () -> {
+                        // Short-circuit: if the execution already finished naturally, nothing to do.
+                        if (scheduledFuture.isDone()) return;
 
-                log.warn("Plan deadline expired executionId={} deadline={}",
-                        ctx.getExecutionId(), capturedDeadline);
+                        log.warn(
+                                "Plan deadline expired executionId={} deadline={}",
+                                ctx.getExecutionId(),
+                                capturedDeadline);
 
-                halt.halt(HaltSignal.Reason.DEADLINE);
-            }, watchdogExecutor);
+                        halt.halt(HaltSignal.Reason.DEADLINE);
+                    },
+                    watchdogExecutor);
         }
 
         CompletableFuture<ExecutionResult> result = scheduledFuture.whenComplete((r, ex) -> {
+            CompletableFuture<Void> compensation;
             try {
-                handleTerminalResult(r, ex, plan, ctx, intent, planStart, effectiveDeadline);
-            } finally {
-                // Removed only after the terminal state is persisted, so a racing cancel() reads
-                // either this live signal (sealed: ALREADY_TERMINAL) or the final store record.
+                compensation = handleTerminalResult(r, ex, plan, ctx, intent, planStart, effectiveDeadline);
+            } catch (RuntimeException e) {
                 runningExecutions.remove(ctx.getExecutionId());
+                throw e;
             }
+            // Stays tracked until the terminal state is persisted and any saga compensation has
+            // finished: cancel() and replay() then see a live execution, never a half-written record.
+            compensation.whenComplete((v, err) -> runningExecutions.remove(ctx.getExecutionId()));
         });
         return new ExecutionHandle(ctx.getExecutionId(), result);
     }
 
-    private void handleTerminalResult(ExecutionResult result, Throwable ex, Plan plan, ExecutionContext ctx,
-                                      Intent intent, Instant planStart, Duration effectiveDeadline) {
+    /** Records the outcome and returns the compensation future (already complete when there is none). */
+    private CompletableFuture<Void> handleTerminalResult(
+            ExecutionResult result,
+            Throwable ex,
+            Plan plan,
+            ExecutionContext ctx,
+            Intent intent,
+            Instant planStart,
+            Duration effectiveDeadline) {
         TraceContext traceContext = ctx.getTraceContext();
         Instant now = Instant.now();
         Duration elapsed = Duration.between(planStart, now);
@@ -315,93 +408,65 @@ public final class ExecutionEngine {
             log.error("Execution threw unexpectedly executionId={}", ctx.getExecutionId(), ex);
             persistExecutionState(ctx.getExecutionId(), ExecutionState.FAILED, now);
             eventBus.publish(new PlanFailedEvent(
-                    ctx.getExecutionId(), traceContext.traceId(),
-                    null, "UNEXPECTED_ERROR", elapsed, now
-            ));
-            writeDeadLetter(ctx.getExecutionId(), intent, "UNEXPECTED_ERROR",
-                    ex.getMessage(), now);
-            webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.FAILED, elapsed, ctx.getTraceContext());
+                    ctx.getExecutionId(), traceContext.traceId(), null, "UNEXPECTED_ERROR", elapsed, now));
+            writeDeadLetter(ctx.getExecutionId(), intent, "UNEXPECTED_ERROR", ex.getMessage(), now);
+            webhookDeliveryService.deliverIfApplicable(
+                    ctx.getExecutionId(), intent, ExecutionStatus.FAILED, elapsed, ctx.getTraceContext());
+            return NO_COMPENSATION;
 
         } else if (result.status() == ExecutionStatus.TIMED_OUT) {
             persistExecutionState(ctx.getExecutionId(), ExecutionState.TIMED_OUT, now);
             eventBus.publish(new PlanTimedOutEvent(
-                    ctx.getExecutionId(), traceContext.traceId(),
-                    effectiveDeadline, elapsed, now));
-            log.warn("Execution timed out executionId={} elapsed={}ms deadline={}",
-                    ctx.getExecutionId(), elapsed.toMillis(), effectiveDeadline);
-            webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.TIMED_OUT, elapsed, ctx.getTraceContext());
+                    ctx.getExecutionId(), traceContext.traceId(), effectiveDeadline, elapsed, now));
+            log.warn(
+                    "Execution timed out executionId={} elapsed={}ms deadline={}",
+                    ctx.getExecutionId(),
+                    elapsed.toMillis(),
+                    effectiveDeadline);
+            webhookDeliveryService.deliverIfApplicable(
+                    ctx.getExecutionId(), intent, ExecutionStatus.TIMED_OUT, elapsed, ctx.getTraceContext());
 
-            if (sagaOrchestrator != null) {
-                persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPENSATING, now);
-                sagaOrchestrator.compensate(plan, result, ctx)
-                        .whenComplete((v, err) -> {
-                            if (err != null) {
-                                log.error("Saga compensation threw on timeout executionId={}",
-                                        ctx.getExecutionId(), err);
-                            }
-                            persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPENSATED, Instant.now());
-                        });
-            }
+            return compensateIfEnabled(plan, result, ctx);
 
         } else if (result.status() == ExecutionStatus.CANCELLED) {
             // Deliberate stop: no dead letter, but completed work is still compensated.
             persistExecutionState(ctx.getExecutionId(), ExecutionState.CANCELLED, now);
-            eventBus.publish(new PlanCancelledEvent(
-                    ctx.getExecutionId(), traceContext.traceId(), elapsed, now));
-            log.info("Execution cancelled executionId={} elapsed={}ms",
-                    ctx.getExecutionId(), elapsed.toMillis());
-            webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.CANCELLED, elapsed, ctx.getTraceContext());
+            eventBus.publish(new PlanCancelledEvent(ctx.getExecutionId(), traceContext.traceId(), elapsed, now));
+            log.info("Execution cancelled executionId={} elapsed={}ms", ctx.getExecutionId(), elapsed.toMillis());
+            webhookDeliveryService.deliverIfApplicable(
+                    ctx.getExecutionId(), intent, ExecutionStatus.CANCELLED, elapsed, ctx.getTraceContext());
 
-            if (sagaOrchestrator != null) {
-                persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPENSATING, now);
-                sagaOrchestrator.compensate(plan, result, ctx)
-                        .whenComplete((v, err) -> {
-                            if (err != null) {
-                                log.error("Saga compensation threw on cancellation executionId={}",
-                                        ctx.getExecutionId(), err);
-                            }
-                            persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPENSATED, Instant.now());
-                        });
-            }
+            return compensateIfEnabled(plan, result, ctx);
 
         } else if (result.status() == ExecutionStatus.FAILED) {
             String failedStep = result.stepResults().stream()
                     .filter(sr -> !sr.succeeded())
                     .map(sr -> sr.stepId())
-                    .findFirst().orElse(null);
+                    .findFirst()
+                    .orElse(null);
             String failureMessage = result.stepResults().stream()
                     .filter(sr -> !sr.succeeded())
                     .filter(sr -> sr.capabilityResult() != null)
                     .map(sr -> sr.capabilityResult().failureMessage())
                     .filter(Objects::nonNull)
-                    .findFirst().orElse(null);
+                    .findFirst()
+                    .orElse(null);
             persistExecutionState(ctx.getExecutionId(), ExecutionState.FAILED, now);
             eventBus.publish(new PlanFailedEvent(
-                    ctx.getExecutionId(), traceContext.traceId(),
-                    failedStep, "STEP_FAILED", elapsed, now
-            ));
+                    ctx.getExecutionId(), traceContext.traceId(), failedStep, "STEP_FAILED", elapsed, now));
             writeDeadLetter(ctx.getExecutionId(), intent, "STEP_FAILED", failureMessage, now);
             log.warn("Execution failed executionId={} failedStep={}", ctx.getExecutionId(), failedStep);
-            webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.FAILED, elapsed, ctx.getTraceContext());
-            if (sagaOrchestrator != null) {
-                persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPENSATING, now);
-                sagaOrchestrator.compensate(plan, result, ctx)
-                        .whenComplete((v, err) -> {
-                            if (err != null) {
-                                log.error("Saga compensation threw executionId={}", ctx.getExecutionId(), err);
-                            }
-                            persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPENSATED, Instant.now());
-                        });
-            }
+            webhookDeliveryService.deliverIfApplicable(
+                    ctx.getExecutionId(), intent, ExecutionStatus.FAILED, elapsed, ctx.getTraceContext());
+            return compensateIfEnabled(plan, result, ctx);
 
         } else {
             persistExecutionState(ctx.getExecutionId(), ExecutionState.COMPLETED, now);
-            eventBus.publish(new PlanCompletedEvent(
-                    ctx.getExecutionId(), traceContext.traceId(), elapsed, now
-            ));
-            log.info("Execution completed executionId={} elapsed={}ms",
-                    ctx.getExecutionId(), elapsed.toMillis());
-            webhookDeliveryService.deliverIfApplicable(ctx.getExecutionId(), intent, ExecutionStatus.COMPLETED, elapsed, ctx.getTraceContext());
+            eventBus.publish(new PlanCompletedEvent(ctx.getExecutionId(), traceContext.traceId(), elapsed, now));
+            log.info("Execution completed executionId={} elapsed={}ms", ctx.getExecutionId(), elapsed.toMillis());
+            webhookDeliveryService.deliverIfApplicable(
+                    ctx.getExecutionId(), intent, ExecutionStatus.COMPLETED, elapsed, ctx.getTraceContext());
+            return NO_COMPENSATION;
         }
     }
 }

@@ -9,7 +9,7 @@ import com.nexora.core.context.ExecutionContext;
  */
 @FunctionalInterface
 public interface StepCondition {
-    
+
     /**
      * @param ctx the live execution context containing runtime state
      * @return true if the step should execute, false to skip it

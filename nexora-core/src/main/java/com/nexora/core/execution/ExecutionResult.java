@@ -3,11 +3,7 @@ package com.nexora.core.execution;
 import java.util.List;
 import java.util.Objects;
 
-public record ExecutionResult(
-        String executionId,
-        ExecutionStatus status,
-        List<StepResult> stepResults
-) {
+public record ExecutionResult(String executionId, ExecutionStatus status, List<StepResult> stepResults) {
     public ExecutionResult {
         Objects.requireNonNull(executionId, "executionId must not be null");
         Objects.requireNonNull(status, "status must not be null");

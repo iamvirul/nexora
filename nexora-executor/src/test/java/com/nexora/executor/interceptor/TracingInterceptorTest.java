@@ -1,19 +1,18 @@
 package com.nexora.executor.interceptor;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.nexora.core.capability.CapabilityRequest;
 import com.nexora.core.capability.CapabilityResult;
 import com.nexora.core.context.TraceContext;
 import com.nexora.tracing.Span;
 import com.nexora.tracing.SpanStatus;
 import com.nexora.tracing.Tracer;
-import org.junit.jupiter.api.Test;
-
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.junit.jupiter.api.Test;
 
 class TracingInterceptorTest {
 
@@ -56,7 +55,9 @@ class TracingInterceptorTest {
         CapabilityRequest request = request("exec-1", "step-1", "send-email", 0);
         RuntimeException boom = new RuntimeException("boom");
 
-        assertThatThrownBy(() -> interceptor.intercept(request, req -> { throw boom; }))
+        assertThatThrownBy(() -> interceptor.intercept(request, req -> {
+                    throw boom;
+                }))
                 .isSameAs(boom);
 
         assertThat(tracer.lastSpan.status).isEqualTo(SpanStatus.ERROR);
@@ -66,8 +67,14 @@ class TracingInterceptorTest {
 
     private static CapabilityRequest request(String executionId, String stepId, String capabilityId, int attempt) {
         return new CapabilityRequest(
-                capabilityId, stepId, "idem-1", Map.of(), TraceContext.root(),
-                Duration.ofSeconds(1), executionId, attempt);
+                capabilityId,
+                stepId,
+                "idem-1",
+                Map.of(),
+                TraceContext.root(),
+                Duration.ofSeconds(1),
+                executionId,
+                attempt);
     }
 
     private static final class RecordingTracer implements Tracer {
@@ -91,11 +98,34 @@ class TracingInterceptorTest {
             this.context = context;
         }
 
-        @Override public TraceContext context() { return context; }
-        @Override public void setAttribute(String key, String value) { attributes.put(key, value); }
-        @Override public void recordException(Throwable t) { recordedExceptions.add(t); }
-        @Override public void setStatus(SpanStatus status) { this.status = status; }
-        @Override public SpanStatus status() { return status; }
-        @Override public void end() { ended = true; }
+        @Override
+        public TraceContext context() {
+            return context;
+        }
+
+        @Override
+        public void setAttribute(String key, String value) {
+            attributes.put(key, value);
+        }
+
+        @Override
+        public void recordException(Throwable t) {
+            recordedExceptions.add(t);
+        }
+
+        @Override
+        public void setStatus(SpanStatus status) {
+            this.status = status;
+        }
+
+        @Override
+        public SpanStatus status() {
+            return status;
+        }
+
+        @Override
+        public void end() {
+            ended = true;
+        }
     }
 }

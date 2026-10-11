@@ -1,10 +1,10 @@
 package com.nexora.persistence;
 
-import com.nexora.persistence.jdbc.JdbcExecutionStore;
-import org.junit.jupiter.api.Test;
-
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.nexora.persistence.jdbc.JdbcExecutionStore;
+import org.junit.jupiter.api.Test;
 
 class JdbcExecutionStoreHealthTest {
 

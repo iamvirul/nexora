@@ -14,9 +14,6 @@ import com.nexora.persistence.ScheduleRecord;
 import com.nexora.persistence.ScheduleStatus;
 import com.nexora.persistence.StepRecord;
 import com.nexora.persistence.StepState;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -30,6 +27,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * JDBC-backed ExecutionStore. Ships with H2 as the default embedded database.
@@ -176,12 +175,19 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.setString(3, executionId);
             ps.executeUpdate();
         } catch (SQLException e) {
-            log.error("Failed to update execution state executionId={}", executionId, e);
+            // Thrown, not swallowed: the engine retries state writes, and a silently lost
+            // terminal state (e.g. stuck at COMPENSATING) would block replay forever.
+            throw new IllegalStateException("Failed to update execution state executionId=" + executionId, e);
         }
     }
 
     @Override
     public synchronized void upsertStep(String executionId, StepRecord step) {
+        // Completion and failure updates carry no idempotency key. Replacing the whole row would
+        // erase the key recorded at step start, which replay needs to avoid repeating side effects.
+        if (step.idempotencyKey() == null && updateStepKeepingKey(executionId, step)) {
+            return;
+        }
         String sql = """
             MERGE INTO nexora_steps
                 (execution_id, step_id, capability_id, idempotency_key, state,
@@ -206,12 +212,39 @@ public final class JdbcExecutionStore implements ExecutionStore {
         }
     }
 
+    /** Updates an existing step row without touching its idempotency key; false if no row exists yet. */
+    private boolean updateStepKeepingKey(String executionId, StepRecord step) {
+        String sql = """
+            UPDATE nexora_steps
+               SET capability_id = ?, state = ?, failure_code = ?, failure_message = ?,
+                   started_at = ?, completed_at = ?, duration_ms = ?
+             WHERE execution_id = ? AND step_id = ?
+        """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, step.capabilityId());
+            ps.setString(2, step.state().name());
+            ps.setString(3, step.failureCode());
+            ps.setString(4, step.failureMessage());
+            ps.setTimestamp(5, step.startedAt() != null ? Timestamp.from(step.startedAt()) : null);
+            ps.setTimestamp(6, step.completedAt() != null ? Timestamp.from(step.completedAt()) : null);
+            ps.setLong(7, step.durationMs());
+            ps.setString(8, executionId);
+            ps.setString(9, step.stepId());
+            return ps.executeUpdate() > 0;
+        } catch (SQLException e) {
+            log.error("Failed to update step executionId={} stepId={}", executionId, step.stepId(), e);
+            return true; // already logged; don't retry the same failing write as a MERGE
+        }
+    }
+
     @Override
     public synchronized void recordWebhookDelivery(com.nexora.persistence.WebhookDeliveryRecord record) {
-        if (record.deliveryId() == null || record.executionId() == null ||
-            record.url() == null || record.timestamp() == null) {
+        if (record.deliveryId() == null
+                || record.executionId() == null
+                || record.url() == null
+                || record.timestamp() == null) {
             throw new IllegalArgumentException(
-                "Required webhook delivery fields must not be null: deliveryId, executionId, url, timestamp");
+                    "Required webhook delivery fields must not be null: deliveryId, executionId, url, timestamp");
         }
         String sql = """
             INSERT INTO nexora_webhook_deliveries
@@ -249,8 +282,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
                             rs.getInt("attempt"),
                             rs.getBoolean("successful"),
                             rs.getTimestamp("timestamp").toInstant(),
-                            rs.getString("error_message")
-                    ));
+                            rs.getString("error_message")));
                 }
             }
         } catch (SQLException e) {
@@ -378,7 +410,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
         try {
             reviewState = rawState != null ? DeadLetterReviewState.valueOf(rawState) : DeadLetterReviewState.PENDING;
         } catch (IllegalArgumentException e) {
-            log.warn("Unknown review_state '{}' in dead letter id={}, defaulting to PENDING", rawState, rs.getString("id"));
+            log.warn(
+                    "Unknown review_state '{}' in dead letter id={}, defaulting to PENDING",
+                    rawState,
+                    rs.getString("id"));
             reviewState = DeadLetterReviewState.PENDING;
         }
         return new DeadLetterRecord(
@@ -390,8 +425,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 rs.getString("failure_message"),
                 rs.getTimestamp("failed_at").toInstant(),
                 reviewState,
-                rs.getString("resolve_reason")
-        );
+                rs.getString("resolve_reason"));
     }
 
     @Override
@@ -440,7 +474,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
         String sql = "SELECT * FROM nexora_schedules WHERE active = TRUE ORDER BY next_fire_at ASC";
         List<ScheduleRecord> results = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+                ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 try {
                     results.add(mapSchedule(rs));
@@ -460,7 +494,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
         String sql = "SELECT * FROM nexora_schedules ORDER BY created_at DESC";
         List<ScheduleRecord> results = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+                ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 try {
                     results.add(mapSchedule(rs));
@@ -542,8 +576,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 lastFiredAt != null ? lastFiredAt.toInstant() : null,
                 rs.getTimestamp("next_fire_at").toInstant(),
                 parseScheduleStatus(rs.getString("last_status")),
-                rs.getBoolean("active")
-        );
+                rs.getBoolean("active"));
     }
 
     private static MissedFirePolicy parseMissedFirePolicy(String value) {
@@ -570,7 +603,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
 
     @Override
     public synchronized void close() {
-        try { conn.close(); } catch (SQLException ignored) {}
+        try {
+            conn.close();
+        } catch (SQLException ignored) {
+        }
     }
 
     @Override
@@ -633,7 +669,8 @@ public final class JdbcExecutionStore implements ExecutionStore {
             List<String> conditions = new ArrayList<>();
             List<Object> params = new ArrayList<>();
             if (!filter.states().isEmpty()) {
-                conditions.add("state IN (" + String.join(", ", Collections.nCopies(filter.states().size(), "?")) + ")");
+                conditions.add("state IN ("
+                        + String.join(", ", Collections.nCopies(filter.states().size(), "?")) + ")");
                 filter.states().stream().map(Enum::name).sorted().forEach(params::add);
             }
             if (filter.goalContains() != null) {
@@ -695,8 +732,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 ExecutionState.valueOf(rs.getString("state")),
                 rs.getTimestamp("started_at").toInstant(),
                 completedAt != null ? completedAt.toInstant() : null,
-                List.of()
-        );
+                List.of());
     }
 
     private ExecutionRecord withSteps(ExecutionRecord exec) throws SQLException {
@@ -706,7 +742,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.setString(1, exec.executionId());
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    Timestamp startedAt  = rs.getTimestamp("started_at");
+                    Timestamp startedAt = rs.getTimestamp("started_at");
                     Timestamp completedAt = rs.getTimestamp("completed_at");
                     steps.add(new StepRecord(
                             rs.getString("step_id"),
@@ -715,14 +751,20 @@ public final class JdbcExecutionStore implements ExecutionStore {
                             StepState.valueOf(rs.getString("state")),
                             rs.getString("failure_code"),
                             rs.getString("failure_message"),
-                            startedAt  != null ? startedAt.toInstant()  : null,
+                            startedAt != null ? startedAt.toInstant() : null,
                             completedAt != null ? completedAt.toInstant() : null,
-                            rs.getLong("duration_ms")
-                    ));
+                            rs.getLong("duration_ms")));
                 }
             }
         }
-        return new ExecutionRecord(exec.executionId(), exec.traceId(), exec.goal(), exec.context(),
-                exec.state(), exec.startedAt(), exec.completedAt(), steps);
+        return new ExecutionRecord(
+                exec.executionId(),
+                exec.traceId(),
+                exec.goal(),
+                exec.context(),
+                exec.state(),
+                exec.startedAt(),
+                exec.completedAt(),
+                steps);
     }
 }

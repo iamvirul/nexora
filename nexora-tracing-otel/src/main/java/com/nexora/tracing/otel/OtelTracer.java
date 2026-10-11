@@ -15,12 +15,11 @@ import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * {@link Tracer} backed by the OpenTelemetry Java SDK, exporting spans over OTLP.
@@ -48,8 +47,8 @@ public final class OtelTracer implements Tracer, AutoCloseable {
     public static OtelTracer forEndpoint(String otlpEndpoint) {
         Objects.requireNonNull(otlpEndpoint, "otlpEndpoint must not be null");
 
-        Resource resource = Resource.getDefault().merge(
-                Resource.create(Attributes.of(AttributeKey.stringKey("service.name"), "nexora")));
+        Resource resource = Resource.getDefault()
+                .merge(Resource.create(Attributes.of(AttributeKey.stringKey("service.name"), "nexora")));
 
         OtlpHttpSpanExporter exporter = OtlpHttpSpanExporter.builder()
                 .setEndpoint(normalizeEndpoint(otlpEndpoint))
@@ -60,9 +59,8 @@ public final class OtelTracer implements Tracer, AutoCloseable {
                 .addSpanProcessor(BatchSpanProcessor.builder(exporter).build())
                 .build();
 
-        OpenTelemetrySdk sdk = OpenTelemetrySdk.builder()
-                .setTracerProvider(tracerProvider)
-                .build();
+        OpenTelemetrySdk sdk =
+                OpenTelemetrySdk.builder().setTracerProvider(tracerProvider).build();
 
         log.info("OtelTracer configured, exporting spans via OTLP/HTTP to {}", otlpEndpoint);
         return new OtelTracer(sdk);
@@ -80,9 +78,10 @@ public final class OtelTracer implements Tracer, AutoCloseable {
         var builder = delegate.spanBuilder(operationName).setSpanKind(SpanKind.INTERNAL);
         if (parent != null) {
             io.opentelemetry.api.trace.Span liveParent = liveSpans.get(parent.spanId());
-            builder.setParent(liveParent != null
-                    ? Context.root().with(liveParent)
-                    : Context.root().with(io.opentelemetry.api.trace.Span.wrap(remoteParentContext(parent))));
+            builder.setParent(
+                    liveParent != null
+                            ? Context.root().with(liveParent)
+                            : Context.root().with(io.opentelemetry.api.trace.Span.wrap(remoteParentContext(parent))));
         }
 
         io.opentelemetry.api.trace.Span otelSpan = builder.startSpan();

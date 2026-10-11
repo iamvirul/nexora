@@ -4,9 +4,6 @@ import com.nexora.core.capability.CapabilityContract;
 import com.nexora.event.CapabilityCircuitClosedEvent;
 import com.nexora.event.CapabilityCircuitOpenedEvent;
 import com.nexora.event.ExecutionEventBus;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -15,6 +12,8 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Tracks per-capability health using a sliding window and a circuit breaker.
@@ -46,8 +45,14 @@ public final class CapabilityContractMonitor {
     // Default constructor for tests that don't need events
     public CapabilityContractMonitor() {
         this.eventBus = new ExecutionEventBus() {
-            @Override public <E extends com.nexora.event.ExecutionEvent> void publish(E event) {}
-            @Override public <E extends com.nexora.event.ExecutionEvent> com.nexora.event.Subscription subscribe(Class<E> eventType, com.nexora.event.EventHandler<E> handler) { return () -> {}; }
+            @Override
+            public <E extends com.nexora.event.ExecutionEvent> void publish(E event) {}
+
+            @Override
+            public <E extends com.nexora.event.ExecutionEvent> com.nexora.event.Subscription subscribe(
+                    Class<E> eventType, com.nexora.event.EventHandler<E> handler) {
+                return () -> {};
+            }
         };
         this.registry = null;
     }
@@ -88,16 +93,19 @@ public final class CapabilityContractMonitor {
     }
 
     public enum CircuitState {
-        CLOSED, OPEN, HALF_OPEN
+        CLOSED,
+        OPEN,
+        HALF_OPEN
     }
 
-    public record HealthSnapshot(String capabilityId, CircuitState state, int sampleCount, double errorRate, Duration p99Latency) {}
+    public record HealthSnapshot(
+            String capabilityId, CircuitState state, int sampleCount, double errorRate, Duration p99Latency) {}
 
     private static final class CircuitBreaker {
         private final int capacity;
         private final LinkedList<Long> latenciesNanos = new LinkedList<>();
         private final LinkedList<Boolean> outcomes = new LinkedList<>();
-        
+
         private CircuitState state = CircuitState.CLOSED;
         private Instant openedAt;
         private Instant lastProbe;
@@ -149,7 +157,9 @@ public final class CapabilityContractMonitor {
                 if (now.isAfter(openedAt.plus(contract.openDuration()))) {
                     state = CircuitState.HALF_OPEN;
                     lastProbe = now;
-                    log.info("Circuit breaker for capability {} transitioned to HALF_OPEN (sending probe)", capabilityId);
+                    log.info(
+                            "Circuit breaker for capability {} transitioned to HALF_OPEN (sending probe)",
+                            capabilityId);
                     return new HealthCheckResult(true, null);
                 }
                 return new HealthCheckResult(false, null);
@@ -169,7 +179,8 @@ public final class CapabilityContractMonitor {
             if (contract.hasErrorRateSla()) {
                 double errRate = errorRate();
                 if (errRate > contract.maxErrorRate()) {
-                    log.warn("Capability {} breached error rate contract: {}% > {}%",
+                    log.warn(
+                            "Capability {} breached error rate contract: {}% > {}%",
                             capabilityId,
                             String.format(Locale.ROOT, "%.1f", errRate * 100),
                             String.format(Locale.ROOT, "%.1f", contract.maxErrorRate() * 100));
@@ -180,8 +191,11 @@ public final class CapabilityContractMonitor {
             if (contract.hasLatencySla()) {
                 Duration p99 = p99Latency();
                 if (p99.compareTo(contract.expectedP99Latency()) > 0) {
-                    log.warn("Capability {} breached p99 latency contract: {}ms > {}ms",
-                            capabilityId, p99.toMillis(), contract.expectedP99Latency().toMillis());
+                    log.warn(
+                            "Capability {} breached p99 latency contract: {}ms > {}ms",
+                            capabilityId,
+                            p99.toMillis(),
+                            contract.expectedP99Latency().toMillis());
                     return new HealthCheckResult(false, transitionToOpen(capabilityId, now));
                 }
             }
@@ -200,9 +214,13 @@ public final class CapabilityContractMonitor {
             return new HealthSnapshot(capabilityId, state, count(), errorRate(), p99Latency());
         }
 
-        synchronized CircuitState state() { return state; }
-        
-        synchronized int count() { return latenciesNanos.size(); }
+        synchronized CircuitState state() {
+            return state;
+        }
+
+        synchronized int count() {
+            return latenciesNanos.size();
+        }
 
         synchronized double errorRate() {
             if (outcomes.isEmpty()) return 0.0;

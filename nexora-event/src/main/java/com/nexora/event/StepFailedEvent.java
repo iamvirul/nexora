@@ -11,5 +11,5 @@ public record StepFailedEvent(
         String failureCode,
         String failureMessage,
         Duration elapsed,
-        Instant occurredAt
-) implements ExecutionEvent {}
+        Instant occurredAt)
+        implements ExecutionEvent {}

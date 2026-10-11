@@ -1,15 +1,16 @@
 package com.nexora.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.nexora.api.NexoraEngine.HealthStatus;
 import com.nexora.api.NexoraEngine.ReadinessReport;
 import com.nexora.persistence.jdbc.JdbcExecutionStore;
-import org.junit.jupiter.api.Test;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.junit.jupiter.api.Test;
 
 class NexoraEngineTest {
 
@@ -40,25 +41,26 @@ class NexoraEngineTest {
 
             assertThat(report.ready()).isTrue();
             assertThat(report.status()).isEqualTo(HealthStatus.UP);
-            assertThat(report.checks()).containsExactly(
-                    Map.entry(ReadinessReport.CHECK_PERSISTENCE, HealthStatus.UP),
-                    Map.entry(ReadinessReport.CHECK_PLUGINS, HealthStatus.UP),
-                    Map.entry(ReadinessReport.CHECK_EXECUTOR, HealthStatus.UP));
+            assertThat(report.checks())
+                    .containsExactly(
+                            Map.entry(ReadinessReport.CHECK_PERSISTENCE, HealthStatus.UP),
+                            Map.entry(ReadinessReport.CHECK_PLUGINS, HealthStatus.UP),
+                            Map.entry(ReadinessReport.CHECK_EXECUTOR, HealthStatus.UP));
         }
     }
 
     @Test
     void readinessTreatsDisabledPersistenceAsUp() {
         try (NexoraEngine engine = NexoraEngine.builder().build()) {
-            assertThat(engine.readiness().checks())
-                    .containsEntry(ReadinessReport.CHECK_PERSISTENCE, HealthStatus.UP);
+            assertThat(engine.readiness().checks()).containsEntry(ReadinessReport.CHECK_PERSISTENCE, HealthStatus.UP);
         }
     }
 
     @Test
     void readinessIsDownWhenPersistenceIsUnreachable() {
         JdbcExecutionStore store = JdbcExecutionStore.h2InMemory();
-        try (NexoraEngine engine = NexoraEngine.builder().withExecutionStore(store).build()) {
+        try (NexoraEngine engine =
+                NexoraEngine.builder().withExecutionStore(store).build()) {
             store.close();
 
             ReadinessReport report = engine.readiness();

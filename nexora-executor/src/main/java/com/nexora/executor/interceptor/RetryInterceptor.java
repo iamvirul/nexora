@@ -6,10 +6,9 @@ import com.nexora.executor.ExecutionInterceptor;
 import com.nexora.executor.InterceptorChain;
 import com.nexora.retry.RetryPolicy;
 import com.nexora.retry.RetryPolicyRegistry;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.Objects;
 
 public final class RetryInterceptor implements ExecutionInterceptor {
 
@@ -32,14 +31,22 @@ public final class RetryInterceptor implements ExecutionInterceptor {
                 if (result.succeeded() || isInterrupted() || !policy.shouldRetry(attempt, null)) {
                     return result;
                 }
-                log.warn("Capability returned failure, retrying. capability={} step={} attempt={} code={}",
-                        request.capabilityId(), request.stepId(), attempt, result.failureCode());
+                log.warn(
+                        "Capability returned failure, retrying. capability={} step={} attempt={} code={}",
+                        request.capabilityId(),
+                        request.stepId(),
+                        attempt,
+                        result.failureCode());
                 sleep(policy.backoffDelay(attempt));
                 attempt++;
             } catch (Exception e) {
                 if (isInterrupted() || !policy.shouldRetry(attempt, e)) throw e;
-                log.warn("Capability threw, retrying. capability={} step={} attempt={}",
-                        request.capabilityId(), request.stepId(), attempt, e);
+                log.warn(
+                        "Capability threw, retrying. capability={} step={} attempt={}",
+                        request.capabilityId(),
+                        request.stepId(),
+                        attempt,
+                        e);
                 sleep(policy.backoffDelay(attempt));
                 attempt++;
             }

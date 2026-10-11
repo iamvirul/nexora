@@ -2,16 +2,12 @@ package com.nexora.cli;
 
 import com.nexora.api.NexoraEngine;
 import com.nexora.spi.CapabilityDescriptor;
+import java.util.List;
+import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.ParentCommand;
 
-import java.util.List;
-import java.util.concurrent.Callable;
-
-@Command(
-        name = "caps",
-        mixinStandardHelpOptions = true
-)
+@Command(name = "caps", mixinStandardHelpOptions = true)
 public class CapsCommand implements Callable<Integer> {
 
     @ParentCommand
@@ -31,10 +27,7 @@ public class CapsCommand implements Callable<Integer> {
         System.out.printf("%-28s  %-8s  %s%n", "CAPABILITY ID", "IDEMPOTENT", "DESCRIPTION");
         System.out.println("─".repeat(72));
         for (CapabilityDescriptor cap : caps) {
-            System.out.printf("%-28s  %-8s  %s%n",
-                    cap.id(),
-                    cap.idempotent() ? "yes" : "no",
-                    cap.description());
+            System.out.printf("%-28s  %-8s  %s%n", cap.id(), cap.idempotent() ? "yes" : "no", cap.description());
         }
         System.out.printf("%n%d capability(ies) registered.%n", caps.size());
         return 0;

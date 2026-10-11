@@ -3,7 +3,6 @@ package com.nexora.cli;
 import com.nexora.persistence.ExecutionCursor;
 import com.nexora.persistence.ExecutionFilter;
 import com.nexora.persistence.ExecutionState;
-
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -53,7 +52,8 @@ record ExecutionHistoryQuery(ExecutionFilter filter, int pageSize) {
                 continue;
             }
             // Keep empty values ("?limit=") so they are validated instead of silently defaulted.
-            params.put(URLDecoder.decode(kv[0], StandardCharsets.UTF_8),
+            params.put(
+                    URLDecoder.decode(kv[0], StandardCharsets.UTF_8),
                     kv.length == 2 ? URLDecoder.decode(kv[1], StandardCharsets.UTF_8) : "");
         }
         return params;

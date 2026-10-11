@@ -1,12 +1,11 @@
 package com.nexora.cli;
 
-import org.junit.jupiter.api.Test;
-import picocli.CommandLine;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
+import picocli.CommandLine;
 
 class DemoCommandTest {
 
@@ -21,7 +20,9 @@ class DemoCommandTest {
         int exitCode = cmd.execute("--timeout", "0");
         assertNotEquals(0, exitCode);
         String errOutput = sw.toString();
-        assertTrue(errOutput.contains("must be greater than zero"), "Error message should complain about timeout: " + errOutput);
+        assertTrue(
+                errOutput.contains("must be greater than zero"),
+                "Error message should complain about timeout: " + errOutput);
     }
 
     @Test
@@ -35,6 +36,8 @@ class DemoCommandTest {
         int exitCode = cmd.execute("--timeout", "-100");
         assertNotEquals(0, exitCode);
         String errOutput = sw.toString();
-        assertTrue(errOutput.contains("must be greater than zero"), "Error message should complain about timeout: " + errOutput);
+        assertTrue(
+                errOutput.contains("must be greater than zero"),
+                "Error message should complain about timeout: " + errOutput);
     }
 }

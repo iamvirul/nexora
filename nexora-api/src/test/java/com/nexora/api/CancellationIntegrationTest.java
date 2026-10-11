@@ -1,5 +1,8 @@
 package com.nexora.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.nexora.api.observability.NexoraObservability;
 import com.nexora.core.capability.CapabilityResult;
 import com.nexora.core.execution.ExecutionHandle;
@@ -20,11 +23,6 @@ import com.nexora.spi.CapabilityProvider;
 import com.nexora.spi.NexoraPlugin;
 import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -38,9 +36,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 class CancellationIntegrationTest {
 
@@ -82,16 +80,19 @@ class CancellationIntegrationTest {
         CompletableFuture<ExecutionResult> execution = engine.execute(new Intent(ORDER_GOAL, Map.of()));
         String executionId = awaitBlockingStep();
 
-        assertThat(engine.cancel(executionId).get(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+        assertThat(engine.cancel(executionId).get(WAIT_SECONDS, TimeUnit.SECONDS))
+                .isTrue();
         ExecutionResult result = execution.get(WAIT_SECONDS, TimeUnit.SECONDS);
 
         assertThat(result.status()).isEqualTo(ExecutionStatus.CANCELLED);
         assertThat(blockInterrupted.getCount()).as("running step interrupted").isZero();
         assertThat(notifyCalls.get()).as("dependent step never started").isZero();
         assertThat(store.findById(executionId)).map(ExecutionRecord::state).contains(ExecutionState.CANCELLED);
-        assertThat(cancelledEvent.get(WAIT_SECONDS, TimeUnit.SECONDS).executionId()).isEqualTo(executionId);
+        assertThat(cancelledEvent.get(WAIT_SECONDS, TimeUnit.SECONDS).executionId())
+                .isEqualTo(executionId);
         assertThat(store.findDeadLetters(DeadLetterReviewState.PENDING, 0, 10))
-                .as("a deliberate cancel is not a dead letter").isEmpty();
+                .as("a deliberate cancel is not a dead letter")
+                .isEmpty();
     }
 
     @Test
@@ -103,7 +104,8 @@ class CancellationIntegrationTest {
 
         assertThat(handle.result()).isNotDone();
         assertThat(handle.executionId()).isEqualTo(startedId);
-        assertThat(engine.cancel(handle.executionId()).get(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+        assertThat(engine.cancel(handle.executionId()).get(WAIT_SECONDS, TimeUnit.SECONDS))
+                .isTrue();
         ExecutionResult result = handle.result().get(WAIT_SECONDS, TimeUnit.SECONDS);
         assertThat(result.executionId()).isEqualTo(handle.executionId());
         assertThat(result.status()).isEqualTo(ExecutionStatus.CANCELLED);
@@ -115,10 +117,14 @@ class CancellationIntegrationTest {
         try {
             engine = buildEngine(false, singleThread);
             ExecutionHandle handle = engine.submit(new Intent(ORDER_GOAL, Map.of()));
-            assertThat(blockStarted.await(WAIT_SECONDS, TimeUnit.SECONDS)).as("blocking step started").isTrue();
+            assertThat(blockStarted.await(WAIT_SECONDS, TimeUnit.SECONDS))
+                    .as("blocking step started")
+                    .isTrue();
 
-            assertThat(engine.cancel(handle.executionId()).get(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
-            assertThat(handle.result().get(WAIT_SECONDS, TimeUnit.SECONDS).status()).isEqualTo(ExecutionStatus.CANCELLED);
+            assertThat(engine.cancel(handle.executionId()).get(WAIT_SECONDS, TimeUnit.SECONDS))
+                    .isTrue();
+            assertThat(handle.result().get(WAIT_SECONDS, TimeUnit.SECONDS).status())
+                    .isEqualTo(ExecutionStatus.CANCELLED);
         } finally {
             singleThread.shutdownNow();
         }
@@ -138,7 +144,8 @@ class CancellationIntegrationTest {
         assertThat(compensated.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
         assertThat(releaseCalls.get()).isEqualTo(1);
         awaitCondition(() -> store.findById(executionId)
-                .map(r -> r.state() == ExecutionState.COMPENSATED).orElse(false));
+                .map(r -> r.state() == ExecutionState.COMPENSATED)
+                .orElse(false));
     }
 
     @Test
@@ -149,9 +156,11 @@ class CancellationIntegrationTest {
         CompletableFuture<ExecutionResult> execution = engine.execute(new Intent(ORDER_GOAL, Map.of()));
         String executionId = awaitBlockingStep();
 
-        assertThat(engine.cancel(executionId).get(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+        assertThat(engine.cancel(executionId).get(WAIT_SECONDS, TimeUnit.SECONDS))
+                .isTrue();
         assertThat(blockInterrupted.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
-        assertThat(engine.cancel(executionId).get(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+        assertThat(engine.cancel(executionId).get(WAIT_SECONDS, TimeUnit.SECONDS))
+                .isTrue();
 
         drainGate.countDown();
         assertThat(execution.get(WAIT_SECONDS, TimeUnit.SECONDS).status()).isEqualTo(ExecutionStatus.CANCELLED);
@@ -160,11 +169,15 @@ class CancellationIntegrationTest {
     @Test
     void cancellingFinishedExecutionReturnsFalse() throws Exception {
         engine = buildEngine(false);
-        ExecutionResult result = engine.execute(new Intent(QUICK_GOAL, Map.of())).get(WAIT_SECONDS, TimeUnit.SECONDS);
+        ExecutionResult result =
+                engine.execute(new Intent(QUICK_GOAL, Map.of())).get(WAIT_SECONDS, TimeUnit.SECONDS);
         assertThat(result.status()).isEqualTo(ExecutionStatus.COMPLETED);
 
-        assertThat(engine.cancel(result.executionId()).get(WAIT_SECONDS, TimeUnit.SECONDS)).isFalse();
-        assertThat(store.findById(result.executionId())).map(ExecutionRecord::state).contains(ExecutionState.COMPLETED);
+        assertThat(engine.cancel(result.executionId()).get(WAIT_SECONDS, TimeUnit.SECONDS))
+                .isFalse();
+        assertThat(store.findById(result.executionId()))
+                .map(ExecutionRecord::state)
+                .contains(ExecutionState.COMPLETED);
     }
 
     @Test
@@ -194,8 +207,7 @@ class CancellationIntegrationTest {
     void cancelRejectsBlankExecutionId() {
         engine = buildEngine(false);
 
-        assertThatThrownBy(() -> engine.cancel(" ").join())
-                .hasCauseInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> engine.cancel(" ").join()).hasCauseInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -217,7 +229,9 @@ class CancellationIntegrationTest {
     }
 
     private String awaitBlockingStep() throws Exception {
-        assertThat(blockStarted.await(WAIT_SECONDS, TimeUnit.SECONDS)).as("blocking step started").isTrue();
+        assertThat(blockStarted.await(WAIT_SECONDS, TimeUnit.SECONDS))
+                .as("blocking step started")
+                .isTrue();
         return startedExecutionId.get(WAIT_SECONDS, TimeUnit.SECONDS);
     }
 
@@ -263,11 +277,16 @@ class CancellationIntegrationTest {
 
     private NexoraPlugin testPlugin() {
         return new NexoraPlugin() {
-            @Override public PluginDescriptor descriptor() {
+            @Override
+            public PluginDescriptor descriptor() {
                 return new PluginDescriptor("cancel-test", "1.0", "cancellation test plugin", List.of(), null);
             }
-            @Override public void initialize(PluginContext ctx) {}
-            @Override public List<CapabilityProvider> capabilityProviders() {
+
+            @Override
+            public void initialize(PluginContext ctx) {}
+
+            @Override
+            public List<CapabilityProvider> capabilityProviders() {
                 return List.of(
                         provider("reserve", req -> CapabilityResult.success("reserved")),
                         provider("release", req -> {
@@ -280,7 +299,9 @@ class CancellationIntegrationTest {
                             return CapabilityResult.success("notified");
                         }));
             }
-            @Override public void shutdown() {}
+
+            @Override
+            public void shutdown() {}
         };
     }
 
@@ -306,10 +327,13 @@ class CancellationIntegrationTest {
 
     private static CapabilityProvider provider(String id, Capability capability) {
         return new CapabilityProvider() {
-            @Override public CapabilityDescriptor descriptor() {
+            @Override
+            public CapabilityDescriptor descriptor() {
                 return new CapabilityDescriptor(id, id, List.of(), List.of(), true, false);
             }
-            @Override public Capability create(PluginContext ctx) {
+
+            @Override
+            public Capability create(PluginContext ctx) {
                 return capability;
             }
         };

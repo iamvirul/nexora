@@ -1,20 +1,19 @@
 package com.nexora.persistence;
 
-import com.nexora.persistence.jdbc.JdbcExecutionStore;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 class JdbcExecutionHistoryTest {
 
@@ -48,6 +47,39 @@ class JdbcExecutionHistoryTest {
 
         assertTrue(store.findByFilter(ExecutionFilter.all()).get(0).steps().isEmpty());
         assertEquals(1, store.findById("a").orElseThrow().steps().size());
+    }
+
+    @Test
+    void completingAStepKeepsItsRecordedIdempotencyKey() {
+        insert("a", "goal", ExecutionState.FAILED, T0);
+        store.upsertStep("a", StepRecord.started("charge", "charge_card", "key-1", T0));
+        // Completion and failure events carry no key; the recorded one must survive them.
+        store.upsertStep(
+                "a", StepRecord.started("charge", "charge_card", null, T0).completed(T0.plusMillis(30)));
+        store.upsertStep("a", StepRecord.started("ship", "ship", "key-2", T0));
+        store.upsertStep(
+                "a", StepRecord.started("ship", "ship", null, T0).failed("DOWN", "carrier down", T0.plusMillis(9)));
+
+        List<StepRecord> steps = store.findById("a").orElseThrow().steps();
+
+        assertEquals("key-1", stepById(steps, "charge").idempotencyKey());
+        assertEquals(StepState.COMPLETED, stepById(steps, "charge").state());
+        assertEquals("key-2", stepById(steps, "ship").idempotencyKey());
+        assertEquals(StepState.FAILED, stepById(steps, "ship").state());
+    }
+
+    @Test
+    void stepWithoutPriorRowIsInsertedEvenWithoutKey() {
+        insert("a", "goal", ExecutionState.FAILED, T0);
+        store.upsertStep("a", StepRecord.started("skip", "noop", null, T0).skipped(T0));
+
+        assertEquals(
+                StepState.SKIPPED,
+                store.findById("a").orElseThrow().steps().get(0).state());
+    }
+
+    private static StepRecord stepById(List<StepRecord> steps, String stepId) {
+        return steps.stream().filter(s -> s.stepId().equals(stepId)).findFirst().orElseThrow();
     }
 
     @Test
@@ -127,8 +159,9 @@ class JdbcExecutionHistoryTest {
             }
         } while (rows.size() == 2);
 
-        assertEquals(List.of("later-4", "later-3", "later-2", "later-1", "later-0",
-                "tie-3", "tie-2", "tie-1", "tie-0"), seen);
+        assertEquals(
+                List.of("later-4", "later-3", "later-2", "later-1", "later-0", "tie-3", "tie-2", "tie-1", "tie-0"),
+                seen);
     }
 
     @Test
@@ -142,6 +175,16 @@ class JdbcExecutionHistoryTest {
         store.close(); // simulates the database becoming unreachable
 
         assertThrows(IllegalStateException.class, () -> store.findById("a"));
+    }
+
+    @Test
+    void updateExecutionReportsStoreFailure() {
+        insert("a", "goal", ExecutionState.RUNNING, T0);
+        store.close();
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> store.updateExecution("a", ExecutionState.COMPLETED, T0.plusSeconds(1)));
     }
 
     @Test
@@ -166,7 +209,8 @@ class JdbcExecutionHistoryTest {
     }
 
     private void insert(String id, String goal, ExecutionState state, Instant startedAt) {
-        store.createExecution(new ExecutionRecord(id, "trace-" + id, goal, Map.of(), state, startedAt, null, List.of()));
+        store.createExecution(
+                new ExecutionRecord(id, "trace-" + id, goal, Map.of(), state, startedAt, null, List.of()));
     }
 
     private static ExecutionFilter filter(Set<ExecutionState> states, String goal, Instant from, Instant to) {

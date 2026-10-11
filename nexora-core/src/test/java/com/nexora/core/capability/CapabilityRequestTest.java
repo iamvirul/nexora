@@ -1,20 +1,19 @@
 package com.nexora.core.capability;
 
-import com.nexora.core.context.TraceContext;
-import org.junit.jupiter.api.Test;
-
-import java.time.Duration;
-import java.util.Map;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.nexora.core.context.TraceContext;
+import java.time.Duration;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
 
 class CapabilityRequestTest {
 
     @Test
     void shouldRequireExecutionId() {
-        assertThatThrownBy(() -> new CapabilityRequest(
-                "cap", "step-1", "idem-1", Map.of(), TraceContext.root(), null, null, 0))
+        assertThatThrownBy(() ->
+                        new CapabilityRequest("cap", "step-1", "idem-1", Map.of(), TraceContext.root(), null, null, 0))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("executionId");
     }
@@ -25,9 +24,8 @@ class CapabilityRequestTest {
         inputs.put("a", "1");
         inputs.put("b", null);
 
-        CapabilityRequest request = new CapabilityRequest(
-                "cap", "step-1", "idem-1", inputs,
-                TraceContext.root(), null, "exec-1", 0);
+        CapabilityRequest request =
+                new CapabilityRequest("cap", "step-1", "idem-1", inputs, TraceContext.root(), null, "exec-1", 0);
 
         assertThat(request.inputs()).containsExactly(Map.entry("a", "1"));
     }
@@ -35,8 +33,7 @@ class CapabilityRequestTest {
     @Test
     void withAttemptReturnsCopyWithNewAttemptNumberOnly() {
         CapabilityRequest request = new CapabilityRequest(
-                "cap", "step-1", "idem-1", Map.of(), TraceContext.root(),
-                Duration.ofSeconds(1), "exec-1", 0);
+                "cap", "step-1", "idem-1", Map.of(), TraceContext.root(), Duration.ofSeconds(1), "exec-1", 0);
 
         CapabilityRequest retried = request.withAttempt(2);
 

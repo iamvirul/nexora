@@ -6,6 +6,8 @@ import com.nexora.core.capability.CapabilityContract;
 import com.nexora.core.capability.CapabilityResult;
 import com.nexora.core.execution.ExecutionStatus;
 import com.nexora.core.intent.Intent;
+import com.nexora.core.plan.StepCondition;
+import com.nexora.core.plan.condition.ContextValueEquals;
 import com.nexora.planner.model.StepDefinition;
 import com.nexora.retry.ExponentialBackoffPolicy;
 import com.nexora.spi.Capability;
@@ -14,12 +16,7 @@ import com.nexora.spi.CapabilityProvider;
 import com.nexora.spi.NexoraPlugin;
 import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
-import com.nexora.core.plan.StepCondition;
-import com.nexora.core.plan.condition.ContextValueEquals;
 import com.sun.net.httpserver.HttpServer;
-
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -28,6 +25,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 public class JsonConfigDemoApp {
 
@@ -84,14 +83,12 @@ public class JsonConfigDemoApp {
 
         NexoraEngine.Builder builder = NexoraEngine.builder()
                 .withWebhookSecret(config.webhookSecret)
-                .withDefaultRetryPolicy(
-                        ExponentialBackoffPolicy.builder()
-                                .maxAttempts(config.retry.maxAttempts)
-                                .initialDelay(Duration.ofMillis(config.retry.initialDelayMs))
-                                .multiplier(config.retry.multiplier)
-                                .maxDelay(Duration.ofMillis(config.retry.maxDelayMs))
-                                .build()
-                )
+                .withDefaultRetryPolicy(ExponentialBackoffPolicy.builder()
+                        .maxAttempts(config.retry.maxAttempts)
+                        .initialDelay(Duration.ofMillis(config.retry.initialDelayMs))
+                        .multiplier(config.retry.multiplier)
+                        .maxDelay(Duration.ofMillis(config.retry.maxDelayMs))
+                        .build())
                 .withPlugin(buildPlugin());
 
         for (StepConfig sc : config.steps) {
@@ -105,7 +102,7 @@ public class JsonConfigDemoApp {
         }
 
         NexoraEngine engine = builder.build();
-        
+
         System.out.println("Configured NexoraEngine with " + config.steps.size() + " steps and webhook secret.");
 
         // Start mock webhook server
@@ -125,7 +122,7 @@ public class JsonConfigDemoApp {
                 byte[] hmacBytes = mac.doFinal(body);
                 StringBuilder sb = new StringBuilder();
                 for (byte b : hmacBytes) sb.append(String.format("%02x", b));
-                
+
                 System.out.println("  >>> Calculated HMAC: " + sb.toString());
                 if (sb.toString().equals(signature)) {
                     System.out.println("  >>> SUCCESS: Signature matches perfectly!");
@@ -150,8 +147,7 @@ public class JsonConfigDemoApp {
                     Map.of("reportType", "daily", "send_email_enabled", true),
                     null,
                     "http://localhost:" + HTTP_PORT + "/webhook",
-                    List.of(ExecutionStatus.COMPLETED)
-            ));
+                    List.of(ExecutionStatus.COMPLETED)));
 
             shutdown.await(30, java.util.concurrent.TimeUnit.SECONDS);
         } finally {
@@ -162,34 +158,51 @@ public class JsonConfigDemoApp {
 
     static NexoraPlugin buildPlugin() {
         return new NexoraPlugin() {
-            @Override public PluginDescriptor descriptor() {
+            @Override
+            public PluginDescriptor descriptor() {
                 return new PluginDescriptor("demo-plugin", "1.0", "Demo capabilities", List.of(), null);
             }
-            @Override public void initialize(PluginContext ctx) {}
-            @Override public void shutdown() {}
-            @Override public List<CapabilityProvider> capabilityProviders() {
+
+            @Override
+            public void initialize(PluginContext ctx) {}
+
+            @Override
+            public void shutdown() {}
+
+            @Override
+            public List<CapabilityProvider> capabilityProviders() {
                 return List.of(
-                    cap("generate_report", req -> {
-                        System.out.println("  [generate_report] Generating report...");
-                        try { Thread.sleep(200); } catch (InterruptedException e) {}
-                        return CapabilityResult.success(Map.of("reportId", "REP-123"));
-                    }),
-                    cap("send_email", req -> {
-                        System.out.println("  [send_email] Sending report email...");
-                        try { Thread.sleep(200); } catch (InterruptedException e) {}
-                        return CapabilityResult.success(Map.of("emailSent", true));
-                    })
-                );
+                        cap("generate_report", req -> {
+                            System.out.println("  [generate_report] Generating report...");
+                            try {
+                                Thread.sleep(200);
+                            } catch (InterruptedException e) {
+                            }
+                            return CapabilityResult.success(Map.of("reportId", "REP-123"));
+                        }),
+                        cap("send_email", req -> {
+                            System.out.println("  [send_email] Sending report email...");
+                            try {
+                                Thread.sleep(200);
+                            } catch (InterruptedException e) {
+                            }
+                            return CapabilityResult.success(Map.of("emailSent", true));
+                        }));
             }
         };
     }
 
     static CapabilityProvider cap(String id, Capability impl) {
         return new CapabilityProvider() {
-            @Override public CapabilityDescriptor descriptor() {
+            @Override
+            public CapabilityDescriptor descriptor() {
                 return new CapabilityDescriptor(id, id, List.of(), List.of(), true, false, CapabilityContract.none());
             }
-            @Override public Capability create(PluginContext ctx) { return impl; }
+
+            @Override
+            public Capability create(PluginContext ctx) {
+                return impl;
+            }
         };
     }
 }

@@ -2,10 +2,9 @@ package com.nexora.loader;
 
 import com.nexora.spi.CapabilityRegistry;
 import com.nexora.spi.PluginContext;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.Map;
 
 final class DefaultPluginContext implements PluginContext {
 

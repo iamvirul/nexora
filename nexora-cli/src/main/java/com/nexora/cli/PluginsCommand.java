@@ -1,15 +1,11 @@
 package com.nexora.cli;
 
+import java.util.List;
+import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.ParentCommand;
 
-import java.util.List;
-import java.util.concurrent.Callable;
-
-@Command(
-        name = "plugins",
-        mixinStandardHelpOptions = true
-)
+@Command(name = "plugins", mixinStandardHelpOptions = true)
 public class PluginsCommand implements Callable<Integer> {
 
     @ParentCommand

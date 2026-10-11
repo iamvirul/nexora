@@ -1,0 +1,26 @@
+Replay an unsuccessful execution (FAILED, TIMED_OUT, CANCELLED or COMPENSATED) through a `nexora observe` server.
+
+  Starts a new execution with the same goal and context. The new
+  execution's context carries the original id as _replayOf.
+
+  Steps that completed in the original are sent their original
+  idempotency keys, so idempotent capabilities skip repeating them.
+  If the original was COMPENSATED its work was rolled back, so every
+  step runs again with fresh keys.
+
+  Only FAILED, TIMED_OUT, CANCELLED and COMPENSATED executions can be
+  replayed. Requires a persistence store on the observe server.
+
+  Exit codes
+  ──────────
+  0  Replay started
+  1  Not found, not replayable, or the server could not be reached
+  2  Invalid arguments
+
+  Examples
+  ────────
+  Replay on the local observe server:
+    nexora replay 4f3a1c2d-...
+
+  Replay on a remote observe server:
+    nexora replay 4f3a1c2d-... --server http://nexora.internal:9464

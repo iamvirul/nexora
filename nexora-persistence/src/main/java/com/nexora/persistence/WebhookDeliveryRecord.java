@@ -10,5 +10,4 @@ public record WebhookDeliveryRecord(
         int attempt,
         boolean successful,
         Instant timestamp,
-        String errorMessage
-) {}
+        String errorMessage) {}

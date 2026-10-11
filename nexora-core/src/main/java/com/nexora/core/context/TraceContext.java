@@ -7,10 +7,9 @@ import java.util.UUID;
 public record TraceContext(
         String traceId,
         String spanId,
-        String parentSpanId,   // null for root spans
+        String parentSpanId, // null for root spans
         Map<String, String> baggage,
-        boolean sampled
-) {
+        boolean sampled) {
     public TraceContext {
         Objects.requireNonNull(traceId, "traceId must not be null");
         Objects.requireNonNull(spanId, "spanId must not be null");

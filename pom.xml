@@ -86,6 +86,9 @@
         <nexora-persistence.version>0.3.0-SNAPSHOT</nexora-persistence.version>
         <nexora-api.version>0.3.0-SNAPSHOT</nexora-api.version>
         <nexora-cli.version>0.3.0-SNAPSHOT</nexora-cli.version>
+
+        <spotless.version>3.10.2</spotless.version>
+        <palantir-java-format.version>2.100.0</palantir-java-format.version>
     </properties>
 
     <distributionManagement>
@@ -115,6 +118,31 @@
                     <source>${java.version}</source>
                     <target>${java.version}</target>
                 </configuration>
+            </plugin>
+            <!-- Java formatting: `mvn spotless:apply` fixes, `mvn verify` (and CI) fails on unformatted code. -->
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>${spotless.version}</version>
+                <configuration>
+                    <java>
+                        <palantirJavaFormat>
+                            <version>${palantir-java-format.version}</version>
+                        </palantirJavaFormat>
+                        <removeUnusedImports/>
+                        <trimTrailingWhitespace/>
+                        <endWithNewline/>
+                    </java>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>check-formatting</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

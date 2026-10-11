@@ -10,9 +10,6 @@ import com.nexora.spi.NexoraPlugin;
 import com.nexora.spi.Planner;
 import com.nexora.spi.PlannerProvider;
 import com.nexora.spi.PluginInitializationException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.net.URL;
 import java.nio.file.Path;
@@ -24,6 +21,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.ServiceLoader;
 import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Manages the full lifecycle of plugins: load → activate → deactivate → unload.
@@ -64,18 +63,13 @@ public final class PluginManager {
             throw new PluginInitializationException("Cannot resolve URL for plugin jar: " + pluginJar, e);
         }
 
-        PluginClassLoader classLoader = new PluginClassLoader(
-                new URL[]{jarUrl},
-                getClass().getClassLoader()
-        );
+        PluginClassLoader classLoader =
+                new PluginClassLoader(new URL[] {jarUrl}, getClass().getClassLoader());
 
-        NexoraPlugin plugin = ServiceLoader
-                .load(NexoraPlugin.class, classLoader)
+        NexoraPlugin plugin = ServiceLoader.load(NexoraPlugin.class, classLoader)
                 .findFirst()
-                .orElseThrow(() -> new PluginInitializationException(
-                        "No NexoraPlugin implementation found in jar: " + pluginJar +
-                        ". Ensure META-INF/services/com.nexora.spi.NexoraPlugin is present."
-                ));
+                .orElseThrow(() -> new PluginInitializationException("No NexoraPlugin implementation found in jar: "
+                        + pluginJar + ". Ensure META-INF/services/com.nexora.spi.NexoraPlugin is present."));
 
         String pluginId = plugin.descriptor().id();
         if (plugins.containsKey(pluginId)) {
@@ -127,7 +121,10 @@ public final class PluginManager {
         for (CapabilityProvider provider : state.plugin().capabilityProviders()) {
             Capability instance = provider.create(ctx);
             capabilityRegistry.register(provider.descriptor(), instance);
-            log.info("Registered capability id={} from plugin={}", provider.descriptor().id(), pluginId);
+            log.info(
+                    "Registered capability id={} from plugin={}",
+                    provider.descriptor().id(),
+                    pluginId);
         }
 
         List<Planner> pluginPlanners = new ArrayList<>();
@@ -135,12 +132,16 @@ public final class PluginManager {
             Planner planner = provider.create(ctx);
             registeredPlanners.add(planner);
             pluginPlanners.add(planner);
-            log.info("Registered planner id={} from plugin={}", provider.descriptor().id(), pluginId);
+            log.info(
+                    "Registered planner id={} from plugin={}",
+                    provider.descriptor().id(),
+                    pluginId);
         }
         plannersByPlugin.put(pluginId, List.copyOf(pluginPlanners));
 
         state.transition(PluginLifecycle.ACTIVE);
-        eventBus.publish(new PluginActivatedEvent(pluginId, state.plugin().descriptor().version(), Instant.now()));
+        eventBus.publish(
+                new PluginActivatedEvent(pluginId, state.plugin().descriptor().version(), Instant.now()));
         log.info("Plugin active id={}", pluginId);
     }
 
@@ -232,22 +233,19 @@ public final class PluginManager {
             PluginState dep = plugins.get(required);
             if (dep == null || dep.lifecycle() != PluginLifecycle.ACTIVE) {
                 throw new PluginInitializationException(
-                        "Plugin '" + plugin.descriptor().id() + "' requires plugin '" + required +
-                        "' to be ACTIVE first, but its state is: " +
-                        (dep == null ? "UNLOADED" : dep.lifecycle())
-                );
+                        "Plugin '" + plugin.descriptor().id() + "' requires plugin '" + required
+                                + "' to be ACTIVE first, but its state is: "
+                                + (dep == null ? "UNLOADED" : dep.lifecycle()));
             }
         }
     }
 
     private void checkNoDependents(String pluginId) {
         for (Map.Entry<String, PluginState> entry : plugins.entrySet()) {
-            if (entry.getValue().lifecycle() == PluginLifecycle.ACTIVE &&
-                    entry.getValue().plugin().descriptor().requiredPlugins().contains(pluginId)) {
-                throw new IllegalStateException(
-                        "Cannot deactivate plugin '" + pluginId +
-                        "' — active plugin '" + entry.getKey() + "' depends on it."
-                );
+            if (entry.getValue().lifecycle() == PluginLifecycle.ACTIVE
+                    && entry.getValue().plugin().descriptor().requiredPlugins().contains(pluginId)) {
+                throw new IllegalStateException("Cannot deactivate plugin '" + pluginId + "' — active plugin '"
+                        + entry.getKey() + "' depends on it.");
             }
         }
     }

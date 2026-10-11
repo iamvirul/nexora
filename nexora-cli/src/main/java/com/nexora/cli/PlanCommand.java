@@ -1,31 +1,29 @@
 package com.nexora.cli;
 
+import com.nexora.core.context.ExecutionContext;
+import com.nexora.core.context.TraceContext;
 import com.nexora.core.intent.Intent;
 import com.nexora.core.plan.Plan;
 import com.nexora.core.plan.Step;
 import com.nexora.planner.engine.PlannerEngine;
 import com.nexora.planner.model.StepDefinition;
 import com.nexora.planner.registry.PlanRegistry;
+import java.util.Map;
+import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
 
-import com.nexora.core.context.ExecutionContext;
-import com.nexora.core.context.TraceContext;
-
-import java.util.Map;
-import java.util.concurrent.Callable;
-
-@Command(
-        name = "plan",
-        mixinStandardHelpOptions = true
-)
+@Command(name = "plan", mixinStandardHelpOptions = true)
 public class PlanCommand implements Callable<Integer> {
 
     @ParentCommand
     private NexoraCli parent;
 
-    @Option(names = {"-g", "--goal"}, required = true, description = "Intent goal string.")
+    @Option(
+            names = {"-g", "--goal"},
+            required = true,
+            description = "Intent goal string.")
     private String goal;
 
     @Override
@@ -35,8 +33,8 @@ public class PlanCommand implements Callable<Integer> {
         PlanRegistry registry = new PlanRegistry();
         for (CliConfig.StepConfig sc : config.steps) {
             String match = sc.matchesGoalContains;
-            StepDefinition.Builder sdb = StepDefinition.builder(sc.id, sc.capabilityId)
-                    .withMatcher(g -> match == null || g.contains(match));
+            StepDefinition.Builder sdb =
+                    StepDefinition.builder(sc.id, sc.capabilityId).withMatcher(g -> match == null || g.contains(match));
             if (sc.condition != null) {
                 sdb.withCondition(sc.condition.toStepCondition());
             }
@@ -52,11 +50,12 @@ public class PlanCommand implements Callable<Integer> {
             return 0;
         }
 
-        System.out.printf("  %-24s  %-24s  %-30s  %s%n", "STEP ID", "CAPABILITY", "CONDITION (Dry-run eval)", "DEPENDS ON");
+        System.out.printf(
+                "  %-24s  %-24s  %-30s  %s%n", "STEP ID", "CAPABILITY", "CONDITION (Dry-run eval)", "DEPENDS ON");
         System.out.println("  " + "─".repeat(90));
-        
+
         ExecutionContext dummyCtx = new ExecutionContext(new Intent(goal, Map.of()), TraceContext.root());
-        
+
         for (Step step : plan.getSteps()) {
             String deps = step.dependsOn().isEmpty() ? "—" : String.join(", ", step.dependsOn());
             String condStr = "—";

@@ -1,17 +1,16 @@
 package com.nexora.persistence;
 
-import com.nexora.persistence.jdbc.JdbcExecutionStore;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
+import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 class JdbcDeadLetterStoreTest {
 
@@ -31,8 +30,7 @@ class JdbcDeadLetterStoreTest {
     void createAndFindDeadLetter() {
         String id = UUID.randomUUID().toString();
         DeadLetterRecord dl = DeadLetterRecord.pending(
-                id, "exec-1", "my goal", Map.of("key", "value"),
-                "STEP_FAILED", "step blow up", Instant.now());
+                id, "exec-1", "my goal", Map.of("key", "value"), "STEP_FAILED", "step blow up", Instant.now());
 
         store.createDeadLetter(dl);
 
@@ -61,8 +59,7 @@ class JdbcDeadLetterStoreTest {
                 UUID.randomUUID().toString(), "e2", "goal2", Map.of(), "STEP_FAILED", null, now));
 
         String resolvedId = UUID.randomUUID().toString();
-        store.createDeadLetter(DeadLetterRecord.pending(
-                resolvedId, "e3", "goal3", Map.of(), "STEP_FAILED", null, now));
+        store.createDeadLetter(DeadLetterRecord.pending(resolvedId, "e3", "goal3", Map.of(), "STEP_FAILED", null, now));
         store.updateDeadLetterState(resolvedId, DeadLetterReviewState.RESOLVED, "fixed");
 
         List<DeadLetterRecord> pending = store.findDeadLetters(DeadLetterReviewState.PENDING, 0, 10);
@@ -90,8 +87,8 @@ class JdbcDeadLetterStoreTest {
     @Test
     void updateDeadLetterStateTransitionsCorrectly() {
         String id = UUID.randomUUID().toString();
-        store.createDeadLetter(DeadLetterRecord.pending(
-                id, "exec-x", "goal", Map.of(), "STEP_FAILED", null, Instant.now()));
+        store.createDeadLetter(
+                DeadLetterRecord.pending(id, "exec-x", "goal", Map.of(), "STEP_FAILED", null, Instant.now()));
 
         store.updateDeadLetterState(id, DeadLetterReviewState.RESOLVED, "manually reviewed");
 
@@ -105,8 +102,7 @@ class JdbcDeadLetterStoreTest {
         Instant now = Instant.now();
         for (int i = 0; i < 5; i++) {
             store.createDeadLetter(DeadLetterRecord.pending(
-                    UUID.randomUUID().toString(), "e" + i, "goal" + i,
-                    Map.of(), "CODE", null, now));
+                    UUID.randomUUID().toString(), "e" + i, "goal" + i, Map.of(), "CODE", null, now));
         }
 
         List<DeadLetterRecord> page0 = store.findDeadLetters(DeadLetterReviewState.PENDING, 0, 3);
@@ -120,8 +116,8 @@ class JdbcDeadLetterStoreTest {
     void createDeadLetterPreservesContext() {
         Map<String, Object> ctx = Map.of("orderId", "ORD-123", "amount", 99);
         String id = UUID.randomUUID().toString();
-        store.createDeadLetter(DeadLetterRecord.pending(
-                id, "exec-ctx", "goal", ctx, "STEP_FAILED", null, Instant.now()));
+        store.createDeadLetter(
+                DeadLetterRecord.pending(id, "exec-ctx", "goal", ctx, "STEP_FAILED", null, Instant.now()));
 
         DeadLetterRecord found = store.findDeadLetterById(id).orElseThrow();
         assertEquals("ORD-123", found.context().get("orderId"));

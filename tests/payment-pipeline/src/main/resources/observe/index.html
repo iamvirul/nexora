@@ -593,6 +593,12 @@
     .hist-steps td { padding: 4px 6px; border-top: 1px solid var(--border2); }
     .hist-fail { color: var(--red); font-family: var(--mono); }
     .hist-more { margin-top: 10px; }
+    .hist-replay {
+      padding: 2px 10px; font-size: 11px; font-weight: 500; border-radius: 4px; cursor: pointer;
+      background: transparent; border: 1px solid var(--blue); color: var(--blue); font-family: var(--sans);
+    }
+    .hist-replay:hover { background: rgba(88,166,255,0.15); }
+    .hist-replay:disabled { opacity: 0.4; cursor: default; }
     .hist-scroll { max-height: 420px; overflow-y: auto; }
     .hist-scroll thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
     .hist-goal-input { width: 220px; font-family: var(--sans) !important; }
@@ -742,10 +748,11 @@
               <th>State</th>
               <th>Duration</th>
               <th>Execution ID</th>
+              <th></th>
             </tr>
           </thead>
           <tbody id="hist-body">
-            <tr><td colspan="5" class="schedule-empty">Loading…</td></tr>
+            <tr><td colspan="6" class="schedule-empty">Loading…</td></tr>
           </tbody>
         </table>
         </div>
@@ -1141,7 +1148,8 @@ setInterval(loadDlq, 30000);
 // ── History ────────────────────────────────────────────────────────────────────
 
 const HIST_PAGE_SIZE = 20;
-const HIST_COLUMNS   = 5;
+const HIST_COLUMNS   = 6;
+const REPLAYABLE_STATES = ['FAILED', 'TIMED_OUT', 'CANCELLED', 'COMPENSATED'];
 const histBody   = document.getElementById('hist-body');
 const histCount  = document.getElementById('hist-count');
 const histFlash  = document.getElementById('hist-flash');
@@ -1223,6 +1231,10 @@ function histRow(e) {
     <td><span class="badge ${sc(e.state)}">${esc(e.state)}</span></td>
     <td>${fmtDur(e.durationMs)}</td>
     <td class="sched-id">${esc(e.executionId)}</td>
+    <td>${REPLAYABLE_STATES.includes(e.state)
+        ? `<button class="hist-replay" type="button" data-id="${escAttr(e.executionId)}"
+               aria-label="Replay execution ${escAttr(e.executionId)}">Replay</button>`
+        : ''}</td>
   </tr>`;
 }
 
@@ -1261,16 +1273,38 @@ function histSteps(steps) {
 }
 
 histBody.addEventListener('click', e => {
+  const replayBtn = e.target.closest('.hist-replay');
+  if (replayBtn) {
+    replayExec(replayBtn.dataset.id, replayBtn); // don't also toggle the row
+    return;
+  }
   const row = e.target.closest('.hist-row');
   if (row) toggleHistDetail(row);
 });
 histBody.addEventListener('keydown', e => {
+  if (e.target.closest('.hist-replay')) return; // the button handles its own Enter / Space
   const row = e.target.closest('.hist-row');
   if (row && (e.key === 'Enter' || e.key === ' ')) {
     e.preventDefault(); // Space would otherwise scroll the page
     toggleHistDetail(row);
   }
 });
+async function replayExec(id, btn) {
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/api/executions/${encodeURIComponent(id)}/replay`, { method: 'POST' });
+    const p = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(p.error || 'HTTP ' + r.status);
+    histFlash.className = 'sched-flash ok';
+    histFlash.textContent = `Replay started · ${p.executionId.slice(0, 8)}`;
+    setTimeout(() => loadHistory(true), 500);
+  } catch (ex) {
+    histFlash.className = 'sched-flash err';
+    histFlash.textContent = 'Replay failed: ' + ex.message;
+    btn.disabled = false;
+  }
+}
+
 histMore.addEventListener('click', () => loadHistory(false));
 document.getElementById('hist-form').addEventListener('submit', e => {
   e.preventDefault();
