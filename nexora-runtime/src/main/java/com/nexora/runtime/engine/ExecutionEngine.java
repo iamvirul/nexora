@@ -201,6 +201,11 @@ public final class ExecutionEngine {
                 : CancellationOutcome.ALREADY_TERMINAL;
     }
 
+    /** True while the execution is running on this engine, including its terminal handling. */
+    public boolean isRunning(String executionId) {
+        return runningExecutions.containsKey(executionId);
+    }
+
     private CancellationOutcome outcomeForUntrackedExecution(String executionId) {
         if (store == null) {
             return CancellationOutcome.NOT_FOUND;
@@ -230,7 +235,15 @@ public final class ExecutionEngine {
      * id (for tracking or {@link #cancel(String)}) before the execution finishes.
      */
     public ExecutionHandle submit(Intent intent, TraceContext traceContext) {
-        ExecutionContext ctx = new ExecutionContext(intent, traceContext);
+        return submit(intent, traceContext, Map.of());
+    }
+
+    /**
+     * {@link #submit(Intent, TraceContext)} that sends the given steps their original idempotency
+     * keys. Used by replay so steps that completed before are not repeated by idempotent capabilities.
+     */
+    public ExecutionHandle submit(Intent intent, TraceContext traceContext, Map<String, String> reusedIdempotencyKeys) {
+        ExecutionContext ctx = new ExecutionContext(intent, traceContext, reusedIdempotencyKeys);
 
         PlanningContext planningContext = new DefaultPlanningContext(capabilityRegistry, Map.of());
         Plan plan = planner.plan(intent, planningContext);

@@ -198,6 +198,28 @@ class DagStepSchedulerTest {
     }
 
     @Test
+    void stepsUseReusedIdempotencyKeysAndOthersGetFreshOnes() {
+        CapabilityRegistry registry = new DefaultCapabilityRegistry();
+        Map<String, String> seenKeys = new java.util.concurrent.ConcurrentHashMap<>();
+        registry.register(descriptor("work"), request -> {
+            seenKeys.put(request.stepId(), request.idempotencyKey());
+            return CapabilityResult.success("done");
+        });
+
+        try (TestHarness harness = new TestHarness(registry)) {
+            Plan plan = new Plan(List.of(Step.of("charge", "work"), Step.of("ship", "work")));
+            ExecutionContext ctx = new ExecutionContext(
+                    new Intent("goal", Map.of()), TraceContext.root(), Map.of("charge", "original-key"));
+
+            harness.scheduler.schedule(plan, ctx).join();
+
+            assertEquals("original-key", seenKeys.get("charge"));
+            assertFalse(seenKeys.get("ship").isBlank());
+            assertTrue(!"original-key".equals(seenKeys.get("ship")));
+        }
+    }
+
+    @Test
     void cancelBeforeStartSuppressesEveryStep() {
         CapabilityRegistry registry = new DefaultCapabilityRegistry();
         AtomicInteger calls = new AtomicInteger();

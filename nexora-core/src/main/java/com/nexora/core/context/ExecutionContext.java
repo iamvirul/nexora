@@ -17,11 +17,29 @@ public final class ExecutionContext {
     private final ConcurrentHashMap<String, Object> stepOutputs = new ConcurrentHashMap<>();
     // stepId -> (inputKey -> overrideValue), populated by ModifyInputAmendment
     private final ConcurrentHashMap<String, ConcurrentHashMap<String, Object>> inputOverrides = new ConcurrentHashMap<>();
+    // stepId -> idempotency key carried over from the execution being replayed
+    private final Map<String, String> reusedIdempotencyKeys;
 
     public ExecutionContext(Intent intent, TraceContext traceContext) {
+        this(intent, traceContext, Map.of());
+    }
+
+    /**
+     * @param reusedIdempotencyKeys idempotency keys to reuse per step id, so a replay sends a step the
+     *                              same key it completed with before and the capability can skip
+     *                              repeating its side effect
+     */
+    public ExecutionContext(Intent intent, TraceContext traceContext, Map<String, String> reusedIdempotencyKeys) {
         this.executionId = UUID.randomUUID().toString();
         this.intent = Objects.requireNonNull(intent, "intent must not be null");
         this.traceContext = Objects.requireNonNull(traceContext, "traceContext must not be null");
+        this.reusedIdempotencyKeys = Map.copyOf(Objects.requireNonNull(reusedIdempotencyKeys, "reusedIdempotencyKeys must not be null"));
+    }
+
+    /** The reused key for {@code stepId} when replaying a step that already completed, otherwise a fresh one. */
+    public String idempotencyKeyFor(String stepId) {
+        String reused = reusedIdempotencyKeys.get(stepId);
+        return reused != null ? reused : UUID.randomUUID().toString();
     }
 
     public void put(String key, Object value) {

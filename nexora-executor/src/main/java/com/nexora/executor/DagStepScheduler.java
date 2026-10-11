@@ -32,7 +32,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
@@ -289,7 +288,7 @@ public final class DagStepScheduler {
         CapabilityRequest request = new CapabilityRequest(
                 step.capabilityId(),
                 step.id(),
-                UUID.randomUUID().toString(),
+                ctx.idempotencyKeyFor(step.id()),
                 resolvedInputs,
                 ctx.getTraceContext().childSpan(),
                 effectiveTimeout,

@@ -9,7 +9,7 @@ import java.util.Objects;
 public record CapabilityRequest(
         String capabilityId,
         String stepId,
-        String idempotencyKey,     // unique per step-execution attempt; use for dedup in capabilities
+        String idempotencyKey,     // same across retries of a step, and reused when a replay re-runs a step that completed; use for dedup
         Map<String, Object> inputs,
         TraceContext traceContext,
         Duration timeout,          // null means use engine default
