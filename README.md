@@ -547,6 +547,8 @@ This exposes four endpoints with no external dependencies:
 | `GET /api/dead-letters` | List dead letter queue entries (paginated, filterable by `?state=PENDING\|RESOLVED\|REPLAYED\|ALL`) |
 | `POST /api/dead-letters/{id}/replay` | Create a new execution from a dead letter and mark it as `REPLAYED` |
 | `POST /api/dead-letters/{id}/resolve` | Mark a dead letter as `RESOLVED` with an optional `{"reason":"..."}` body |
+| `GET /api/executions` | Execution history, newest first, cursor-paginated; filter by `status`, `goal`, `from`, `to`, `limit` |
+| `GET /api/executions/{id}` | One execution with its step records (`404` if unknown) |
 | `DELETE /api/executions/{id}` | Cancel a running execution (`200` cancelled, `404` unknown, `409` already finished) |
 
 > **Note**: `/health/live` and `/health` were added in v0.3.0. In v0.3.0 `/health/ready` changed from reporting capability circuit state to reporting dependency readiness; circuit states are now under `capabilities` in `GET /health`.

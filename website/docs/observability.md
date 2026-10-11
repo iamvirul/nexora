@@ -27,6 +27,8 @@ This exposes four endpoints with no external dependencies:
 | `GET /api/dead-letters` | List dead letter queue entries (paginated via `?page=` and `?size=`, filterable by `?state=PENDING\|RESOLVED\|REPLAYED\|ALL`) |
 | `POST /api/dead-letters/{id}/replay` | Create a new execution from a dead letter |
 | `POST /api/dead-letters/{id}/resolve` | Mark a dead letter as resolved |
+| `GET /api/executions` | Execution history, newest first, cursor-paginated (see [Execution History API](#execution-history-api)); filter by `status`, `goal`, `from`, `to`, `limit` |
+| `GET /api/executions/{id}` | One execution with its step records (`404` if unknown) |
 | `DELETE /api/executions/{id}` | Cancel a running execution (`200` cancelled, `404` unknown, `409` already finished). See [Execution Cancellation](concepts/execution-cancellation) |
 | `GET /api/schedules` | List all cron schedules |
 | `POST /api/schedules` | Register a new cron schedule |
@@ -84,6 +86,63 @@ readinessProbe:
 ```
 
 The `nexora_ready` gauge mirrors `/health/ready` (1 = ready, 0 = not ready) and drives the `NexoraNotReady` alert in `observability/prometheus/alerts.yml`.
+
+## Execution History API
+
+Read-only access to past and running executions, backed by the persistence store (`executionStore` in `nexora.json`). Without a store these routes return `503`.
+
+> **Warning**: These endpoints currently have no caller authentication and return execution goals and context. Do not expose the observe server to untrusted networks. Authentication will be enforced once [#30](https://github.com/iamvirul/nexora/issues/30) lands.
+
+### List executions
+
+```bash
+curl "http://localhost:9464/api/executions?status=FAILED,CANCELLED&limit=20"
+```
+
+```json
+{
+  "data": [
+    {
+      "executionId": "4f3a1c2d-...",
+      "traceId": "9b1e...",
+      "goal": "process payment",
+      "state": "FAILED",
+      "startedAt": "2026-10-01T10:00:00.123Z",
+      "completedAt": "2026-10-01T10:00:01.456Z",
+      "durationMs": 1333
+    }
+  ],
+  "cursor": "MjAyNi0xMC0wMVQxMDowMDowMC4xMjNafDRmM2ExYzJkLS4uLg",
+  "total": 42
+}
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `status` | One or more states, comma-separated: `RUNNING`, `COMPLETED`, `FAILED`, `TIMED_OUT`, `CANCELLED`, `COMPENSATING`, `COMPENSATED` |
+| `goal` | Case-insensitive substring of the goal (max 200 characters) |
+| `from` | Inclusive lower bound on `startedAt`, ISO-8601 with an offset (`2026-10-01T10:00:00Z`). Encode `+` as `%2B`: `2026-10-01T15:30:00%2B05:30` |
+| `to` | Exclusive upper bound on `startedAt`, same format as `from` |
+| `limit` | Page size, 1 to 100 (default 20) |
+| `cursor` | The `cursor` value from the previous page |
+
+Results are ordered by `startedAt` descending. Pass the returned `cursor` to get the next page; it is `null` on the last page. `total` counts every execution matching the filters, not just this page.
+
+Pagination is keyset-based (the cursor encodes `startedAt` and `executionId`), so pages stay consistent while new executions are written. Keep the same filters when following a cursor. Invalid parameters return `400` with an `error` message.
+
+List rows are summaries. Use the detail route for context and steps.
+
+The observe UI has an **Execution History** panel built on these routes: filter by status or goal, page with **Load more**, and click a row to see its steps.
+
+### Get one execution
+
+```bash
+curl http://localhost:9464/api/executions/4f3a1c2d-...
+```
+
+Returns the execution with its `context` and `steps` (state, timings, failure code and message for each step). Unknown ids return `404`; if the store cannot be queried the response is `500`, never a misleading `404`. Step outputs are not persisted yet ([#32](https://github.com/iamvirul/nexora/issues/32)).
+
+---
 
 ## Webhook Callbacks
 
