@@ -74,7 +74,8 @@
 
     .layout {
       flex: 1;
-      overflow: hidden;
+      /* Scroll the page rather than squeezing the live panels when sections below need room. */
+      overflow-y: auto;
       display: flex;
       flex-direction: column;
       gap: 12px;
@@ -166,8 +167,8 @@
 
     /* ── Two-column panels row ── */
     .panels {
-      flex: 1;
-      min-height: 0;
+      flex: 1 0 auto;
+      min-height: max(420px, 55vh);
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 16px;
@@ -486,6 +487,7 @@
 
     /* ── Schedule panel ── */
     .schedule-section {
+      flex-shrink: 0; /* keep full height; the page scrolls instead of clipping the table */
       margin-top: 16px;
       background: var(--surface);
       border: 1px solid var(--border);
@@ -581,6 +583,25 @@
     .sched-flash { font-size: 11px; margin-left: 8px; }
     .sched-flash.ok { color: var(--green); }
     .sched-flash.err { color: var(--red); }
+
+    .hist-row { cursor: pointer; }
+    .hist-row:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+    .hist-row.open td { background: var(--surface2); }
+    .hist-detail td { background: var(--surface2); padding: 4px 8px 12px 24px !important; }
+    .hist-steps { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .hist-steps th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 6px; }
+    .hist-steps td { padding: 4px 6px; border-top: 1px solid var(--border2); }
+    .hist-fail { color: var(--red); font-family: var(--mono); }
+    .hist-more { margin-top: 10px; }
+    .hist-scroll { max-height: 420px; overflow-y: auto; }
+    .hist-scroll thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+    .hist-goal-input { width: 220px; font-family: var(--sans) !important; }
+    .hist-search-btn {
+      height: 30px; padding: 0 14px;
+      background: var(--blue); color: #fff;
+      border: none; border-radius: 4px; font-size: 12px; font-weight: 500; cursor: pointer;
+    }
+    .hist-search-btn:hover { background: #79b8ff; }
   </style>
 </head>
 <body>
@@ -679,6 +700,56 @@
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+
+    <div class="schedule-section">
+      <div class="schedule-header">
+        <div class="section-title">Execution History <span id="hist-count" style="font-weight:400;color:var(--muted)"></span></div>
+        <button class="sched-refresh" type="button" onclick="loadHistory(true)">↻ Refresh</button>
+      </div>
+      <div class="schedule-body">
+        <form class="schedule-add-form" id="hist-form">
+          <div>
+            <label>Status</label>
+            <select id="hist-status">
+              <option value="" selected>All</option>
+              <option value="RUNNING">RUNNING</option>
+              <option value="COMPLETED">COMPLETED</option>
+              <option value="FAILED">FAILED</option>
+              <option value="TIMED_OUT">TIMED_OUT</option>
+              <option value="CANCELLED">CANCELLED</option>
+              <option value="COMPENSATING">COMPENSATING</option>
+              <option value="COMPENSATED">COMPENSATED</option>
+            </select>
+          </div>
+          <div>
+            <label>Goal contains</label>
+            <input class="hist-goal-input" id="hist-goal" type="text" placeholder="payment" maxlength="200">
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button class="hist-search-btn" type="submit">Search</button>
+          </div>
+          <span class="sched-flash" id="hist-flash"></span>
+        </form>
+        <div class="hist-scroll">
+        <table class="schedule-table">
+          <thead>
+            <tr>
+              <th>Started</th>
+              <th>Goal</th>
+              <th>State</th>
+              <th>Duration</th>
+              <th>Execution ID</th>
+            </tr>
+          </thead>
+          <tbody id="hist-body">
+            <tr><td colspan="5" class="schedule-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+        </div>
+        <button class="sched-refresh hist-more" type="button" id="hist-more" hidden>Load more</button>
       </div>
     </div>
 
@@ -1066,6 +1137,152 @@ setInterval(loadSchedules, 30000);
 
 loadDlq();
 setInterval(loadDlq, 30000);
+
+// ── History ────────────────────────────────────────────────────────────────────
+
+const HIST_PAGE_SIZE = 20;
+const HIST_COLUMNS   = 5;
+const histBody   = document.getElementById('hist-body');
+const histCount  = document.getElementById('hist-count');
+const histFlash  = document.getElementById('hist-flash');
+const histMore   = document.getElementById('hist-more');
+const histStatus = document.getElementById('hist-status');
+const histGoal   = document.getElementById('hist-goal');
+let histCursor = null;
+let histPages  = 0;
+// Filters last submitted with Search. Paging and refresh use these, never half-edited inputs,
+// so a cursor is always sent with the filters it was issued for.
+let histApplied = { status: '', goal: '' };
+// Each request takes a sequence number; only the newest may render. A stale refresh can't
+// overwrite a newer search, and Load more can't run twice at once.
+let histSeq  = 0;
+let histBusy = false;
+
+// History values come from the store, so escape for attributes too, not just text.
+function escAttr(v) {
+  return esc(v).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function fmtDateTime(iso) {
+  return iso ? new Date(iso).toLocaleString() : '—';
+}
+
+function histMessage(text) {
+  return `<tr><td colspan="${HIST_COLUMNS}" class="schedule-empty">${esc(text)}</td></tr>`;
+}
+
+async function loadHistory(reset) {
+  if (!reset && (histBusy || !histCursor)) return;
+  const seq = ++histSeq;
+  histBusy = true;
+  histMore.disabled = true;
+  const params = new URLSearchParams({ limit: String(HIST_PAGE_SIZE) });
+  if (histApplied.status) params.set('status', histApplied.status);
+  if (histApplied.goal) params.set('goal', histApplied.goal);
+  if (!reset) params.set('cursor', histCursor);
+  try {
+    const r = await fetch('/api/executions?' + params);
+    const p = await r.json().catch(() => ({}));
+    if (seq !== histSeq) return; // superseded by a newer search or refresh
+    if (r.status === 503) {
+      histBody.innerHTML = histMessage('Persistence is disabled. Configure an execution store to keep history.');
+      histCount.textContent = '';
+      histMore.hidden = true;
+      return;
+    }
+    if (!r.ok) throw new Error(p.error || 'HTTP ' + r.status);
+    const rows = p.data.map(histRow).join('');
+    if (reset) {
+      histBody.innerHTML = rows || histMessage('No executions match.');
+      histPages = 1;
+    } else {
+      histBody.insertAdjacentHTML('beforeend', rows);
+      histPages++;
+    }
+    histCursor = p.cursor;
+    histMore.hidden = !p.cursor;
+    histCount.textContent = `(${p.total})`;
+    histFlash.textContent = '';
+  } catch (ex) {
+    if (seq !== histSeq) return;
+    histFlash.className = 'sched-flash err';
+    histFlash.textContent = 'History failed: ' + ex.message;
+  } finally {
+    if (seq === histSeq) {
+      histBusy = false;
+      histMore.disabled = false;
+    }
+  }
+}
+
+function histRow(e) {
+  return `<tr class="hist-row" data-id="${escAttr(e.executionId)}" tabindex="0" role="button"
+      aria-expanded="false" aria-label="Show steps for execution ${escAttr(e.executionId)}">
+    <td class="sched-time">${esc(fmtDateTime(e.startedAt))}</td>
+    <td class="sched-goal">${esc(e.goal)}</td>
+    <td><span class="badge ${sc(e.state)}">${esc(e.state)}</span></td>
+    <td>${fmtDur(e.durationMs)}</td>
+    <td class="sched-id">${esc(e.executionId)}</td>
+  </tr>`;
+}
+
+async function toggleHistDetail(row) {
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains('hist-detail')) {
+    next.remove();
+    row.classList.remove('open');
+    row.setAttribute('aria-expanded', 'false');
+    return;
+  }
+  row.classList.add('open');
+  row.setAttribute('aria-expanded', 'true');
+  row.insertAdjacentHTML('afterend', `<tr class="hist-detail"><td colspan="${HIST_COLUMNS}">Loading steps…</td></tr>`);
+  const cell = row.nextElementSibling.firstElementChild;
+  try {
+    const r = await fetch(`/api/executions/${encodeURIComponent(row.dataset.id)}`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+    cell.innerHTML = histSteps(d.steps || []);
+  } catch (ex) {
+    cell.innerHTML = `<span class="hist-fail">${esc('Could not load steps: ' + ex.message)}</span>`;
+  }
+}
+
+function histSteps(steps) {
+  if (!steps.length) return '<span style="color:var(--muted)">No steps recorded.</span>';
+  const rows = steps.map(s => `<tr>
+    <td>${esc(s.stepId)}</td>
+    <td class="sched-id">${esc(s.capabilityId)}</td>
+    <td><span class="badge ${sc(s.state)}">${esc(s.state)}</span></td>
+    <td>${fmtDur(s.durationMs)}</td>
+    <td class="hist-fail">${s.failureCode ? esc(s.failureCode + (s.failureMessage ? ': ' + s.failureMessage : '')) : ''}</td>
+  </tr>`).join('');
+  return `<table class="hist-steps"><thead><tr><th>Step</th><th>Capability</th><th>State</th><th>Duration</th><th>Failure</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+histBody.addEventListener('click', e => {
+  const row = e.target.closest('.hist-row');
+  if (row) toggleHistDetail(row);
+});
+histBody.addEventListener('keydown', e => {
+  const row = e.target.closest('.hist-row');
+  if (row && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault(); // Space would otherwise scroll the page
+    toggleHistDetail(row);
+  }
+});
+histMore.addEventListener('click', () => loadHistory(false));
+document.getElementById('hist-form').addEventListener('submit', e => {
+  e.preventDefault();
+  histApplied = { status: histStatus.value, goal: histGoal.value.trim() };
+  loadHistory(true);
+});
+
+loadHistory(true);
+// Keep the first page fresh, but never reset a list the user has paged through or expanded.
+setInterval(() => {
+  if (histPages <= 1 && !histBody.querySelector('.hist-detail')) loadHistory(true);
+}, 15000);
 
 // ── Cancel ─────────────────────────────────────────────────────────────────────
 

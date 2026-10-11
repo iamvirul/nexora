@@ -20,6 +20,10 @@ public interface ExecutionStore extends AutoCloseable {
     Optional<ExecutionRecord> findById(String executionId);
     List<ExecutionRecord> findRecent(int limit);
 
+    // Execution history (default methods)
+    default List<ExecutionRecord> findByFilter(ExecutionFilter filter); // summaries, newest first
+    default long count(ExecutionFilter filter);                         // ignores cursor and limit
+
     // Dead Letter Queue (default methods)
     default void createDeadLetter(DeadLetterRecord record);
     default Optional<DeadLetterRecord> findDeadLetterById(String id);

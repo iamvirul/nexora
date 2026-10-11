@@ -37,7 +37,8 @@ public class ObserveCommand implements Callable<Integer> {
 
     static final ObjectMapper JSON = new ObjectMapper()
             .findAndRegisterModules()
-            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+            .disable(SerializationFeature.WRITE_DURATIONS_AS_TIMESTAMPS);
 
     // Populated from the jar manifest (see nexora-cli's shade plugin config). Falls back to
     // "unknown" for dev runs off exploded classes, where no manifest is on the classpath.

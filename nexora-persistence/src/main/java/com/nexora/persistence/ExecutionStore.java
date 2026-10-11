@@ -26,9 +26,28 @@ public interface ExecutionStore extends AutoCloseable {
     /** Returns all webhook delivery attempts for a given execution. */
     List<WebhookDeliveryRecord> getWebhookDeliveries(String executionId);
 
+    /**
+     * @return the execution with its steps, or empty if no execution has this id
+     * @throws IllegalStateException if the store cannot be queried; implementations must not
+     *         report a failed lookup as empty
+     */
     Optional<ExecutionRecord> findById(String executionId);
 
     List<ExecutionRecord> findRecent(int limit);
+
+    /**
+     * Returns executions matching {@code filter}, newest first, at most {@code filter.limit()} rows.
+     * Records are summaries: {@link ExecutionRecord#steps()} is empty; use {@link #findById(String)}
+     * for step detail.
+     */
+    default List<ExecutionRecord> findByFilter(ExecutionFilter filter) {
+        throw new UnsupportedOperationException("Execution history not supported by this store implementation");
+    }
+
+    /** Counts executions matching {@code filter}, ignoring its cursor and limit. */
+    default long count(ExecutionFilter filter) {
+        throw new UnsupportedOperationException("Execution history not supported by this store implementation");
+    }
 
     /**
      * Lightweight liveness check for readiness probes. Must not throw; implementations

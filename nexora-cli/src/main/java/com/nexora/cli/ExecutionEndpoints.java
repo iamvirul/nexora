@@ -6,6 +6,10 @@ import com.nexora.api.NexoraEngine;
 import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.execution.ExecutionStatus;
 import com.nexora.core.intent.Intent;
+import com.nexora.persistence.ExecutionCursor;
+import com.nexora.persistence.ExecutionRecord;
+import com.nexora.persistence.ExecutionState;
+import com.nexora.persistence.ExecutionStore;
 import com.nexora.tracing.otel.W3CTraceparent;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -15,9 +19,13 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -28,16 +36,25 @@ import java.util.concurrent.TimeoutException;
  * <p>{@code POST /api/execute} starts an execution and returns {@code 202} with its
  * {@code executionId}, so the caller can track or cancel it.
  *
+ * <p>{@code GET /api/executions} lists execution history, newest first, with cursor pagination
+ * and {@code status}, {@code goal}, {@code from}, {@code to}, {@code limit} filters. Responds
+ * {@code {"data": [...], "cursor": "...", "total": N}}; {@code cursor} is {@code null} on the last page.
+ *
+ * <p>{@code GET /api/executions/{executionId}} returns one execution with its step records.
+ *
  * <p>{@code DELETE /api/executions/{executionId}} cancels a running execution:
  * {@code 200} when cancelled (repeat calls also return 200), {@code 409} when it already finished
  * or is owned by another engine instance, {@code 404} when unknown.
+ *
+ * <p>History requires a persistence store; without one those routes return {@code 503}.
  *
  * <p>Authentication will be enforced once #30 lands.
  */
 final class ExecutionEndpoints {
 
     static final String EXECUTE_PATH = "/api/execute";
-    static final String PATH_PREFIX = "/api/executions/";
+    static final String LIST_PATH = "/api/executions";
+    static final String PATH_PREFIX = LIST_PATH + "/";
 
     private static final Logger log = LoggerFactory.getLogger(ExecutionEndpoints.class);
 
@@ -61,7 +78,70 @@ final class ExecutionEndpoints {
 
     void register(HttpServer server) {
         server.createContext(EXECUTE_PATH, this::execute);
+        server.createContext(LIST_PATH, this::list);
         server.createContext(PATH_PREFIX, this::handle);
+    }
+
+    private void list(HttpExchange exchange) throws IOException {
+        if (!LIST_PATH.equals(exchange.getRequestURI().getPath())) {
+            ObserveCommand.sendText(exchange, STATUS_NOT_FOUND, "Not Found");
+            return;
+        }
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            exchange.getResponseHeaders().set("Allow", "GET");
+            ObserveCommand.sendText(exchange, STATUS_METHOD_NOT_ALLOWED, "Method Not Allowed");
+            return;
+        }
+        ExecutionStore store = engine.getStore();
+        if (store == null) {
+            ObserveCommand.sendJson(exchange, STATUS_UNAVAILABLE, Map.of("error", "Persistence disabled"));
+            return;
+        }
+
+        ExecutionHistoryQuery query;
+        try {
+            query = ExecutionHistoryQuery.parse(exchange.getRequestURI().getRawQuery());
+        } catch (IllegalArgumentException e) {
+            ObserveCommand.sendJson(exchange, STATUS_BAD_REQUEST, Map.of("error", e.getMessage()));
+            return;
+        }
+
+        try {
+            // The filter asks for one row more than the page so we know whether a next page exists.
+            List<ExecutionRecord> rows = store.findByFilter(query.filter());
+            boolean hasMore = rows.size() > query.pageSize();
+            List<ExecutionRecord> page = hasMore ? rows.subList(0, query.pageSize()) : rows;
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("data", page.stream().map(ExecutionSummary::from).toList());
+            body.put("cursor", hasMore ? ExecutionCursor.after(page.get(page.size() - 1)).encode() : null);
+            body.put("total", store.count(query.filter()));
+            ObserveCommand.sendJson(exchange, STATUS_OK, body);
+        } catch (RuntimeException e) {
+            log.error("Execution history query failed", e);
+            ObserveCommand.sendJson(exchange, STATUS_INTERNAL_ERROR, Map.of("error", "Execution history query failed"));
+        }
+    }
+
+    private void detail(HttpExchange exchange, String executionId) throws IOException {
+        ExecutionStore store = engine.getStore();
+        if (store == null) {
+            ObserveCommand.sendJson(exchange, STATUS_UNAVAILABLE, Map.of("error", "Persistence disabled"));
+            return;
+        }
+        Optional<ExecutionRecord> record;
+        try {
+            record = store.findById(executionId);
+        } catch (RuntimeException e) {
+            log.error("Execution detail query failed executionId={}", executionId, e);
+            sendError(exchange, STATUS_INTERNAL_ERROR, executionId, "Execution detail query failed");
+            return;
+        }
+        if (record.isEmpty()) {
+            sendError(exchange, STATUS_NOT_FOUND, executionId, "Execution not found");
+            return;
+        }
+        ObserveCommand.sendJson(exchange, STATUS_OK, record.get());
     }
 
     private void execute(HttpExchange exchange) throws IOException {
@@ -110,12 +190,14 @@ final class ExecutionEndpoints {
             ObserveCommand.sendText(exchange, STATUS_NOT_FOUND, "Not Found");
             return;
         }
-        if (!"DELETE".equalsIgnoreCase(exchange.getRequestMethod())) {
-            exchange.getResponseHeaders().set("Allow", "DELETE");
-            ObserveCommand.sendText(exchange, STATUS_METHOD_NOT_ALLOWED, "Method Not Allowed");
-            return;
+        switch (exchange.getRequestMethod().toUpperCase(Locale.ROOT)) {
+            case "GET" -> detail(exchange, executionId);
+            case "DELETE" -> cancel(exchange, executionId);
+            default -> {
+                exchange.getResponseHeaders().set("Allow", "GET, DELETE");
+                ObserveCommand.sendText(exchange, STATUS_METHOD_NOT_ALLOWED, "Method Not Allowed");
+            }
         }
-        cancel(exchange, executionId);
     }
 
     private void cancel(HttpExchange exchange, String executionId) throws IOException {
@@ -151,6 +233,25 @@ final class ExecutionEndpoints {
     private static void sendError(HttpExchange exchange, int status, String executionId, String message)
             throws IOException {
         ObserveCommand.sendJson(exchange, status, Map.of("error", message, "executionId", executionId));
+    }
+
+    /** List row: no context or steps, which can be large and are available from the detail route. */
+    private record ExecutionSummary(
+            String executionId,
+            String traceId,
+            String goal,
+            ExecutionState state,
+            Instant startedAt,
+            Instant completedAt,
+            Long durationMs) {
+
+        static ExecutionSummary from(ExecutionRecord record) {
+            Long durationMs = record.completedAt() == null
+                    ? null
+                    : Duration.between(record.startedAt(), record.completedAt()).toMillis();
+            return new ExecutionSummary(record.executionId(), record.traceId(), record.goal(), record.state(),
+                    record.startedAt(), record.completedAt(), durationMs);
+        }
     }
 
     private record ExecuteRequest(
