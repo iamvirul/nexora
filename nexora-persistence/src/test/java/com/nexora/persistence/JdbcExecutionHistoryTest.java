@@ -51,6 +51,35 @@ class JdbcExecutionHistoryTest {
     }
 
     @Test
+    void completingAStepKeepsItsRecordedIdempotencyKey() {
+        insert("a", "goal", ExecutionState.FAILED, T0);
+        store.upsertStep("a", StepRecord.started("charge", "charge_card", "key-1", T0));
+        // Completion and failure events carry no key; the recorded one must survive them.
+        store.upsertStep("a", StepRecord.started("charge", "charge_card", null, T0).completed(T0.plusMillis(30)));
+        store.upsertStep("a", StepRecord.started("ship", "ship", "key-2", T0));
+        store.upsertStep("a", StepRecord.started("ship", "ship", null, T0).failed("DOWN", "carrier down", T0.plusMillis(9)));
+
+        List<StepRecord> steps = store.findById("a").orElseThrow().steps();
+
+        assertEquals("key-1", stepById(steps, "charge").idempotencyKey());
+        assertEquals(StepState.COMPLETED, stepById(steps, "charge").state());
+        assertEquals("key-2", stepById(steps, "ship").idempotencyKey());
+        assertEquals(StepState.FAILED, stepById(steps, "ship").state());
+    }
+
+    @Test
+    void stepWithoutPriorRowIsInsertedEvenWithoutKey() {
+        insert("a", "goal", ExecutionState.FAILED, T0);
+        store.upsertStep("a", StepRecord.started("skip", "noop", null, T0).skipped(T0));
+
+        assertEquals(StepState.SKIPPED, store.findById("a").orElseThrow().steps().get(0).state());
+    }
+
+    private static StepRecord stepById(List<StepRecord> steps, String stepId) {
+        return steps.stream().filter(s -> s.stepId().equals(stepId)).findFirst().orElseThrow();
+    }
+
+    @Test
     void filtersByAnyOfTheGivenStates() {
         insert("ok", "goal", ExecutionState.COMPLETED, T0);
         insert("bad", "goal", ExecutionState.FAILED, T0.plusSeconds(1));

@@ -182,6 +182,11 @@ public final class JdbcExecutionStore implements ExecutionStore {
 
     @Override
     public synchronized void upsertStep(String executionId, StepRecord step) {
+        // Completion and failure updates carry no idempotency key. Replacing the whole row would
+        // erase the key recorded at step start, which replay needs to avoid repeating side effects.
+        if (step.idempotencyKey() == null && updateStepKeepingKey(executionId, step)) {
+            return;
+        }
         String sql = """
             MERGE INTO nexora_steps
                 (execution_id, step_id, capability_id, idempotency_key, state,
@@ -203,6 +208,31 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.executeUpdate();
         } catch (SQLException e) {
             log.error("Failed to upsert step executionId={} stepId={}", executionId, step.stepId(), e);
+        }
+    }
+
+    /** Updates an existing step row without touching its idempotency key; false if no row exists yet. */
+    private boolean updateStepKeepingKey(String executionId, StepRecord step) {
+        String sql = """
+            UPDATE nexora_steps
+               SET capability_id = ?, state = ?, failure_code = ?, failure_message = ?,
+                   started_at = ?, completed_at = ?, duration_ms = ?
+             WHERE execution_id = ? AND step_id = ?
+        """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, step.capabilityId());
+            ps.setString(2, step.state().name());
+            ps.setString(3, step.failureCode());
+            ps.setString(4, step.failureMessage());
+            ps.setTimestamp(5, step.startedAt() != null ? Timestamp.from(step.startedAt()) : null);
+            ps.setTimestamp(6, step.completedAt() != null ? Timestamp.from(step.completedAt()) : null);
+            ps.setLong(7, step.durationMs());
+            ps.setString(8, executionId);
+            ps.setString(9, step.stepId());
+            return ps.executeUpdate() > 0;
+        } catch (SQLException e) {
+            log.error("Failed to update step executionId={} stepId={}", executionId, step.stepId(), e);
+            return true; // already logged; don't retry the same failing write as a MERGE
         }
     }
 
