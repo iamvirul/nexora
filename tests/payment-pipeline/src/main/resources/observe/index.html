@@ -74,7 +74,8 @@
 
     .layout {
       flex: 1;
-      overflow: hidden;
+      /* Scroll the page rather than squeezing the live panels when sections below need room. */
+      overflow-y: auto;
       display: flex;
       flex-direction: column;
       gap: 12px;
@@ -166,8 +167,8 @@
 
     /* ── Two-column panels row ── */
     .panels {
-      flex: 1;
-      min-height: 0;
+      flex: 1 0 auto;
+      min-height: max(420px, 55vh);
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 16px;
@@ -486,6 +487,7 @@
 
     /* ── Schedule panel ── */
     .schedule-section {
+      flex-shrink: 0; /* keep full height; the page scrolls instead of clipping the table */
       margin-top: 16px;
       background: var(--surface);
       border: 1px solid var(--border);
@@ -590,6 +592,15 @@
     .hist-steps td { padding: 4px 6px; border-top: 1px solid var(--border2); }
     .hist-fail { color: var(--red); font-family: var(--mono); }
     .hist-more { margin-top: 10px; }
+    .hist-scroll { max-height: 420px; overflow-y: auto; }
+    .hist-scroll thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+    .hist-goal-input { width: 220px; font-family: var(--sans) !important; }
+    .hist-search-btn {
+      height: 30px; padding: 0 14px;
+      background: var(--blue); color: #fff;
+      border: none; border-radius: 4px; font-size: 12px; font-weight: 500; cursor: pointer;
+    }
+    .hist-search-btn:hover { background: #79b8ff; }
   </style>
 </head>
 <body>
@@ -712,14 +723,15 @@
           </div>
           <div>
             <label>Goal contains</label>
-            <input class="sched-goal-input" id="hist-goal" type="text" placeholder="payment" maxlength="200">
+            <input class="hist-goal-input" id="hist-goal" type="text" placeholder="payment" maxlength="200">
           </div>
           <div>
             <label>&nbsp;</label>
-            <button class="sched-add-btn" type="submit">Search</button>
+            <button class="hist-search-btn" type="submit">Search</button>
           </div>
           <span class="sched-flash" id="hist-flash"></span>
         </form>
+        <div class="hist-scroll">
         <table class="schedule-table">
           <thead>
             <tr>
@@ -734,6 +746,7 @@
             <tr><td colspan="5" class="schedule-empty">Loading…</td></tr>
           </tbody>
         </table>
+        </div>
         <button class="sched-refresh hist-more" type="button" id="hist-more" hidden>Load more</button>
       </div>
     </div>
