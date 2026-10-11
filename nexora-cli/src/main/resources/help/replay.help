@@ -1,4 +1,4 @@
-Replay a failed execution through a `nexora observe` server.
+Replay an unsuccessful execution (FAILED, TIMED_OUT, CANCELLED or COMPENSATED) through a `nexora observe` server.
 
   Starts a new execution with the same goal and context. The new
   execution's context carries the original id as _replayOf.
