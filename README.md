@@ -541,12 +541,16 @@ Start Nexora's built-in observability server:
 java -jar nexora-cli/target/nexora.jar observe --port 9464
 ```
 
-This exposes four endpoints with no external dependencies:
+The server's full HTTP API is described by an OpenAPI 3.1 document at `GET /openapi.yaml`, browsable with Swagger UI at [`/docs`](http://localhost:9464/docs) (served from bundled assets, no external requests).
+
+It exposes these endpoints with no external dependencies:
 
 | Endpoint | What it serves |
 |----------|---------------|
 | `GET /` | Live process UI showing active executions, step timelines, and plan amendments |
 | `GET /metrics` | Prometheus text format scrape endpoint |
+| `GET /openapi.yaml` | OpenAPI 3.1 description of every endpoint |
+| `GET /docs` | Swagger UI for that document |
 | `GET /api/process` | Raw process snapshot as JSON |
 | `POST /api/execute` | Trigger an execution remotely; returns `202` with the new `executionId` |
 | `GET /health/live` | Liveness probe. Returns `200` while the process is serving HTTP |
