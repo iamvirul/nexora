@@ -17,6 +17,10 @@ import com.nexora.core.plan.InputBinding;
 import com.nexora.core.plan.Step;
 import com.nexora.event.ExecutionDeadLetteredEvent;
 import com.nexora.persistence.DeadLetterReviewState;
+import com.nexora.persistence.ExecutionCursor;
+import com.nexora.persistence.ExecutionFilter;
+import com.nexora.persistence.ExecutionRecord;
+import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.ExecutionStore;
 import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import com.nexora.planner.model.StepDefinition;
@@ -152,10 +156,52 @@ public class PaymentPipelineApp {
             sendJson(exchange, 202, Map.of("accepted", true, "goal", req.goal(), "executionId", handle.executionId()));
         });
 
-        // Cancel a running execution: 200 cancelled, 404 unknown, 409 already finished
+        // Execution history for the UI's history panel: newest first, cursor-paginated
+        http.createContext("/api/executions", exchange -> {
+            if (!"/api/executions".equals(exchange.getRequestURI().getPath())) { sendText(exchange, 404, "Not Found"); return; }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) { sendText(exchange, 405, "Method Not Allowed"); return; }
+            ExecutionFilter filter;
+            int pageSize;
+            try {
+                Map<String, String> q = queryParams(exchange.getRequestURI().getRawQuery());
+                pageSize = q.containsKey("limit") ? Integer.parseInt(q.get("limit")) : ExecutionFilter.DEFAULT_LIMIT;
+                if (pageSize < 1 || pageSize > ExecutionFilter.MAX_LIMIT - 1) throw new IllegalArgumentException("limit must be between 1 and 100");
+                Set<ExecutionState> states = new java.util.HashSet<>();
+                if (q.containsKey("status")) {
+                    for (String st : q.get("status").split(",")) {
+                        try { states.add(ExecutionState.valueOf(st.trim().toUpperCase())); }
+                        catch (IllegalArgumentException e) {
+                            throw new IllegalArgumentException("Invalid status '" + st.trim() + "'. Allowed: "
+                                    + java.util.Arrays.toString(ExecutionState.values()));
+                        }
+                    }
+                }
+                ExecutionCursor cursor = q.containsKey("cursor") ? ExecutionCursor.decode(q.get("cursor")) : null;
+                filter = new ExecutionFilter(states, q.get("goal"), null, null, cursor, pageSize + 1);
+            } catch (IllegalArgumentException e) {
+                sendJson(exchange, 400, Map.of("error", e.getMessage() == null ? "Invalid query" : e.getMessage()));
+                return;
+            }
+            var rows = executionStore.findByFilter(filter);
+            boolean hasMore = rows.size() > pageSize;
+            var page = hasMore ? rows.subList(0, pageSize) : rows;
+            var body = new java.util.LinkedHashMap<String, Object>();
+            body.put("data", page.stream().map(PaymentPipelineApp::historyRow).toList());
+            body.put("cursor", hasMore ? ExecutionCursor.after(page.get(page.size() - 1)).encode() : null);
+            body.put("total", executionStore.count(filter));
+            sendJson(exchange, 200, body);
+        });
+
+        // GET one execution with its steps; DELETE cancels it (200 cancelled, 404 unknown, 409 already finished)
         http.createContext("/api/executions/", exchange -> {
             String id = exchange.getRequestURI().getPath().substring("/api/executions/".length());
             if (id.isBlank() || id.contains("/")) { sendText(exchange, 404, "Not Found"); return; }
+            if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                var record = executionStore.findById(id);
+                if (record.isEmpty()) { sendJson(exchange, 404, Map.of("error", "Execution not found", "executionId", id)); return; }
+                sendJson(exchange, 200, record.get());
+                return;
+            }
             if (!"DELETE".equalsIgnoreCase(exchange.getRequestMethod())) { sendText(exchange, 405, "Method Not Allowed"); return; }
             try {
                 boolean cancelled = engine.cancel(id).get(10, TimeUnit.SECONDS);
@@ -771,6 +817,30 @@ public class PaymentPipelineApp {
         } catch (IOException e) {
             return ("<h1>Failed to load UI: " + e.getMessage() + "</h1>").getBytes(StandardCharsets.UTF_8);
         }
+    }
+
+    static Map<String, String> queryParams(String rawQuery) {
+        Map<String, String> params = new java.util.HashMap<>();
+        if (rawQuery == null) return params;
+        for (String pair : rawQuery.split("&")) {
+            String[] kv = pair.split("=", 2);
+            if (kv.length == 2 && !kv[1].isEmpty()) {
+                params.put(java.net.URLDecoder.decode(kv[0], StandardCharsets.UTF_8),
+                        java.net.URLDecoder.decode(kv[1], StandardCharsets.UTF_8));
+            }
+        }
+        return params;
+    }
+
+    static Map<String, Object> historyRow(ExecutionRecord r) {
+        var row = new java.util.LinkedHashMap<String, Object>();
+        row.put("executionId", r.executionId());
+        row.put("goal", r.goal());
+        row.put("state", r.state().name());
+        row.put("startedAt", r.startedAt().toString());
+        row.put("completedAt", r.completedAt() == null ? null : r.completedAt().toString());
+        row.put("durationMs", r.completedAt() == null ? null : Duration.between(r.startedAt(), r.completedAt()).toMillis());
+        return row;
     }
 
     static void sleep(long ms) {

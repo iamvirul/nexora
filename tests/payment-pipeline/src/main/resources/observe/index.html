@@ -581,6 +581,15 @@
     .sched-flash { font-size: 11px; margin-left: 8px; }
     .sched-flash.ok { color: var(--green); }
     .sched-flash.err { color: var(--red); }
+
+    .hist-row { cursor: pointer; }
+    .hist-row.open td { background: var(--surface2); }
+    .hist-detail td { background: var(--surface2); padding: 4px 8px 12px 24px !important; }
+    .hist-steps { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .hist-steps th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 6px; }
+    .hist-steps td { padding: 4px 6px; border-top: 1px solid var(--border2); }
+    .hist-fail { color: var(--red); font-family: var(--mono); }
+    .hist-more { margin-top: 10px; }
   </style>
 </head>
 <body>
@@ -679,6 +688,53 @@
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+
+    <div class="schedule-section">
+      <div class="schedule-header">
+        <div class="section-title">Execution History <span id="hist-count" style="font-weight:400;color:var(--muted)"></span></div>
+        <button class="sched-refresh" type="button" onclick="loadHistory(true)">↻ Refresh</button>
+      </div>
+      <div class="schedule-body">
+        <form class="schedule-add-form" id="hist-form">
+          <div>
+            <label>Status</label>
+            <select id="hist-status">
+              <option value="" selected>All</option>
+              <option value="RUNNING">RUNNING</option>
+              <option value="COMPLETED">COMPLETED</option>
+              <option value="FAILED">FAILED</option>
+              <option value="TIMED_OUT">TIMED_OUT</option>
+              <option value="CANCELLED">CANCELLED</option>
+              <option value="COMPENSATED">COMPENSATED</option>
+            </select>
+          </div>
+          <div>
+            <label>Goal contains</label>
+            <input class="sched-goal-input" id="hist-goal" type="text" placeholder="payment" maxlength="200">
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button class="sched-add-btn" type="submit">Search</button>
+          </div>
+          <span class="sched-flash" id="hist-flash"></span>
+        </form>
+        <table class="schedule-table">
+          <thead>
+            <tr>
+              <th>Started</th>
+              <th>Goal</th>
+              <th>State</th>
+              <th>Duration</th>
+              <th>Execution ID</th>
+            </tr>
+          </thead>
+          <tbody id="hist-body">
+            <tr><td colspan="5" class="schedule-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+        <button class="sched-refresh hist-more" type="button" id="hist-more" hidden>Load more</button>
       </div>
     </div>
 
@@ -1066,6 +1122,123 @@ setInterval(loadSchedules, 30000);
 
 loadDlq();
 setInterval(loadDlq, 30000);
+
+// ── History ────────────────────────────────────────────────────────────────────
+
+const HIST_PAGE_SIZE = 20;
+const HIST_COLUMNS   = 5;
+const histBody   = document.getElementById('hist-body');
+const histCount  = document.getElementById('hist-count');
+const histFlash  = document.getElementById('hist-flash');
+const histMore   = document.getElementById('hist-more');
+const histStatus = document.getElementById('hist-status');
+const histGoal   = document.getElementById('hist-goal');
+let histCursor = null;
+let histPages  = 0;
+
+// History values come from the store, so escape for attributes too, not just text.
+function escAttr(v) {
+  return esc(v).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function fmtDateTime(iso) {
+  return iso ? new Date(iso).toLocaleString() : '—';
+}
+
+function histMessage(text) {
+  return `<tr><td colspan="${HIST_COLUMNS}" class="schedule-empty">${esc(text)}</td></tr>`;
+}
+
+async function loadHistory(reset) {
+  const params = new URLSearchParams({ limit: String(HIST_PAGE_SIZE) });
+  if (histStatus.value) params.set('status', histStatus.value);
+  if (histGoal.value.trim()) params.set('goal', histGoal.value.trim());
+  if (!reset && histCursor) params.set('cursor', histCursor);
+  try {
+    const r = await fetch('/api/executions?' + params);
+    const p = await r.json().catch(() => ({}));
+    if (r.status === 503) {
+      histBody.innerHTML = histMessage('Persistence is disabled. Configure an execution store to keep history.');
+      histCount.textContent = '';
+      histMore.hidden = true;
+      return;
+    }
+    if (!r.ok) throw new Error(p.error || 'HTTP ' + r.status);
+    const rows = p.data.map(histRow).join('');
+    if (reset) {
+      histBody.innerHTML = rows || histMessage('No executions match.');
+      histPages = 1;
+    } else {
+      histBody.insertAdjacentHTML('beforeend', rows);
+      histPages++;
+    }
+    histCursor = p.cursor;
+    histMore.hidden = !p.cursor;
+    histCount.textContent = `(${p.total})`;
+    histFlash.textContent = '';
+  } catch (ex) {
+    histFlash.className = 'sched-flash err';
+    histFlash.textContent = 'History failed: ' + ex.message;
+  }
+}
+
+function histRow(e) {
+  return `<tr class="hist-row" data-id="${escAttr(e.executionId)}">
+    <td class="sched-time">${esc(fmtDateTime(e.startedAt))}</td>
+    <td class="sched-goal">${esc(e.goal)}</td>
+    <td><span class="badge ${sc(e.state)}">${esc(e.state)}</span></td>
+    <td>${fmtDur(e.durationMs)}</td>
+    <td class="sched-id">${esc(e.executionId)}</td>
+  </tr>`;
+}
+
+async function toggleHistDetail(row) {
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains('hist-detail')) {
+    next.remove();
+    row.classList.remove('open');
+    return;
+  }
+  row.classList.add('open');
+  row.insertAdjacentHTML('afterend', `<tr class="hist-detail"><td colspan="${HIST_COLUMNS}">Loading steps…</td></tr>`);
+  const cell = row.nextElementSibling.firstElementChild;
+  try {
+    const r = await fetch(`/api/executions/${encodeURIComponent(row.dataset.id)}`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+    cell.innerHTML = histSteps(d.steps || []);
+  } catch (ex) {
+    cell.innerHTML = `<span class="hist-fail">${esc('Could not load steps: ' + ex.message)}</span>`;
+  }
+}
+
+function histSteps(steps) {
+  if (!steps.length) return '<span style="color:var(--muted)">No steps recorded.</span>';
+  const rows = steps.map(s => `<tr>
+    <td>${esc(s.stepId)}</td>
+    <td class="sched-id">${esc(s.capabilityId)}</td>
+    <td><span class="badge ${sc(s.state)}">${esc(s.state)}</span></td>
+    <td>${fmtDur(s.durationMs)}</td>
+    <td class="hist-fail">${s.failureCode ? esc(s.failureCode + (s.failureMessage ? ': ' + s.failureMessage : '')) : ''}</td>
+  </tr>`).join('');
+  return `<table class="hist-steps"><thead><tr><th>Step</th><th>Capability</th><th>State</th><th>Duration</th><th>Failure</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+histBody.addEventListener('click', e => {
+  const row = e.target.closest('.hist-row');
+  if (row) toggleHistDetail(row);
+});
+histMore.addEventListener('click', () => loadHistory(false));
+document.getElementById('hist-form').addEventListener('submit', e => {
+  e.preventDefault();
+  loadHistory(true);
+});
+
+loadHistory(true);
+// Keep the first page fresh, but never reset a list the user has paged through or expanded.
+setInterval(() => {
+  if (histPages <= 1 && !histBody.querySelector('.hist-detail')) loadHistory(true);
+}, 15000);
 
 // ── Cancel ─────────────────────────────────────────────────────────────────────
 
