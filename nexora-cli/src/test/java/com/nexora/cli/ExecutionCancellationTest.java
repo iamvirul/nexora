@@ -111,13 +111,24 @@ class ExecutionCancellationTest {
     }
 
     @Test
-    void nonDeleteMethodsAreRejectedWithAllowHeader() throws Exception {
-        HttpRequest get = HttpRequest.newBuilder(executionUri("anything")).GET().build();
+    void deleteReturns500NotFoundWhenStoreIsDown() throws Exception {
+        store.close();
 
-        HttpResponse<String> response = client.send(get, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = delete("finished-elsewhere");
+
+        assertEquals(500, response.statusCode());
+        assertEquals("Cancel request failed", json(response).get("error").asText());
+    }
+
+    @Test
+    void unsupportedMethodsAreRejectedWithAllowHeader() throws Exception {
+        HttpRequest put = HttpRequest.newBuilder(executionUri("anything"))
+                .PUT(HttpRequest.BodyPublishers.noBody()).build();
+
+        HttpResponse<String> response = client.send(put, HttpResponse.BodyHandlers.ofString());
 
         assertEquals(405, response.statusCode());
-        assertEquals("DELETE", response.headers().firstValue("Allow").orElse(null));
+        assertEquals("GET, DELETE", response.headers().firstValue("Allow").orElse(null));
     }
 
     @Test
