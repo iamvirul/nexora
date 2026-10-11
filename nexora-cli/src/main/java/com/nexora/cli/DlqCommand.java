@@ -1,30 +1,23 @@
 package com.nexora.cli;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexora.api.ExecutionNotReplayableException;
 import com.nexora.api.NexoraEngine;
 import com.nexora.core.execution.ExecutionResult;
 import com.nexora.persistence.DeadLetterRecord;
 import com.nexora.persistence.DeadLetterReviewState;
 import com.nexora.persistence.ExecutionStore;
+import java.util.List;
+import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 import picocli.CommandLine.ParentCommand;
 
-import java.util.List;
-import java.util.concurrent.Callable;
-
 @Command(
         name = "dlq",
         mixinStandardHelpOptions = true,
         description = "Manage the dead letter queue.",
-        subcommands = {
-                DlqCommand.ListCommand.class,
-                DlqCommand.ReplayCommand.class,
-                DlqCommand.ResolveCommand.class
-        }
-)
+        subcommands = {DlqCommand.ListCommand.class, DlqCommand.ReplayCommand.class, DlqCommand.ResolveCommand.class})
 public class DlqCommand implements Callable<Integer> {
 
     @ParentCommand
@@ -45,21 +38,26 @@ public class DlqCommand implements Callable<Integer> {
         return store;
     }
 
-    @Command(name = "list", mixinStandardHelpOptions = true,
-             description = "List dead letter queue entries.")
+    @Command(name = "list", mixinStandardHelpOptions = true, description = "List dead letter queue entries.")
     static class ListCommand implements Callable<Integer> {
 
         @ParentCommand
         DlqCommand dlq;
 
-        @Option(names = {"--state"}, defaultValue = "PENDING",
+        @Option(
+                names = {"--state"},
+                defaultValue = "PENDING",
                 description = "Filter by review state: PENDING, RESOLVED, REPLAYED, ALL. Default: ${DEFAULT-VALUE}")
         private String state;
 
-        @Option(names = {"--page"}, defaultValue = "0")
+        @Option(
+                names = {"--page"},
+                defaultValue = "0")
         private int page;
 
-        @Option(names = {"--size"}, defaultValue = "20")
+        @Option(
+                names = {"--size"},
+                defaultValue = "20")
         private int size;
 
         @Override
@@ -74,9 +72,12 @@ public class DlqCommand implements Callable<Integer> {
                 try {
                     filter = DeadLetterReviewState.valueOf(state.toUpperCase());
                 } catch (IllegalArgumentException e) {
-                    System.err.printf("Invalid state '%s'. Allowed values: ALL, %s%n",
-                            state, java.util.Arrays.stream(DeadLetterReviewState.values())
-                                    .map(Enum::name).collect(java.util.stream.Collectors.joining(", ")));
+                    System.err.printf(
+                            "Invalid state '%s'. Allowed values: ALL, %s%n",
+                            state,
+                            java.util.Arrays.stream(DeadLetterReviewState.values())
+                                    .map(Enum::name)
+                                    .collect(java.util.stream.Collectors.joining(", ")));
                     return 1;
                 }
             }
@@ -89,15 +90,16 @@ public class DlqCommand implements Callable<Integer> {
             System.out.printf("%-36s  %-10s  %-20s  %s%n", "ID", "STATE", "FAILED AT", "GOAL");
             System.out.println("-".repeat(100));
             for (DeadLetterRecord dl : items) {
-                System.out.printf("%-36s  %-10s  %-20s  %s%n",
-                        dl.id(), dl.reviewState(), dl.failedAt(), dl.goal());
+                System.out.printf("%-36s  %-10s  %-20s  %s%n", dl.id(), dl.reviewState(), dl.failedAt(), dl.goal());
             }
             return 0;
         }
     }
 
-    @Command(name = "replay", mixinStandardHelpOptions = true,
-             description = "Replay a dead letter by creating a new execution.")
+    @Command(
+            name = "replay",
+            mixinStandardHelpOptions = true,
+            description = "Replay a dead letter by creating a new execution.")
     static class ReplayCommand implements Callable<Integer> {
 
         @ParentCommand
@@ -128,19 +130,17 @@ public class DlqCommand implements Callable<Integer> {
             try {
                 result = engine.replayDeadLetter(dl).result().get();
             } catch (ExecutionNotReplayableException e) {
-                System.err.printf("Error: original execution %s is %s and cannot be replayed yet%n",
-                        dl.executionId(), e.state());
+                System.err.printf(
+                        "Error: original execution %s is %s and cannot be replayed yet%n", dl.executionId(), e.state());
                 return 1;
             }
             store.updateDeadLetterState(id, DeadLetterReviewState.REPLAYED, null);
-            System.out.printf("Replay complete. New executionId=%s status=%s%n",
-                    result.executionId(), result.status());
+            System.out.printf("Replay complete. New executionId=%s status=%s%n", result.executionId(), result.status());
             return 0;
         }
     }
 
-    @Command(name = "resolve", mixinStandardHelpOptions = true,
-             description = "Mark a dead letter as resolved.")
+    @Command(name = "resolve", mixinStandardHelpOptions = true, description = "Mark a dead letter as resolved.")
     static class ResolveCommand implements Callable<Integer> {
 
         @ParentCommand
@@ -149,7 +149,9 @@ public class DlqCommand implements Callable<Integer> {
         @Parameters(index = "0", description = "Dead letter ID to resolve.")
         private String id;
 
-        @Option(names = {"--reason"}, description = "Optional resolution reason.")
+        @Option(
+                names = {"--reason"},
+                description = "Optional resolution reason.")
         private String reason;
 
         @Override

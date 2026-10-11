@@ -1,11 +1,10 @@
 package com.nexora.executor.interceptor;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.nexora.core.capability.CapabilityRequest;
 import com.nexora.core.capability.CapabilityResult;
 import com.nexora.core.context.TraceContext;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Test;
-
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -13,8 +12,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
 
 class TimeoutInterceptorTest {
 
@@ -39,11 +38,13 @@ class TimeoutInterceptorTest {
         TimeoutInterceptor interceptor = new TimeoutInterceptor(executor, Duration.ofMillis(100));
         CountDownLatch capabilityInterrupted = new CountDownLatch(1);
 
-        CapabilityResult result = interceptor.intercept(request(), blockingCapability(new CountDownLatch(1), capabilityInterrupted));
+        CapabilityResult result =
+                interceptor.intercept(request(), blockingCapability(new CountDownLatch(1), capabilityInterrupted));
 
         assertThat(result.failureCode()).isEqualTo("EXECUTION_TIMEOUT");
         assertThat(capabilityInterrupted.await(5, TimeUnit.SECONDS))
-                .as("timed-out capability should be interrupted").isTrue();
+                .as("timed-out capability should be interrupted")
+                .isTrue();
     }
 
     @Test
@@ -53,8 +54,9 @@ class TimeoutInterceptorTest {
         CountDownLatch capabilityInterrupted = new CountDownLatch(1);
         AtomicReference<CapabilityResult> callerResult = new AtomicReference<>();
 
-        Thread caller = Thread.ofVirtual().start(() -> callerResult.set(
-                interceptor.intercept(request(), blockingCapability(capabilityStarted, capabilityInterrupted))));
+        Thread caller = Thread.ofVirtual()
+                .start(() -> callerResult.set(interceptor.intercept(
+                        request(), blockingCapability(capabilityStarted, capabilityInterrupted))));
         assertThat(capabilityStarted.await(5, TimeUnit.SECONDS)).isTrue();
 
         caller.interrupt(); // what HaltSignal does to a step thread on cancel
@@ -62,7 +64,8 @@ class TimeoutInterceptorTest {
 
         assertThat(callerResult.get().failureCode()).isEqualTo("INTERRUPTED");
         assertThat(capabilityInterrupted.await(5, TimeUnit.SECONDS))
-                .as("cancel should reach the capability thread").isTrue();
+                .as("cancel should reach the capability thread")
+                .isTrue();
     }
 
     /** Capability that blocks until interrupted, signalling when it starts and when it is interrupted. */
@@ -81,7 +84,6 @@ class TimeoutInterceptorTest {
     }
 
     private static CapabilityRequest request() {
-        return new CapabilityRequest(
-                "cap", "step-1", "idem-1", Map.of(), TraceContext.root(), null, "exec-1", 0);
+        return new CapabilityRequest("cap", "step-1", "idem-1", Map.of(), TraceContext.root(), null, "exec-1", 0);
     }
 }

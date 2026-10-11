@@ -1,7 +1,6 @@
 package com.nexora.core.capability;
 
 import com.nexora.core.context.TraceContext;
-
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
@@ -9,13 +8,14 @@ import java.util.Objects;
 public record CapabilityRequest(
         String capabilityId,
         String stepId,
-        String idempotencyKey,     // same across retries of a step, and reused when a replay re-runs a step that completed; use for dedup
+        String idempotencyKey, // same across retries of a step, and reused when a replay re-runs a step that
+        // completed; use for dedup
         Map<String, Object> inputs,
         TraceContext traceContext,
-        Duration timeout,          // null means use engine default
+        Duration timeout, // null means use engine default
         String executionId,
-        int attemptNumber          // 0 for the first attempt; incremented by RetryInterceptor
-) {
+        int attemptNumber // 0 for the first attempt; incremented by RetryInterceptor
+        ) {
     public CapabilityRequest {
         Objects.requireNonNull(capabilityId, "capabilityId must not be null");
         Objects.requireNonNull(stepId, "stepId must not be null");
@@ -29,7 +29,9 @@ public record CapabilityRequest(
             inputs = Map.of();
         } else {
             Map<String, Object> filtered = new java.util.HashMap<>(inputs.size());
-            inputs.forEach((k, v) -> { if (v != null) filtered.put(k, v); });
+            inputs.forEach((k, v) -> {
+                if (v != null) filtered.put(k, v);
+            });
             inputs = Map.copyOf(filtered);
         }
     }

@@ -1,6 +1,7 @@
 package com.nexora.event;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
 import java.util.List;
@@ -9,9 +10,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.Test;
 
 class InProcessEventBusTest {
 
@@ -65,7 +64,9 @@ class InProcessEventBusTest {
     void throwingSyncHandlerDoesNotBreakPublishOrOtherHandlers() {
         InProcessEventBus bus = new InProcessEventBus(NEVER);
         List<String> seen = new CopyOnWriteArrayList<>();
-        bus.subscribeSync(PlanStartedEvent.class, e -> { throw new IllegalStateException("boom"); });
+        bus.subscribeSync(PlanStartedEvent.class, e -> {
+            throw new IllegalStateException("boom");
+        });
         bus.subscribeSync(PlanStartedEvent.class, e -> seen.add(e.executionId()));
 
         bus.publish(started("e1"));

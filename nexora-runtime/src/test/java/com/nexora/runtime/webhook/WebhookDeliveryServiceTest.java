@@ -1,5 +1,9 @@
 package com.nexora.runtime.webhook;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import com.nexora.core.context.TraceContext;
 import com.nexora.core.execution.ExecutionStatus;
 import com.nexora.core.intent.Intent;
@@ -7,12 +11,6 @@ import com.nexora.persistence.ExecutionStore;
 import com.nexora.persistence.WebhookDeliveryRecord;
 import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -23,10 +21,11 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 class WebhookDeliveryServiceTest {
 
@@ -76,18 +75,17 @@ class WebhookDeliveryServiceTest {
     void testDeliverIfApplicable_success() throws Exception {
         String secret = "test-secret-123";
         WebhookDeliveryService service = new WebhookDeliveryService(secret, store);
-        
+
         // Seed database with execution to satisfy foreign key constraint
         store.createExecution(new com.nexora.persistence.ExecutionRecord(
-                "exec-1", 
-                "test-trace", 
-                "test_goal", 
+                "exec-1",
+                "test-trace",
+                "test_goal",
                 java.util.Map.of(),
-                com.nexora.persistence.ExecutionState.RUNNING, 
-                java.time.Instant.now(), 
+                com.nexora.persistence.ExecutionState.RUNNING,
+                java.time.Instant.now(),
                 null,
-                java.util.List.of()
-        ));
+                java.util.List.of()));
 
         String webhookUrl = "http://localhost:" + port + "/webhook";
         Intent intent = new Intent("test_goal", Map.of(), null, webhookUrl, List.of(ExecutionStatus.COMPLETED));

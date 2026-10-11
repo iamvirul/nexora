@@ -1,21 +1,20 @@
 package com.nexora.executor;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import com.nexora.core.capability.CapabilityContract;
 import com.nexora.core.capability.CapabilityRequest;
 import com.nexora.core.capability.CapabilityResult;
 import com.nexora.core.context.TraceContext;
 import com.nexora.registry.DefaultCapabilityRegistry;
 import com.nexora.spi.CapabilityDescriptor;
-import org.junit.jupiter.api.Test;
-
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.Test;
 
 class CapabilityInvokerTest {
 
@@ -87,8 +86,7 @@ class CapabilityInvokerTest {
                 TraceContext.root(),
                 Duration.ofSeconds(1),
                 "execution-1",
-                0
-        );
+                0);
     }
 
     private static CapabilityDescriptor primaryDescriptor() {
@@ -97,15 +95,7 @@ class CapabilityInvokerTest {
                 .fallback("fallback")
                 .windowSize(20)
                 .build();
-        return new CapabilityDescriptor(
-                "primary",
-                "primary",
-                List.of(),
-                List.of(),
-                true,
-                false,
-                contract
-        );
+        return new CapabilityDescriptor("primary", "primary", List.of(), List.of(), true, false, contract);
     }
 
     private static CapabilityDescriptor descriptor(String id) {

@@ -4,9 +4,9 @@ import com.nexora.core.context.TraceContext;
 import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.execution.ExecutionResult;
 import com.nexora.core.intent.Intent;
-import com.nexora.event.ExecutionEventBus;
 import com.nexora.event.EventHandler;
 import com.nexora.event.ExecutionEvent;
+import com.nexora.event.ExecutionEventBus;
 import com.nexora.event.InProcessEventBus;
 import com.nexora.event.Subscription;
 import com.nexora.executor.CapabilityContractMonitor;
@@ -22,10 +22,11 @@ import com.nexora.persistence.DeadLetterRecord;
 import com.nexora.persistence.ExecutionRecord;
 import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.ExecutionStore;
+import com.nexora.persistence.MissedFirePolicy;
+import com.nexora.persistence.ScheduleRecord;
 import com.nexora.persistence.StepRecord;
 import com.nexora.persistence.StepState;
 import com.nexora.planner.engine.CompositePlanner;
-import com.nexora.saga.SagaOrchestrator;
 import com.nexora.planner.engine.PlannerEngine;
 import com.nexora.planner.engine.RulePlanner;
 import com.nexora.planner.model.StepDefinition;
@@ -35,20 +36,14 @@ import com.nexora.retry.DefaultRetryPolicyRegistry;
 import com.nexora.retry.RetryPolicy;
 import com.nexora.retry.RetryPolicyRegistry;
 import com.nexora.runtime.engine.ExecutionEngine;
+import com.nexora.runtime.scheduler.CronScheduler;
+import com.nexora.runtime.scheduler.ScheduledExecution;
+import com.nexora.saga.SagaOrchestrator;
 import com.nexora.spi.CapabilityRegistry;
 import com.nexora.spi.NexoraPlugin;
 import com.nexora.spi.Planner;
 import com.nexora.tracing.NoopTracer;
 import com.nexora.tracing.Tracer;
-
-import com.nexora.persistence.MissedFirePolicy;
-import com.nexora.persistence.ScheduleRecord;
-import com.nexora.runtime.scheduler.CronScheduler;
-import com.nexora.runtime.scheduler.ScheduledExecution;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -63,6 +58,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Public entry point for the Nexora execution platform.
@@ -146,10 +143,7 @@ public final class NexoraEngine implements AutoCloseable {
     /**
      * Convenience: execute with an inline per-call deadline, overriding any engine-wide default.
      */
-    public CompletableFuture<ExecutionResult> execute(
-            String goal,
-            Map<String, Object> context,
-            Duration deadline) {
+    public CompletableFuture<ExecutionResult> execute(String goal, Map<String, Object> context, Duration deadline) {
         return engine.execute(new Intent(goal, context, deadline));
     }
 
@@ -191,21 +185,24 @@ public final class NexoraEngine implements AutoCloseable {
         if (engine.isRunning(executionId)) {
             throw new ExecutionNotReplayableException(executionId, ExecutionState.RUNNING);
         }
-        ExecutionRecord original = store.findById(executionId)
-                .orElseThrow(() -> new ExecutionNotFoundException(executionId));
+        ExecutionRecord original =
+                store.findById(executionId).orElseThrow(() -> new ExecutionNotFoundException(executionId));
         if (!REPLAYABLE_STATES.contains(original.state())) {
             throw new ExecutionNotReplayableException(executionId, original.state());
         }
 
         Map<String, Object> context = new LinkedHashMap<>(original.context());
         context.put(REPLAY_OF_CONTEXT_KEY, executionId);
-        Map<String, String> reusedKeys = original.state() == ExecutionState.COMPENSATED
-                ? Map.of()
-                : completedStepKeys(original);
+        Map<String, String> reusedKeys =
+                original.state() == ExecutionState.COMPENSATED ? Map.of() : completedStepKeys(original);
 
         ExecutionHandle replay = engine.submit(new Intent(original.goal(), context), TraceContext.root(), reusedKeys);
-        log.info("Execution replay started executionId={} replayOf={} originalState={} reusedKeys={}",
-                replay.executionId(), executionId, original.state(), reusedKeys.size());
+        log.info(
+                "Execution replay started executionId={} replayOf={} originalState={} reusedKeys={}",
+                replay.executionId(),
+                executionId,
+                original.state(),
+                reusedKeys.size());
         return replay;
     }
 
@@ -223,8 +220,10 @@ public final class NexoraEngine implements AutoCloseable {
         } catch (ExecutionNotFoundException e) {
             Map<String, Object> context = new LinkedHashMap<>(deadLetter.context());
             context.put(REPLAY_OF_CONTEXT_KEY, deadLetter.executionId());
-            log.info("Dead letter replay without original record deadLetterId={} executionId={}",
-                    deadLetter.id(), deadLetter.executionId());
+            log.info(
+                    "Dead letter replay without original record deadLetterId={} executionId={}",
+                    deadLetter.id(),
+                    deadLetter.executionId());
             return engine.submit(new Intent(deadLetter.goal(), context), TraceContext.root());
         }
     }
@@ -264,7 +263,8 @@ public final class NexoraEngine implements AutoCloseable {
                 case CANCELLED -> CompletableFuture.completedFuture(true);
                 case ALREADY_TERMINAL -> CompletableFuture.completedFuture(false);
                 case NOT_FOUND -> CompletableFuture.failedFuture(new ExecutionNotFoundException(executionId));
-                case NOT_RUNNING_ON_THIS_ENGINE -> CompletableFuture.failedFuture(new ExecutionNotOwnedException(executionId));
+                case NOT_RUNNING_ON_THIS_ENGINE ->
+                    CompletableFuture.failedFuture(new ExecutionNotOwnedException(executionId));
             };
         } catch (RuntimeException e) {
             return CompletableFuture.failedFuture(e);
@@ -311,7 +311,9 @@ public final class NexoraEngine implements AutoCloseable {
         ExecutionStore store = engine.getStore();
         checks.put(ReadinessReport.CHECK_PERSISTENCE, HealthStatus.of(store == null || store.isHealthy()));
 
-        checks.put(ReadinessReport.CHECK_PLUGINS, HealthStatus.of(pluginManager.nonActivePluginIds().isEmpty()));
+        checks.put(
+                ReadinessReport.CHECK_PLUGINS,
+                HealthStatus.of(pluginManager.nonActivePluginIds().isEmpty()));
 
         boolean executorUp = !(executor instanceof ExecutorService service) || !service.isShutdown();
         checks.put(ReadinessReport.CHECK_EXECUTOR, HealthStatus.of(executorUp));
@@ -320,7 +322,8 @@ public final class NexoraEngine implements AutoCloseable {
     }
 
     public enum HealthStatus {
-        UP, DOWN;
+        UP,
+        DOWN;
 
         static HealthStatus of(boolean healthy) {
             return healthy ? UP : DOWN;
@@ -418,11 +421,16 @@ public final class NexoraEngine implements AutoCloseable {
     private void requireScheduler() {
         if (cronScheduler == null) {
             throw new IllegalStateException(
-                "Cron scheduling requires a persistence store. Call builder.withExecutionStore(...) first.");
+                    "Cron scheduling requires a persistence store. Call builder.withExecutionStore(...) first.");
         }
     }
 
-    public record HealthSnapshot(String capabilityId, CapabilityContractMonitor.CircuitState state, int sampleCount, double errorRate, Duration p99Latency) {
+    public record HealthSnapshot(
+            String capabilityId,
+            CapabilityContractMonitor.CircuitState state,
+            int sampleCount,
+            double errorRate,
+            Duration p99Latency) {
         public static HealthSnapshot from(CapabilityContractMonitor.HealthSnapshot s) {
             return new HealthSnapshot(s.capabilityId(), s.state(), s.sampleCount(), s.errorRate(), s.p99Latency());
         }
@@ -548,21 +556,20 @@ public final class NexoraEngine implements AutoCloseable {
             if (tracer == NoopTracer.INSTANCE) {
                 String otlpEndpoint = System.getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
                 if (otlpEndpoint != null && !otlpEndpoint.isBlank()) {
-                    log.warn("OTEL_EXPORTER_OTLP_ENDPOINT is set but no OtelTracer was wired via withTracer(); falling back to NoopTracer");
+                    log.warn(
+                            "OTEL_EXPORTER_OTLP_ENDPOINT is set but no OtelTracer was wired via withTracer(); falling back to NoopTracer");
                 }
             }
             List<ExecutionInterceptor> interceptors = List.of(
                     new RetryInterceptor(retryPolicyRegistry),
                     new TracingInterceptor(tracer),
-                    new TimeoutInterceptor(executor, defaultTimeout)
-            );
-            InterceptorPipeline pipeline = new InterceptorPipeline(
-                    interceptors,
-                    new CapabilityInvoker(capabilityRegistry, contractMonitor)
-            );
+                    new TimeoutInterceptor(executor, defaultTimeout));
+            InterceptorPipeline pipeline =
+                    new InterceptorPipeline(interceptors, new CapabilityInvoker(capabilityRegistry, contractMonitor));
 
             // DAG scheduler
-            DagStepScheduler scheduler = new DagStepScheduler(pipeline, retryPolicyRegistry, eventBus, executor, capabilityRegistry);
+            DagStepScheduler scheduler =
+                    new DagStepScheduler(pipeline, retryPolicyRegistry, eventBus, executor, capabilityRegistry);
 
             // Planner — composite of plugin planners + rule planner as fallback
             PlanRegistry planRegistry = new PlanRegistry();
@@ -576,21 +583,33 @@ public final class NexoraEngine implements AutoCloseable {
             CompositePlanner compositePlanner = new CompositePlanner(allPlanners, rulePlanner);
 
             // Saga orchestrator (optional)
-            SagaOrchestrator sagaOrchestrator = sagaEnabled
-                    ? new SagaOrchestrator(pipeline, eventBus, executor)
-                    : null;
+            SagaOrchestrator sagaOrchestrator = sagaEnabled ? new SagaOrchestrator(pipeline, eventBus, executor) : null;
 
             // Engine
             ExecutionEngine engine = new ExecutionEngine(
-                    compositePlanner, capabilityRegistry, scheduler, eventBus,
-                    executionStore, sagaOrchestrator, defaultPlanDeadline, executor, webhookSecret);
+                    compositePlanner,
+                    capabilityRegistry,
+                    scheduler,
+                    eventBus,
+                    executionStore,
+                    sagaOrchestrator,
+                    defaultPlanDeadline,
+                    executor,
+                    webhookSecret);
 
             // Cron scheduler (optional — requires a store)
-            CronScheduler cronScheduler = executionStore != null
-                    ? new CronScheduler(engine, executionStore, eventBus)
-                    : null;
+            CronScheduler cronScheduler =
+                    executionStore != null ? new CronScheduler(engine, executionStore, eventBus) : null;
 
-            return new NexoraEngine(engine, pluginManager, eventBus, capabilityRegistry, contractMonitor, cronScheduler, tracer, executor);
+            return new NexoraEngine(
+                    engine,
+                    pluginManager,
+                    eventBus,
+                    capabilityRegistry,
+                    contractMonitor,
+                    cronScheduler,
+                    tracer,
+                    executor);
         }
     }
 }

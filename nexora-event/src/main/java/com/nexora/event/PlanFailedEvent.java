@@ -9,5 +9,5 @@ public record PlanFailedEvent(
         String failedStepId,
         String failureCode,
         Duration elapsed,
-        Instant occurredAt
-) implements ExecutionEvent {}
+        Instant occurredAt)
+        implements ExecutionEvent {}

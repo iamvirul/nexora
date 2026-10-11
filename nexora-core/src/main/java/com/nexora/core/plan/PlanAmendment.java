@@ -13,6 +13,4 @@ package com.nexora.core.plan;
  *   SkipStepAmendment   — cancel a pending step before it starts
  *   ModifyInputAmendment — override an input binding for a pending step
  */
-public sealed interface PlanAmendment
-        permits AddStepAmendment, SkipStepAmendment, ModifyInputAmendment {
-}
+public sealed interface PlanAmendment permits AddStepAmendment, SkipStepAmendment, ModifyInputAmendment {}

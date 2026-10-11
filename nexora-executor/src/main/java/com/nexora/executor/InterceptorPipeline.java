@@ -2,7 +2,6 @@ package com.nexora.executor;
 
 import com.nexora.core.capability.CapabilityRequest;
 import com.nexora.core.capability.CapabilityResult;
-
 import java.util.List;
 import java.util.Objects;
 

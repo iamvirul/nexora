@@ -1,13 +1,9 @@
 package com.nexora.core.execution;
 
 import com.nexora.core.capability.CapabilityResult;
-
 import java.util.Objects;
 
-public record StepResult(
-        String stepId,
-        CapabilityResult capabilityResult
-) {
+public record StepResult(String stepId, CapabilityResult capabilityResult) {
     public StepResult {
         Objects.requireNonNull(stepId, "stepId must not be null");
         Objects.requireNonNull(capabilityResult, "capabilityResult must not be null");

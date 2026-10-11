@@ -9,9 +9,5 @@ import java.time.Instant;
  *
  * <p>Saga compensation (if enabled) will follow this event.
  */
-public record PlanCancelledEvent(
-        String executionId,
-        String traceId,
-        Duration elapsed,
-        Instant occurredAt
-) implements ExecutionEvent {}
+public record PlanCancelledEvent(String executionId, String traceId, Duration elapsed, Instant occurredAt)
+        implements ExecutionEvent {}

@@ -1,24 +1,23 @@
 package com.nexora.tracing.otel;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexora.tracing.Span;
 import com.nexora.tracing.SpanStatus;
-import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.wait.strategy.Wait;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
-
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
 /**
  * Verifies {@link OtelTracer} actually exports spans over OTLP/HTTP to a real
@@ -34,7 +33,8 @@ class OtelTracerJaegerIntegrationTest {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     @Container
-    static final GenericContainer<?> jaeger = new GenericContainer<>(DockerImageName.parse("jaegertracing/all-in-one:latest"))
+    static final GenericContainer<?> jaeger = new GenericContainer<>(
+                    DockerImageName.parse("jaegertracing/all-in-one:latest"))
             .withExposedPorts(4318, 16686)
             .withEnv("COLLECTOR_OTLP_ENABLED", "true")
             .waitingFor(Wait.forHttp("/").forPort(16686).withStartupTimeout(Duration.ofSeconds(60)));
@@ -65,14 +65,13 @@ class OtelTracerJaegerIntegrationTest {
 
     private JsonNode pollForTrace() throws Exception {
         HttpClient client = HttpClient.newHttpClient();
-        String queryUrl = "http://" + jaeger.getHost() + ":" + jaeger.getMappedPort(16686)
-                + "/api/traces?service=nexora&limit=1";
+        String queryUrl =
+                "http://" + jaeger.getHost() + ":" + jaeger.getMappedPort(16686) + "/api/traces?service=nexora&limit=1";
 
         Instant deadline = Instant.now().plusSeconds(15);
         while (Instant.now().isBefore(deadline)) {
             HttpResponse<String> response = client.send(
-                    HttpRequest.newBuilder(URI.create(queryUrl)).GET().build(),
-                    HttpResponse.BodyHandlers.ofString());
+                    HttpRequest.newBuilder(URI.create(queryUrl)).GET().build(), HttpResponse.BodyHandlers.ofString());
             JsonNode body = JSON.readTree(response.body());
             JsonNode data = body.get("data");
             if (data != null && data.size() > 0) {

@@ -3,7 +3,6 @@ package com.nexora.planner.engine;
 import com.nexora.spi.CapabilityDescriptor;
 import com.nexora.spi.CapabilityRegistry;
 import com.nexora.spi.PlanningContext;
-
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;

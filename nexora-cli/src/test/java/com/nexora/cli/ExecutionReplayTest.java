@@ -1,5 +1,9 @@
 package com.nexora.cli;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexora.api.NexoraEngine;
@@ -16,11 +20,6 @@ import com.nexora.spi.NexoraPlugin;
 import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
 import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import picocli.CommandLine;
-
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -33,10 +32,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import picocli.CommandLine;
 
 /** End-to-end replay over HTTP: the REST route and {@code nexora replay}, against a real engine and store. */
 class ExecutionReplayTest {
@@ -115,10 +114,14 @@ class ExecutionReplayTest {
         try (NexoraEngine noStore = NexoraEngine.builder().build()) {
             HttpServer bare = startServer(noStore);
             try {
-                URI uri = URI.create("http://" + LOOPBACK + ":" + bare.getAddress().getPort()
-                        + ExecutionEndpoints.PATH_PREFIX + "any" + ExecutionEndpoints.REPLAY_SUFFIX);
-                HttpResponse<String> response = client.send(HttpRequest.newBuilder(uri)
-                        .POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+                URI uri = URI.create(
+                        "http://" + LOOPBACK + ":" + bare.getAddress().getPort() + ExecutionEndpoints.PATH_PREFIX
+                                + "any" + ExecutionEndpoints.REPLAY_SUFFIX);
+                HttpResponse<String> response = client.send(
+                        HttpRequest.newBuilder(uri)
+                                .POST(HttpRequest.BodyPublishers.noBody())
+                                .build(),
+                        HttpResponse.BodyHandlers.ofString());
                 assertEquals(503, response.statusCode());
             } finally {
                 bare.stop(0);
@@ -157,16 +160,21 @@ class ExecutionReplayTest {
     }
 
     private ExecutionResult run() throws Exception {
-        return engine.execute(new Intent("process order", Map.of("orderId", "ORD-1"))).get(WAIT_SECONDS, TimeUnit.SECONDS);
+        return engine.execute(new Intent("process order", Map.of("orderId", "ORD-1")))
+                .get(WAIT_SECONDS, TimeUnit.SECONDS);
     }
 
     private HttpResponse<String> post(String executionId) throws Exception {
-        return client.send(HttpRequest.newBuilder(replayUri(executionId))
-                .POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+        return client.send(
+                HttpRequest.newBuilder(replayUri(executionId))
+                        .POST(HttpRequest.BodyPublishers.noBody())
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
     }
 
     private URI replayUri(String executionId) {
-        return URI.create(serverUrl() + ExecutionEndpoints.PATH_PREFIX + executionId + ExecutionEndpoints.REPLAY_SUFFIX);
+        return URI.create(
+                serverUrl() + ExecutionEndpoints.PATH_PREFIX + executionId + ExecutionEndpoints.REPLAY_SUFFIX);
     }
 
     private String serverUrl() {
@@ -198,23 +206,33 @@ class ExecutionReplayTest {
 
     private NexoraPlugin plugin() {
         return new NexoraPlugin() {
-            @Override public PluginDescriptor descriptor() {
+            @Override
+            public PluginDescriptor descriptor() {
                 return new PluginDescriptor("replay-cli-test", "1.0", "replay cli test plugin", List.of(), null);
             }
-            @Override public void initialize(PluginContext ctx) {}
-            @Override public List<CapabilityProvider> capabilityProviders() {
+
+            @Override
+            public void initialize(PluginContext ctx) {}
+
+            @Override
+            public List<CapabilityProvider> capabilityProviders() {
                 return List.of(new CapabilityProvider() {
-                    @Override public CapabilityDescriptor descriptor() {
+                    @Override
+                    public CapabilityDescriptor descriptor() {
                         return new CapabilityDescriptor("charge", "charge", List.of(), List.of(), true, false);
                     }
-                    @Override public Capability create(PluginContext ctx) {
+
+                    @Override
+                    public Capability create(PluginContext ctx) {
                         return req -> failuresLeft.getAndDecrement() > 0
                                 ? CapabilityResult.failure("DECLINED", "card declined")
                                 : CapabilityResult.success("charged");
                     }
                 });
             }
-            @Override public void shutdown() {}
+
+            @Override
+            public void shutdown() {}
         };
     }
 }

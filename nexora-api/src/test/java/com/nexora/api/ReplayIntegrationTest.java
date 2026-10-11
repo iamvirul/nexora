@@ -1,5 +1,8 @@
 package com.nexora.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.nexora.core.capability.CapabilityResult;
 import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.execution.ExecutionResult;
@@ -17,10 +20,6 @@ import com.nexora.spi.CapabilityProvider;
 import com.nexora.spi.NexoraPlugin;
 import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -30,9 +29,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 class ReplayIntegrationTest {
 
@@ -76,7 +75,9 @@ class ReplayIntegrationTest {
         assertThat(stored.context())
                 .containsEntry(NexoraEngine.REPLAY_OF_CONTEXT_KEY, original.executionId())
                 .containsEntry("orderId", "ORD-1");
-        assertThat(stored.traceId()).isNotEqualTo(store.findById(original.executionId()).orElseThrow().traceId());
+        assertThat(stored.traceId())
+                .isNotEqualTo(
+                        store.findById(original.executionId()).orElseThrow().traceId());
     }
 
     @Test
@@ -131,8 +132,8 @@ class ReplayIntegrationTest {
     void deadLetterReplayFallsBackToDeadLetterWhenOriginalRecordIsGone() throws Exception {
         engine = buildEngine(false);
         failChargeTimes.set(0);
-        DeadLetterRecord orphan = DeadLetterRecord.pending("dl-1", "gone-execution", GOAL,
-                Map.of("orderId", "ORD-9"), "STEP_FAILED", "boom", Instant.now());
+        DeadLetterRecord orphan = DeadLetterRecord.pending(
+                "dl-1", "gone-execution", GOAL, Map.of("orderId", "ORD-9"), "STEP_FAILED", "boom", Instant.now());
 
         ExecutionHandle replay = engine.replayDeadLetter(orphan);
 
@@ -152,12 +153,15 @@ class ReplayIntegrationTest {
         };
         engine = buildEngine(true);
         ExecutionResult original = run();
-        assertThat(releaseStarted.await(WAIT_SECONDS, TimeUnit.SECONDS)).as("compensation started").isTrue();
+        assertThat(releaseStarted.await(WAIT_SECONDS, TimeUnit.SECONDS))
+                .as("compensation started")
+                .isTrue();
 
         // Whatever the store says mid-compensation, the engine still owns this run.
         assertThatThrownBy(() -> engine.replay(original.executionId()))
                 .isInstanceOf(ExecutionNotReplayableException.class)
-                .satisfies(e -> assertThat(((ExecutionNotReplayableException) e).state()).isEqualTo(ExecutionState.RUNNING));
+                .satisfies(e -> assertThat(((ExecutionNotReplayableException) e).state())
+                        .isEqualTo(ExecutionState.RUNNING));
 
         finishRelease.countDown();
         awaitState(original.executionId(), ExecutionState.COMPENSATED);
@@ -191,18 +195,29 @@ class ReplayIntegrationTest {
 
         assertThatThrownBy(() -> engine.replay(original.executionId()))
                 .isInstanceOf(ExecutionNotReplayableException.class)
-                .satisfies(e -> assertThat(((ExecutionNotReplayableException) e).state()).isEqualTo(ExecutionState.COMPLETED));
+                .satisfies(e -> assertThat(((ExecutionNotReplayableException) e).state())
+                        .isEqualTo(ExecutionState.COMPLETED));
     }
 
     @Test
     void replayOfCancelledExecutionIsAllowed() throws Exception {
         engine = buildEngine(false);
         String id = UUID.randomUUID().toString();
-        store.createExecution(new ExecutionRecord(id, "trace", GOAL, Map.of("orderId", "ORD-1"),
-                ExecutionState.CANCELLED, Instant.now(), Instant.now(), List.of()));
+        store.createExecution(new ExecutionRecord(
+                id,
+                "trace",
+                GOAL,
+                Map.of("orderId", "ORD-1"),
+                ExecutionState.CANCELLED,
+                Instant.now(),
+                Instant.now(),
+                List.of()));
         failChargeTimes.set(0);
 
-        assertThat(engine.replay(id).result().get(WAIT_SECONDS, TimeUnit.SECONDS).status())
+        assertThat(engine.replay(id)
+                        .result()
+                        .get(WAIT_SECONDS, TimeUnit.SECONDS)
+                        .status())
                 .isEqualTo(ExecutionStatus.COMPLETED);
     }
 
@@ -235,12 +250,15 @@ class ReplayIntegrationTest {
     }
 
     private ExecutionRecord awaitStored(String executionId) throws InterruptedException {
-        awaitCondition(() -> store.findById(executionId).map(r -> r.state() != ExecutionState.RUNNING).orElse(false));
+        awaitCondition(() -> store.findById(executionId)
+                .map(r -> r.state() != ExecutionState.RUNNING)
+                .orElse(false));
         return store.findById(executionId).orElseThrow();
     }
 
     private void awaitState(String executionId, ExecutionState state) throws InterruptedException {
-        awaitCondition(() -> store.findById(executionId).map(r -> r.state() == state).orElse(false));
+        awaitCondition(
+                () -> store.findById(executionId).map(r -> r.state() == state).orElse(false));
     }
 
     private static void awaitCondition(BooleanSupplier condition) throws InterruptedException {
@@ -275,11 +293,16 @@ class ReplayIntegrationTest {
 
     private NexoraPlugin plugin() {
         return new NexoraPlugin() {
-            @Override public PluginDescriptor descriptor() {
+            @Override
+            public PluginDescriptor descriptor() {
                 return new PluginDescriptor("replay-test", "1.0", "replay test plugin", List.of(), null);
             }
-            @Override public void initialize(PluginContext ctx) {}
-            @Override public List<CapabilityProvider> capabilityProviders() {
+
+            @Override
+            public void initialize(PluginContext ctx) {}
+
+            @Override
+            public List<CapabilityProvider> capabilityProviders() {
                 return List.of(
                         provider("reserve", req -> {
                             recordKey(req.executionId(), req.stepId(), req.idempotencyKey());
@@ -297,7 +320,9 @@ class ReplayIntegrationTest {
                                     : CapabilityResult.success("charged");
                         }));
             }
-            @Override public void shutdown() {}
+
+            @Override
+            public void shutdown() {}
         };
     }
 
@@ -315,10 +340,13 @@ class ReplayIntegrationTest {
 
     private static CapabilityProvider provider(String id, Capability capability) {
         return new CapabilityProvider() {
-            @Override public CapabilityDescriptor descriptor() {
+            @Override
+            public CapabilityDescriptor descriptor() {
                 return new CapabilityDescriptor(id, id, List.of(), List.of(), true, false);
             }
-            @Override public Capability create(PluginContext ctx) {
+
+            @Override
+            public Capability create(PluginContext ctx) {
                 return capability;
             }
         };

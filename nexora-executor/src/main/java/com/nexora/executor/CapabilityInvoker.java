@@ -6,12 +6,11 @@ import com.nexora.core.capability.CapabilityResult;
 import com.nexora.spi.Capability;
 import com.nexora.spi.CapabilityDescriptor;
 import com.nexora.spi.CapabilityRegistry;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Terminal node in the pipeline: resolves the capability from the registry and invokes it.
@@ -42,10 +41,7 @@ public final class CapabilityInvoker {
 
         if (capability == null) {
             monitor.recordFailure(targetId, Duration.ZERO);
-            return CapabilityResult.failure(
-                    "CAPABILITY_NOT_FOUND",
-                    "No capability registered with id: " + targetId
-            );
+            return CapabilityResult.failure("CAPABILITY_NOT_FOUND", "No capability registered with id: " + targetId);
         }
 
         Instant start = Instant.now();
@@ -67,8 +63,10 @@ public final class CapabilityInvoker {
 
         CapabilityContract contract = descriptor.contract();
         if (contract.hasFallback() && !monitor.isHealthy(capabilityId, contract)) {
-            log.warn("Capability {} is unhealthy — routing to fallback {}",
-                    capabilityId, contract.fallbackCapabilityId());
+            log.warn(
+                    "Capability {} is unhealthy — routing to fallback {}",
+                    capabilityId,
+                    contract.fallbackCapabilityId());
             return contract.fallbackCapabilityId();
         }
 

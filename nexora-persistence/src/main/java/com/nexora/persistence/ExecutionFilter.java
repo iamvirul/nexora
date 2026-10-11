@@ -15,13 +15,7 @@ import java.util.Set;
  * @param limit        maximum rows to return, 1 to {@value #MAX_LIMIT}
  */
 public record ExecutionFilter(
-        Set<ExecutionState> states,
-        String goalContains,
-        Instant from,
-        Instant to,
-        ExecutionCursor after,
-        int limit
-) {
+        Set<ExecutionState> states, String goalContains, Instant from, Instant to, ExecutionCursor after, int limit) {
     public static final int DEFAULT_LIMIT = 20;
     // One above the API's max page size so callers can fetch limit + 1 to detect a next page.
     public static final int MAX_LIMIT = 101;

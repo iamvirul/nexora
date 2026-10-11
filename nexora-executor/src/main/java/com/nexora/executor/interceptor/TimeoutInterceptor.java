@@ -4,7 +4,6 @@ import com.nexora.core.capability.CapabilityRequest;
 import com.nexora.core.capability.CapabilityResult;
 import com.nexora.executor.ExecutionInterceptor;
 import com.nexora.executor.InterceptorChain;
-
 import java.time.Duration;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
@@ -46,9 +45,7 @@ public final class TimeoutInterceptor implements ExecutionInterceptor {
         } catch (TimeoutException e) {
             task.cancel(true);
             return CapabilityResult.failure(
-                    "EXECUTION_TIMEOUT",
-                    "Capability " + request.capabilityId() + " exceeded timeout of " + timeout
-            );
+                    "EXECUTION_TIMEOUT", "Capability " + request.capabilityId() + " exceeded timeout of " + timeout);
         } catch (InterruptedException e) {
             task.cancel(true);
             Thread.currentThread().interrupt();

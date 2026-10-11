@@ -1,5 +1,8 @@
 package com.nexora.loader;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
 import com.nexora.core.intent.Intent;
 import com.nexora.core.plan.Plan;
 import com.nexora.event.InProcessEventBus;
@@ -13,9 +16,6 @@ import com.nexora.spi.PlanningContext;
 import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
 import com.nexora.spi.PluginInitializationException;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -26,18 +26,15 @@ import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import java.util.stream.Collectors;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class PluginManagerTest {
 
     @Test
     void removesOnlyDeactivatedPluginPlanners() {
-        PluginManager manager = new PluginManager(
-                new DefaultCapabilityRegistry(),
-                new InProcessEventBus(Runnable::run)
-        );
+        PluginManager manager =
+                new PluginManager(new DefaultCapabilityRegistry(), new InProcessEventBus(Runnable::run));
 
         NexoraPlugin pluginA = new TestPlugin("plugin-a", "planner-a");
         NexoraPlugin pluginB = new TestPlugin("plugin-b", "planner-b");
@@ -58,10 +55,8 @@ class PluginManagerTest {
 
     @Test
     void failsActivationWhenRequiredPluginIsNotActive() {
-        PluginManager manager = new PluginManager(
-                new DefaultCapabilityRegistry(),
-                new InProcessEventBus(Runnable::run)
-        );
+        PluginManager manager =
+                new PluginManager(new DefaultCapabilityRegistry(), new InProcessEventBus(Runnable::run));
 
         NexoraPlugin base = new TestPlugin("base-plugin", "base-planner");
         NexoraPlugin dependent = new TestPlugin("dependent-plugin", "dep-planner", List.of("base-plugin"));
@@ -75,10 +70,8 @@ class PluginManagerTest {
 
     @Test
     void preventsDeactivatingPluginWithActiveDependents() {
-        PluginManager manager = new PluginManager(
-                new DefaultCapabilityRegistry(),
-                new InProcessEventBus(Runnable::run)
-        );
+        PluginManager manager =
+                new PluginManager(new DefaultCapabilityRegistry(), new InProcessEventBus(Runnable::run));
 
         NexoraPlugin base = new TestPlugin("base-plugin", "base-planner");
         NexoraPlugin dependent = new TestPlugin("dependent-plugin", "dep-planner", List.of("base-plugin"));
@@ -94,10 +87,8 @@ class PluginManagerTest {
 
     @Test
     void nonActivePluginIdsListsPluginsThatWereNeverActivated() {
-        PluginManager manager = new PluginManager(
-                new DefaultCapabilityRegistry(),
-                new InProcessEventBus(Runnable::run)
-        );
+        PluginManager manager =
+                new PluginManager(new DefaultCapabilityRegistry(), new InProcessEventBus(Runnable::run));
 
         manager.registerPlugin(new TestPlugin("plugin-a", "planner-a"));
         manager.registerPlugin(new TestPlugin("plugin-b", "planner-b"));
@@ -108,10 +99,8 @@ class PluginManagerTest {
 
     @Test
     void nonActivePluginIdsIsEmptyWhenAllPluginsAreActive() {
-        PluginManager manager = new PluginManager(
-                new DefaultCapabilityRegistry(),
-                new InProcessEventBus(Runnable::run)
-        );
+        PluginManager manager =
+                new PluginManager(new DefaultCapabilityRegistry(), new InProcessEventBus(Runnable::run));
 
         manager.registerPlugin(new TestPlugin("plugin-a", "planner-a"));
         manager.activatePlugin("plugin-a");
@@ -121,10 +110,8 @@ class PluginManagerTest {
 
     @Test
     void nonActivePluginIdsIncludesPluginWhoseInitializationFailed() {
-        PluginManager manager = new PluginManager(
-                new DefaultCapabilityRegistry(),
-                new InProcessEventBus(Runnable::run)
-        );
+        PluginManager manager =
+                new PluginManager(new DefaultCapabilityRegistry(), new InProcessEventBus(Runnable::run));
 
         manager.registerPlugin(new FailingPlugin("broken-plugin"));
         assertThrows(PluginInitializationException.class, () -> manager.activatePlugin("broken-plugin"));
@@ -135,13 +122,11 @@ class PluginManagerTest {
 
     @Test
     void loadPluginReturnsIdDeclaredByJarAndLeavesPluginLoaded(@TempDir Path tempDir) throws IOException {
-        PluginManager manager = new PluginManager(
-                new DefaultCapabilityRegistry(),
-                new InProcessEventBus(Runnable::run)
-        );
+        PluginManager manager =
+                new PluginManager(new DefaultCapabilityRegistry(), new InProcessEventBus(Runnable::run));
         Path jar = tempDir.resolve("plugin.jar");
         try (OutputStream out = Files.newOutputStream(jar);
-             JarOutputStream jarOut = new JarOutputStream(out)) {
+                JarOutputStream jarOut = new JarOutputStream(out)) {
             jarOut.putNextEntry(new JarEntry("META-INF/services/" + NexoraPlugin.class.getName()));
             jarOut.write(JarFixturePlugin.class.getName().getBytes(StandardCharsets.UTF_8));
             jarOut.closeEntry();

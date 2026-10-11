@@ -5,25 +5,23 @@ import com.nexora.core.intent.Intent;
 import com.nexora.persistence.MissedFirePolicy;
 import com.nexora.persistence.ScheduleRecord;
 import com.nexora.runtime.scheduler.ScheduledExecution;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 import picocli.CommandLine.ParentCommand;
-
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Callable;
 
 @Command(
         name = "schedule",
         mixinStandardHelpOptions = true,
         description = "Manage recurring cron-based executions.",
         subcommands = {
-                ScheduleCommand.AddCommand.class,
-                ScheduleCommand.ListCommand.class,
-                ScheduleCommand.RemoveCommand.class
-        }
-)
+            ScheduleCommand.AddCommand.class,
+            ScheduleCommand.ListCommand.class,
+            ScheduleCommand.RemoveCommand.class
+        })
 public class ScheduleCommand implements Callable<Integer> {
 
     @ParentCommand
@@ -35,21 +33,27 @@ public class ScheduleCommand implements Callable<Integer> {
         return 0;
     }
 
-    @Command(name = "add", mixinStandardHelpOptions = true,
-             description = "Register a new recurring schedule.")
+    @Command(name = "add", mixinStandardHelpOptions = true, description = "Register a new recurring schedule.")
     static class AddCommand implements Callable<Integer> {
 
         @ParentCommand
         ScheduleCommand scheduleCmd;
 
-        @Option(names = {"--goal"}, required = true, description = "Intent goal string.")
+        @Option(
+                names = {"--goal"},
+                required = true,
+                description = "Intent goal string.")
         private String goal;
 
-        @Option(names = {"--cron"}, required = true,
+        @Option(
+                names = {"--cron"},
+                required = true,
                 description = "5-field UNIX cron expression (e.g. \"0 0 * * *\").")
         private String cron;
 
-        @Option(names = {"--policy"}, defaultValue = "FIRE_ONCE",
+        @Option(
+                names = {"--policy"},
+                defaultValue = "FIRE_ONCE",
                 description = "Missed-fire policy: SKIP, FIRE_ONCE, FIRE_ALL. Default: ${DEFAULT-VALUE}")
         private String policy;
 
@@ -91,14 +95,15 @@ public class ScheduleCommand implements Callable<Integer> {
         }
     }
 
-    @Command(name = "list", mixinStandardHelpOptions = true,
-             description = "List all registered schedules.")
+    @Command(name = "list", mixinStandardHelpOptions = true, description = "List all registered schedules.")
     static class ListCommand implements Callable<Integer> {
 
         @ParentCommand
         ScheduleCommand scheduleCmd;
 
-        @Option(names = {"--active-only"}, description = "Show only active schedules.")
+        @Option(
+                names = {"--active-only"},
+                description = "Show only active schedules.")
         private boolean activeOnly;
 
         @Override
@@ -124,11 +129,13 @@ public class ScheduleCommand implements Callable<Integer> {
                 return 0;
             }
 
-            System.out.printf("%-36s  %-6s  %-20s  %-20s  %-12s  %-12s  %s%n",
+            System.out.printf(
+                    "%-36s  %-6s  %-20s  %-20s  %-12s  %-12s  %s%n",
                     "ID", "ACTIVE", "NEXT FIRE", "LAST FIRE", "POLICY", "LAST STATUS", "GOAL");
             System.out.println("-".repeat(136));
             for (ScheduleRecord r : records) {
-                System.out.printf("%-36s  %-6s  %-20s  %-20s  %-12s  %-12s  %s%n",
+                System.out.printf(
+                        "%-36s  %-6s  %-20s  %-20s  %-12s  %-12s  %s%n",
                         r.id(),
                         r.active() ? "YES" : "NO",
                         r.nextFireAt(),
@@ -141,8 +148,7 @@ public class ScheduleCommand implements Callable<Integer> {
         }
     }
 
-    @Command(name = "remove", mixinStandardHelpOptions = true,
-             description = "Cancel and remove a schedule.")
+    @Command(name = "remove", mixinStandardHelpOptions = true, description = "Cancel and remove a schedule.")
     static class RemoveCommand implements Callable<Integer> {
 
         @ParentCommand

@@ -1,35 +1,40 @@
 package com.nexora.executor;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import com.nexora.core.capability.CapabilityContract;
 import com.nexora.event.CapabilityCircuitClosedEvent;
 import com.nexora.event.CapabilityCircuitOpenedEvent;
 import com.nexora.event.ExecutionEvent;
-import org.junit.jupiter.api.Test;
-
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.Test;
 
 class CapabilityContractMonitorTest {
 
     private static com.nexora.event.ExecutionEventBus capturingBus(List<ExecutionEvent> sink) {
         return new com.nexora.event.ExecutionEventBus() {
-            @Override public <E extends ExecutionEvent> void publish(E event) { sink.add(event); }
-            @Override public <E extends ExecutionEvent> com.nexora.event.Subscription subscribe(
-                    Class<E> t, com.nexora.event.EventHandler<E> h) { return () -> {}; }
+            @Override
+            public <E extends ExecutionEvent> void publish(E event) {
+                sink.add(event);
+            }
+
+            @Override
+            public <E extends ExecutionEvent> com.nexora.event.Subscription subscribe(
+                    Class<E> t, com.nexora.event.EventHandler<E> h) {
+                return () -> {};
+            }
         };
     }
 
     @Test
     void remainsHealthyUntilMinimumSamplesAreCollected() {
         CapabilityContractMonitor monitor = new CapabilityContractMonitor();
-        CapabilityContract contract = CapabilityContract.builder()
-                .maxErrorRate(0.0)
-                .build();
+        CapabilityContract contract =
+                CapabilityContract.builder().maxErrorRate(0.0).build();
 
         for (int i = 0; i < 4; i++) {
             monitor.recordFailure("cap", Duration.ofMillis(10));
@@ -42,16 +47,17 @@ class CapabilityContractMonitorTest {
     void becomesUnhealthyWhenErrorRateBreachIsObserved() {
         List<ExecutionEvent> events = new ArrayList<>();
         CapabilityContractMonitor monitor = new CapabilityContractMonitor(capturingBus(events));
-        CapabilityContract contract = CapabilityContract.builder()
-                .maxErrorRate(0.20)
-                .build();
+        CapabilityContract contract =
+                CapabilityContract.builder().maxErrorRate(0.20).build();
 
         for (int i = 0; i < 5; i++) {
             monitor.recordFailure("cap", Duration.ofMillis(10));
         }
 
         assertFalse(monitor.isHealthy("cap", contract));
-        assertEquals(CapabilityContractMonitor.CircuitState.OPEN, monitor.snapshot("cap").state());
+        assertEquals(
+                CapabilityContractMonitor.CircuitState.OPEN,
+                monitor.snapshot("cap").state());
         assertEquals(1, events.size());
         assertTrue(events.get(0) instanceof CapabilityCircuitOpenedEvent);
     }
@@ -59,16 +65,17 @@ class CapabilityContractMonitorTest {
     @Test
     void becomesUnhealthyWhenLatencySlaIsBreached() {
         CapabilityContractMonitor monitor = new CapabilityContractMonitor();
-        CapabilityContract contract = CapabilityContract.builder()
-                .p99Latency(Duration.ofMillis(100))
-                .build();
+        CapabilityContract contract =
+                CapabilityContract.builder().p99Latency(Duration.ofMillis(100)).build();
 
         for (int i = 0; i < 5; i++) {
             monitor.recordSuccess("cap", Duration.ofMillis(250));
         }
 
         assertFalse(monitor.isHealthy("cap", contract));
-        assertEquals(CapabilityContractMonitor.CircuitState.OPEN, monitor.snapshot("cap").state());
+        assertEquals(
+                CapabilityContractMonitor.CircuitState.OPEN,
+                monitor.snapshot("cap").state());
     }
 
     @Test
@@ -86,22 +93,28 @@ class CapabilityContractMonitorTest {
             monitor.recordFailure("cap", Duration.ofMillis(10));
         }
         assertFalse(monitor.isHealthy("cap", contract)); // State becomes OPEN
-        assertEquals(CapabilityContractMonitor.CircuitState.OPEN, monitor.snapshot("cap").state());
-        
+        assertEquals(
+                CapabilityContractMonitor.CircuitState.OPEN,
+                monitor.snapshot("cap").state());
+
         // 2. Wait for openDuration to pass
         Thread.sleep(150);
 
         // 3. Should transition to HALF_OPEN and allow probe
         assertTrue(monitor.isHealthy("cap", contract));
-        assertEquals(CapabilityContractMonitor.CircuitState.HALF_OPEN, monitor.snapshot("cap").state());
+        assertEquals(
+                CapabilityContractMonitor.CircuitState.HALF_OPEN,
+                monitor.snapshot("cap").state());
 
         // 4. Following checks in HALF_OPEN before probeInterval elapses should return false
         assertFalse(monitor.isHealthy("cap", contract));
 
         // 5. Successful probe should CLOSE the circuit
         monitor.recordSuccess("cap", Duration.ofMillis(10));
-        assertEquals(CapabilityContractMonitor.CircuitState.CLOSED, monitor.snapshot("cap").state());
-        
+        assertEquals(
+                CapabilityContractMonitor.CircuitState.CLOSED,
+                monitor.snapshot("cap").state());
+
         // 6. Sliding window should be cleared, so it's healthy
         assertTrue(monitor.isHealthy("cap", contract));
 
@@ -124,20 +137,25 @@ class CapabilityContractMonitorTest {
             monitor.recordFailure("cap", Duration.ofMillis(10));
         }
         assertFalse(monitor.isHealthy("cap", contract)); // State becomes OPEN
-        
+
         // 2. Wait for openDuration to pass
         Thread.sleep(150);
 
         // 3. Should transition to HALF_OPEN and allow probe
         assertTrue(monitor.isHealthy("cap", contract));
-        assertEquals(CapabilityContractMonitor.CircuitState.HALF_OPEN, monitor.snapshot("cap").state());
+        assertEquals(
+                CapabilityContractMonitor.CircuitState.HALF_OPEN,
+                monitor.snapshot("cap").state());
 
         // 4. Failed probe should re-OPEN the circuit
         monitor.recordFailure("cap", Duration.ofMillis(10));
-        assertEquals(CapabilityContractMonitor.CircuitState.OPEN, monitor.snapshot("cap").state());
-        
+        assertEquals(
+                CapabilityContractMonitor.CircuitState.OPEN,
+                monitor.snapshot("cap").state());
+
         long openedEvents = events.stream()
-                .filter(e -> e instanceof CapabilityCircuitOpenedEvent).count();
+                .filter(e -> e instanceof CapabilityCircuitOpenedEvent)
+                .count();
         assertEquals(2, openedEvents); // initial open + reopen
     }
 

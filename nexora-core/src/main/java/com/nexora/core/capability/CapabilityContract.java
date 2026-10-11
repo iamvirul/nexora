@@ -17,8 +17,7 @@ public record CapabilityContract(
         int slidingWindowSize,
         String fallbackCapabilityId,
         Duration openDuration,
-        Duration probeInterval
-) {
+        Duration probeInterval) {
     public static final int DEFAULT_WINDOW = 20;
 
     public CapabilityContract {
@@ -42,9 +41,17 @@ public record CapabilityContract(
         return new Builder();
     }
 
-    public boolean hasLatencySla() { return expectedP99Latency != null; }
-    public boolean hasErrorRateSla() { return maxErrorRate >= 0.0; }
-    public boolean hasFallback() { return fallbackCapabilityId != null; }
+    public boolean hasLatencySla() {
+        return expectedP99Latency != null;
+    }
+
+    public boolean hasErrorRateSla() {
+        return maxErrorRate >= 0.0;
+    }
+
+    public boolean hasFallback() {
+        return fallbackCapabilityId != null;
+    }
 
     public static final class Builder {
         private Duration expectedP99Latency;
@@ -54,15 +61,44 @@ public record CapabilityContract(
         private Duration openDuration = Duration.ofSeconds(30);
         private Duration probeInterval = Duration.ofSeconds(10);
 
-        public Builder p99Latency(Duration latency) { this.expectedP99Latency = latency; return this; }
-        public Builder maxErrorRate(double rate) { this.maxErrorRate = rate; return this; }
-        public Builder windowSize(int size) { this.slidingWindowSize = size; return this; }
-        public Builder fallback(String capabilityId) { this.fallbackCapabilityId = capabilityId; return this; }
-        public Builder openDuration(Duration duration) { this.openDuration = duration; return this; }
-        public Builder probeInterval(Duration interval) { this.probeInterval = interval; return this; }
+        public Builder p99Latency(Duration latency) {
+            this.expectedP99Latency = latency;
+            return this;
+        }
+
+        public Builder maxErrorRate(double rate) {
+            this.maxErrorRate = rate;
+            return this;
+        }
+
+        public Builder windowSize(int size) {
+            this.slidingWindowSize = size;
+            return this;
+        }
+
+        public Builder fallback(String capabilityId) {
+            this.fallbackCapabilityId = capabilityId;
+            return this;
+        }
+
+        public Builder openDuration(Duration duration) {
+            this.openDuration = duration;
+            return this;
+        }
+
+        public Builder probeInterval(Duration interval) {
+            this.probeInterval = interval;
+            return this;
+        }
 
         public CapabilityContract build() {
-            return new CapabilityContract(expectedP99Latency, maxErrorRate, slidingWindowSize, fallbackCapabilityId, openDuration, probeInterval);
+            return new CapabilityContract(
+                    expectedP99Latency,
+                    maxErrorRate,
+                    slidingWindowSize,
+                    fallbackCapabilityId,
+                    openDuration,
+                    probeInterval);
         }
     }
 }

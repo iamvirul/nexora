@@ -1,12 +1,11 @@
 package com.nexora.core.context;
 
-import com.nexora.core.intent.Intent;
-import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
 
+import com.nexora.core.intent.Intent;
 import java.util.Map;
 import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
 
 class ExecutionContextTest {
 
@@ -37,9 +36,9 @@ class ExecutionContextTest {
     @Test
     void shouldHandleInputOverrides() {
         ExecutionContext ctx = new ExecutionContext(new Intent("test", Map.of()), TraceContext.root());
-        
+
         ctx.putInputOverride("step-1", "flag", true);
-        
+
         assertThat(ctx.getInputOverrides("step-1")).containsEntry("flag", true);
         assertThat(ctx.getInputOverrides("step-2")).isEmpty();
     }

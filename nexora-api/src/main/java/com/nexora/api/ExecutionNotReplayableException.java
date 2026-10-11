@@ -9,7 +9,8 @@ public final class ExecutionNotReplayableException extends RuntimeException {
     private final ExecutionState state;
 
     public ExecutionNotReplayableException(String executionId, ExecutionState state) {
-        super("Execution " + executionId + " is " + state + "; only FAILED, TIMED_OUT, CANCELLED and COMPENSATED executions can be replayed");
+        super("Execution " + executionId + " is " + state
+                + "; only FAILED, TIMED_OUT, CANCELLED and COMPENSATED executions can be replayed");
         this.executionId = executionId;
         this.state = state;
     }

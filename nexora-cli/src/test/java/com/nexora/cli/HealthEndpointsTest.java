@@ -1,5 +1,8 @@
 package com.nexora.cli;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexora.api.NexoraEngine;
@@ -12,10 +15,6 @@ import com.nexora.spi.NexoraPlugin;
 import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
 import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -24,9 +23,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 class HealthEndpointsTest {
 
@@ -34,9 +33,8 @@ class HealthEndpointsTest {
     private static final String VERSION = "9.9.9-test";
     private static final String LOOPBACK = "127.0.0.1";
 
-    private final HttpClient client = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .build();
+    private final HttpClient client =
+            HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 
     private JdbcExecutionStore store;
     private NexoraEngine engine;
@@ -112,15 +110,16 @@ class HealthEndpointsTest {
     @Test
     void summarySerializesCapabilityCircuitSnapshots() throws Exception {
         // Snapshots carry a java.time.Duration; this failed to serialize without jackson-datatype-jsr310.
-        try (NexoraEngine withCapability = NexoraEngine.builder().withPlugin(echoPlugin()).build()) {
+        try (NexoraEngine withCapability =
+                NexoraEngine.builder().withPlugin(echoPlugin()).build()) {
             HttpServer capServer = HttpServer.create(new InetSocketAddress(LOOPBACK, 0), 0);
             new HealthEndpoints(withCapability, VERSION).register(capServer);
             capServer.start();
             try {
-                URI summary = URI.create("http://" + LOOPBACK + ":" + capServer.getAddress().getPort()
-                        + HealthEndpoints.SUMMARY_PATH);
-                HttpResponse<String> response = client.send(HttpRequest.newBuilder(summary).GET().build(),
-                        HttpResponse.BodyHandlers.ofString());
+                URI summary = URI.create(
+                        "http://" + LOOPBACK + ":" + capServer.getAddress().getPort() + HealthEndpoints.SUMMARY_PATH);
+                HttpResponse<String> response = client.send(
+                        HttpRequest.newBuilder(summary).GET().build(), HttpResponse.BodyHandlers.ofString());
 
                 assertEquals(200, response.statusCode());
                 JsonNode capability = json(response).at("/capabilities/0");
@@ -134,21 +133,31 @@ class HealthEndpointsTest {
 
     private static NexoraPlugin echoPlugin() {
         return new NexoraPlugin() {
-            @Override public PluginDescriptor descriptor() {
+            @Override
+            public PluginDescriptor descriptor() {
                 return new PluginDescriptor("echo-plugin", "1.0", "echo", List.of(), null);
             }
-            @Override public void initialize(PluginContext ctx) {}
-            @Override public List<CapabilityProvider> capabilityProviders() {
+
+            @Override
+            public void initialize(PluginContext ctx) {}
+
+            @Override
+            public List<CapabilityProvider> capabilityProviders() {
                 return List.of(new CapabilityProvider() {
-                    @Override public CapabilityDescriptor descriptor() {
+                    @Override
+                    public CapabilityDescriptor descriptor() {
                         return new CapabilityDescriptor("echo", "echo", List.of(), List.of(), true, false);
                     }
-                    @Override public Capability create(PluginContext ctx) {
+
+                    @Override
+                    public Capability create(PluginContext ctx) {
                         return req -> CapabilityResult.success("echo");
                     }
                 });
             }
-            @Override public void shutdown() {}
+
+            @Override
+            public void shutdown() {}
         };
     }
 
@@ -168,7 +177,8 @@ class HealthEndpointsTest {
                 .POST(HttpRequest.BodyPublishers.noBody())
                 .build();
 
-        assertEquals(405, client.send(post, HttpResponse.BodyHandlers.ofString()).statusCode());
+        assertEquals(
+                405, client.send(post, HttpResponse.BodyHandlers.ofString()).statusCode());
     }
 
     @Test

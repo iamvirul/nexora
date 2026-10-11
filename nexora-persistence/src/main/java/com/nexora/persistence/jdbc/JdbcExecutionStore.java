@@ -14,9 +14,6 @@ import com.nexora.persistence.ScheduleRecord;
 import com.nexora.persistence.ScheduleStatus;
 import com.nexora.persistence.StepRecord;
 import com.nexora.persistence.StepState;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -30,6 +27,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * JDBC-backed ExecutionStore. Ships with H2 as the default embedded database.
@@ -240,10 +239,12 @@ public final class JdbcExecutionStore implements ExecutionStore {
 
     @Override
     public synchronized void recordWebhookDelivery(com.nexora.persistence.WebhookDeliveryRecord record) {
-        if (record.deliveryId() == null || record.executionId() == null ||
-            record.url() == null || record.timestamp() == null) {
+        if (record.deliveryId() == null
+                || record.executionId() == null
+                || record.url() == null
+                || record.timestamp() == null) {
             throw new IllegalArgumentException(
-                "Required webhook delivery fields must not be null: deliveryId, executionId, url, timestamp");
+                    "Required webhook delivery fields must not be null: deliveryId, executionId, url, timestamp");
         }
         String sql = """
             INSERT INTO nexora_webhook_deliveries
@@ -281,8 +282,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
                             rs.getInt("attempt"),
                             rs.getBoolean("successful"),
                             rs.getTimestamp("timestamp").toInstant(),
-                            rs.getString("error_message")
-                    ));
+                            rs.getString("error_message")));
                 }
             }
         } catch (SQLException e) {
@@ -410,7 +410,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
         try {
             reviewState = rawState != null ? DeadLetterReviewState.valueOf(rawState) : DeadLetterReviewState.PENDING;
         } catch (IllegalArgumentException e) {
-            log.warn("Unknown review_state '{}' in dead letter id={}, defaulting to PENDING", rawState, rs.getString("id"));
+            log.warn(
+                    "Unknown review_state '{}' in dead letter id={}, defaulting to PENDING",
+                    rawState,
+                    rs.getString("id"));
             reviewState = DeadLetterReviewState.PENDING;
         }
         return new DeadLetterRecord(
@@ -422,8 +425,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 rs.getString("failure_message"),
                 rs.getTimestamp("failed_at").toInstant(),
                 reviewState,
-                rs.getString("resolve_reason")
-        );
+                rs.getString("resolve_reason"));
     }
 
     @Override
@@ -472,7 +474,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
         String sql = "SELECT * FROM nexora_schedules WHERE active = TRUE ORDER BY next_fire_at ASC";
         List<ScheduleRecord> results = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+                ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 try {
                     results.add(mapSchedule(rs));
@@ -492,7 +494,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
         String sql = "SELECT * FROM nexora_schedules ORDER BY created_at DESC";
         List<ScheduleRecord> results = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+                ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 try {
                     results.add(mapSchedule(rs));
@@ -574,8 +576,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 lastFiredAt != null ? lastFiredAt.toInstant() : null,
                 rs.getTimestamp("next_fire_at").toInstant(),
                 parseScheduleStatus(rs.getString("last_status")),
-                rs.getBoolean("active")
-        );
+                rs.getBoolean("active"));
     }
 
     private static MissedFirePolicy parseMissedFirePolicy(String value) {
@@ -602,7 +603,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
 
     @Override
     public synchronized void close() {
-        try { conn.close(); } catch (SQLException ignored) {}
+        try {
+            conn.close();
+        } catch (SQLException ignored) {
+        }
     }
 
     @Override
@@ -665,7 +669,8 @@ public final class JdbcExecutionStore implements ExecutionStore {
             List<String> conditions = new ArrayList<>();
             List<Object> params = new ArrayList<>();
             if (!filter.states().isEmpty()) {
-                conditions.add("state IN (" + String.join(", ", Collections.nCopies(filter.states().size(), "?")) + ")");
+                conditions.add("state IN ("
+                        + String.join(", ", Collections.nCopies(filter.states().size(), "?")) + ")");
                 filter.states().stream().map(Enum::name).sorted().forEach(params::add);
             }
             if (filter.goalContains() != null) {
@@ -727,8 +732,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 ExecutionState.valueOf(rs.getString("state")),
                 rs.getTimestamp("started_at").toInstant(),
                 completedAt != null ? completedAt.toInstant() : null,
-                List.of()
-        );
+                List.of());
     }
 
     private ExecutionRecord withSteps(ExecutionRecord exec) throws SQLException {
@@ -738,7 +742,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.setString(1, exec.executionId());
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    Timestamp startedAt  = rs.getTimestamp("started_at");
+                    Timestamp startedAt = rs.getTimestamp("started_at");
                     Timestamp completedAt = rs.getTimestamp("completed_at");
                     steps.add(new StepRecord(
                             rs.getString("step_id"),
@@ -747,14 +751,20 @@ public final class JdbcExecutionStore implements ExecutionStore {
                             StepState.valueOf(rs.getString("state")),
                             rs.getString("failure_code"),
                             rs.getString("failure_message"),
-                            startedAt  != null ? startedAt.toInstant()  : null,
+                            startedAt != null ? startedAt.toInstant() : null,
                             completedAt != null ? completedAt.toInstant() : null,
-                            rs.getLong("duration_ms")
-                    ));
+                            rs.getLong("duration_ms")));
                 }
             }
         }
-        return new ExecutionRecord(exec.executionId(), exec.traceId(), exec.goal(), exec.context(),
-                exec.state(), exec.startedAt(), exec.completedAt(), steps);
+        return new ExecutionRecord(
+                exec.executionId(),
+                exec.traceId(),
+                exec.goal(),
+                exec.context(),
+                exec.state(),
+                exec.startedAt(),
+                exec.completedAt(),
+                steps);
     }
 }

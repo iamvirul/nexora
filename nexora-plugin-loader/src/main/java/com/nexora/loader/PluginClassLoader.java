@@ -17,15 +17,8 @@ import java.util.Set;
  */
 public final class PluginClassLoader extends URLClassLoader {
 
-    private static final Set<String> API_PACKAGES = Set.of(
-            "com.nexora.spi.",
-            "com.nexora.core.",
-            "org.slf4j.",
-            "java.",
-            "javax.",
-            "sun.",
-            "jdk."
-    );
+    private static final Set<String> API_PACKAGES =
+            Set.of("com.nexora.spi.", "com.nexora.core.", "org.slf4j.", "java.", "javax.", "sun.", "jdk.");
 
     public PluginClassLoader(URL[] pluginJars, ClassLoader parent) {
         super(pluginJars, parent);

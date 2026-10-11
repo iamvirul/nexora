@@ -1,7 +1,6 @@
 package com.nexora.spi;
 
 import com.nexora.core.capability.CapabilityContract;
-
 import java.util.List;
 import java.util.Objects;
 
@@ -12,8 +11,7 @@ public record CapabilityDescriptor(
         List<ParameterDescriptor> outputParameters,
         boolean idempotent,
         boolean async,
-        CapabilityContract contract
-) {
+        CapabilityContract contract) {
     public CapabilityDescriptor {
         Objects.requireNonNull(id, "id must not be null");
         inputParameters = inputParameters == null ? List.of() : List.copyOf(inputParameters);

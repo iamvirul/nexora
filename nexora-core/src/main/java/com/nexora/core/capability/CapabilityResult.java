@@ -1,7 +1,6 @@
 package com.nexora.core.capability;
 
 import com.nexora.core.plan.PlanAmendment;
-
 import java.util.List;
 import java.util.Map;
 
@@ -11,8 +10,7 @@ public record CapabilityResult(
         String failureCode,
         String failureMessage,
         Map<String, String> metadata,
-        List<PlanAmendment> amendments
-) {
+        List<PlanAmendment> amendments) {
     public CapabilityResult {
         metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
         amendments = amendments == null ? List.of() : List.copyOf(amendments);

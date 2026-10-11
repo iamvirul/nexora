@@ -14,9 +14,6 @@ import com.nexora.persistence.ExecutionStore;
 import com.nexora.tracing.otel.W3CTraceparent;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.Duration;
@@ -30,6 +27,8 @@ import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Execution management endpoints on the observe server.
@@ -120,7 +119,9 @@ final class ExecutionEndpoints {
 
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("data", page.stream().map(ExecutionSummary::from).toList());
-            body.put("cursor", hasMore ? ExecutionCursor.after(page.get(page.size() - 1)).encode() : null);
+            body.put(
+                    "cursor",
+                    hasMore ? ExecutionCursor.after(page.get(page.size() - 1)).encode() : null);
             body.put("total", store.count(query.filter()));
             ObserveCommand.sendJson(exchange, STATUS_OK, body);
         } catch (RuntimeException e) {
@@ -161,20 +162,26 @@ final class ExecutionEndpoints {
         try (InputStream body = exchange.getRequestBody()) {
             request = ObserveCommand.JSON.readValue(body, ExecuteRequest.class);
         } catch (IOException e) {
-            ObserveCommand.sendJson(exchange, STATUS_BAD_REQUEST,
+            ObserveCommand.sendJson(
+                    exchange,
+                    STATUS_BAD_REQUEST,
                     Map.of("accepted", false, "error", "Invalid JSON request: " + e.getMessage()));
             return;
         }
         if (request.goal() == null || request.goal().isBlank()) {
-            ObserveCommand.sendJson(exchange, STATUS_BAD_REQUEST,
-                    Map.of("accepted", false, "error", "Field 'goal' is required"));
+            ObserveCommand.sendJson(
+                    exchange, STATUS_BAD_REQUEST, Map.of("accepted", false, "error", "Field 'goal' is required"));
             return;
         }
 
-        Intent intent = new Intent(request.goal(),
+        Intent intent = new Intent(
+                request.goal(),
                 request.context() == null ? Map.of() : request.context(),
-                null, request.webhookUrl(), request.webhookEvents());
-        ExecutionHandle handle = W3CTraceparent.parse(exchange.getRequestHeaders().getFirst("traceparent"))
+                null,
+                request.webhookUrl(),
+                request.webhookEvents());
+        ExecutionHandle handle = W3CTraceparent.parse(
+                        exchange.getRequestHeaders().getFirst("traceparent"))
                 .map(parsed -> engine.submit(intent, W3CTraceparent.toTraceContext(parsed)))
                 .orElseGet(() -> engine.submit(intent));
         handle.result().whenComplete((result, ex) -> {
@@ -183,11 +190,18 @@ final class ExecutionEndpoints {
             }
         });
 
-        ObserveCommand.sendJson(exchange, STATUS_ACCEPTED, Map.of(
-                "accepted", true,
-                "message", "Execution accepted",
-                "goal", request.goal(),
-                "executionId", handle.executionId()));
+        ObserveCommand.sendJson(
+                exchange,
+                STATUS_ACCEPTED,
+                Map.of(
+                        "accepted",
+                        true,
+                        "message",
+                        "Execution accepted",
+                        "goal",
+                        request.goal(),
+                        "executionId",
+                        handle.executionId()));
     }
 
     private void handle(HttpExchange exchange) throws IOException {
@@ -227,17 +241,23 @@ final class ExecutionEndpoints {
         }
         try {
             ExecutionHandle replay = engine.replay(executionId);
-            ObserveCommand.sendJson(exchange, STATUS_ACCEPTED, Map.of(
-                    "accepted", true,
-                    "executionId", replay.executionId(),
-                    "replayOf", executionId));
+            ObserveCommand.sendJson(
+                    exchange,
+                    STATUS_ACCEPTED,
+                    Map.of("accepted", true, "executionId", replay.executionId(), "replayOf", executionId));
         } catch (ExecutionNotFoundException e) {
             sendError(exchange, STATUS_NOT_FOUND, executionId, "Execution not found");
         } catch (ExecutionNotReplayableException e) {
-            ObserveCommand.sendJson(exchange, STATUS_CONFLICT, Map.of(
-                    "error", "Only FAILED, TIMED_OUT, CANCELLED and COMPENSATED executions can be replayed",
-                    "executionId", executionId,
-                    "state", e.state()));
+            ObserveCommand.sendJson(
+                    exchange,
+                    STATUS_CONFLICT,
+                    Map.of(
+                            "error",
+                            "Only FAILED, TIMED_OUT, CANCELLED and COMPENSATED executions can be replayed",
+                            "executionId",
+                            executionId,
+                            "state",
+                            e.state()));
         } catch (RuntimeException e) {
             log.error("Replay request failed executionId={}", executionId, e);
             sendError(exchange, STATUS_INTERNAL_ERROR, executionId, "Replay request failed");
@@ -293,14 +313,17 @@ final class ExecutionEndpoints {
             Long durationMs = record.completedAt() == null
                     ? null
                     : Duration.between(record.startedAt(), record.completedAt()).toMillis();
-            return new ExecutionSummary(record.executionId(), record.traceId(), record.goal(), record.state(),
-                    record.startedAt(), record.completedAt(), durationMs);
+            return new ExecutionSummary(
+                    record.executionId(),
+                    record.traceId(),
+                    record.goal(),
+                    record.state(),
+                    record.startedAt(),
+                    record.completedAt(),
+                    durationMs);
         }
     }
 
     private record ExecuteRequest(
-            String goal,
-            Map<String, Object> context,
-            String webhookUrl,
-            List<ExecutionStatus> webhookEvents) {}
+            String goal, Map<String, Object> context, String webhookUrl, List<ExecutionStatus> webhookEvents) {}
 }

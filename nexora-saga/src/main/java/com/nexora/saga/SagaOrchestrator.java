@@ -12,9 +12,6 @@ import com.nexora.event.CompensationFailedEvent;
 import com.nexora.event.CompensationStartedEvent;
 import com.nexora.event.ExecutionEventBus;
 import com.nexora.executor.InterceptorPipeline;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -25,6 +22,8 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Orchestration-based saga coordinator.
@@ -66,14 +65,15 @@ public final class SagaOrchestrator {
             return CompletableFuture.completedFuture(null);
         }
 
-        log.info("Saga: starting compensation for {} steps, executionId={}",
-                toCompensate.size(), ctx.getExecutionId());
+        log.info("Saga: starting compensation for {} steps, executionId={}", toCompensate.size(), ctx.getExecutionId());
 
-        return CompletableFuture.runAsync(() -> {
-            for (Step step : toCompensate) {
-                runCompensation(step, ctx);
-            }
-        }, executor);
+        return CompletableFuture.runAsync(
+                () -> {
+                    for (Step step : toCompensate) {
+                        runCompensation(step, ctx);
+                    }
+                },
+                executor);
     }
 
     private void runCompensation(Step step, ExecutionContext ctx) {
@@ -82,8 +82,7 @@ public final class SagaOrchestrator {
 
         Instant start = Instant.now();
         eventBus.publish(new CompensationStartedEvent(
-                ctx.getExecutionId(), ctx.getTraceContext().traceId(),
-                step.id(), compensateCapabilityId, start));
+                ctx.getExecutionId(), ctx.getTraceContext().traceId(), step.id(), compensateCapabilityId, start));
 
         CapabilityRequest request = new CapabilityRequest(
                 compensateCapabilityId,
@@ -93,8 +92,7 @@ public final class SagaOrchestrator {
                 ctx.getTraceContext().childSpan(),
                 null,
                 ctx.getExecutionId(),
-                0
-        );
+                0);
 
         try {
             CapabilityResult result = pipeline.execute(request);
@@ -103,30 +101,48 @@ public final class SagaOrchestrator {
             if (result.succeeded()) {
                 log.info("Saga: compensation succeeded step={} elapsed={}ms", step.id(), elapsed.toMillis());
                 eventBus.publish(new CompensationCompletedEvent(
-                        ctx.getExecutionId(), ctx.getTraceContext().traceId(),
-                        step.id(), compensateCapabilityId, elapsed, Instant.now()));
+                        ctx.getExecutionId(),
+                        ctx.getTraceContext().traceId(),
+                        step.id(),
+                        compensateCapabilityId,
+                        elapsed,
+                        Instant.now()));
             } else {
-                log.error("Saga: compensation failed step={} code={} message={}",
-                        step.id(), result.failureCode(), result.failureMessage());
+                log.error(
+                        "Saga: compensation failed step={} code={} message={}",
+                        step.id(),
+                        result.failureCode(),
+                        result.failureMessage());
                 eventBus.publish(new CompensationFailedEvent(
-                        ctx.getExecutionId(), ctx.getTraceContext().traceId(),
-                        step.id(), compensateCapabilityId,
-                        result.failureCode(), result.failureMessage(), elapsed, Instant.now()));
+                        ctx.getExecutionId(),
+                        ctx.getTraceContext().traceId(),
+                        step.id(),
+                        compensateCapabilityId,
+                        result.failureCode(),
+                        result.failureMessage(),
+                        elapsed,
+                        Instant.now()));
             }
         } catch (Exception e) {
             Duration elapsed = Duration.between(start, Instant.now());
             log.error("Saga: compensation threw step={}", step.id(), e);
             eventBus.publish(new CompensationFailedEvent(
-                    ctx.getExecutionId(), ctx.getTraceContext().traceId(),
-                    step.id(), compensateCapabilityId,
-                    "COMPENSATION_EXCEPTION", e.getMessage(), elapsed, Instant.now()));
+                    ctx.getExecutionId(),
+                    ctx.getTraceContext().traceId(),
+                    step.id(),
+                    compensateCapabilityId,
+                    "COMPENSATION_EXCEPTION",
+                    e.getMessage(),
+                    elapsed,
+                    Instant.now()));
         }
     }
 
     private Map<String, Object> buildCompensationInputs(Step step, ExecutionContext ctx) {
         Map<String, Object> inputs = new HashMap<>();
         // Pass all resolved step outputs back so the compensator has full context
-        for (Map.Entry<String, com.nexora.core.plan.InputBinding> entry : step.inputs().entrySet()) {
+        for (Map.Entry<String, com.nexora.core.plan.InputBinding> entry :
+                step.inputs().entrySet()) {
             Object resolved = entry.getValue().resolve(ctx);
             if (resolved != null) inputs.put(entry.getKey(), resolved);
         }

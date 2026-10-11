@@ -1,5 +1,8 @@
 package com.nexora.cli;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexora.api.NexoraEngine;
@@ -8,10 +11,6 @@ import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.StepRecord;
 import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -22,9 +21,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 class ExecutionHistoryEndpointsTest {
 
@@ -74,8 +73,15 @@ class ExecutionHistoryEndpointsTest {
 
     @Test
     void listRowsAreSummariesWithIsoTimestampsAndDuration() throws Exception {
-        store.createExecution(new ExecutionRecord("done", "trace-1", "process order", Map.of("secret", "x"),
-                ExecutionState.COMPLETED, T0, T0.plusMillis(1500), List.of()));
+        store.createExecution(new ExecutionRecord(
+                "done",
+                "trace-1",
+                "process order",
+                Map.of("secret", "x"),
+                ExecutionState.COMPLETED,
+                T0,
+                T0.plusMillis(1500),
+                List.of()));
 
         JsonNode row = getJson("/api/executions", 200).get("data").get(0);
 
@@ -120,13 +126,18 @@ class ExecutionHistoryEndpointsTest {
     @Test
     void rejectsInvalidQueryParametersWith400() throws Exception {
         String[] invalid = {
-                "limit=0", "limit=101", "limit=abc",
-                "status=BOGUS",
-                "from=yesterday",
-                "from=2026-10-01T11:00:00Z&to=2026-10-01T10:00:00Z",
-                "cursor=not-a-cursor",
-                "limit=", "cursor=", "status=", "from=",
-                "goal=" + "x".repeat(201)
+            "limit=0",
+            "limit=101",
+            "limit=abc",
+            "status=BOGUS",
+            "from=yesterday",
+            "from=2026-10-01T11:00:00Z&to=2026-10-01T10:00:00Z",
+            "cursor=not-a-cursor",
+            "limit=",
+            "cursor=",
+            "status=",
+            "from=",
+            "goal=" + "x".repeat(201)
         };
         for (String query : invalid) {
             JsonNode body = getJson("/api/executions?" + query, 400);
@@ -136,9 +147,17 @@ class ExecutionHistoryEndpointsTest {
 
     @Test
     void detailReturnsExecutionWithStepsAndContext() throws Exception {
-        store.createExecution(new ExecutionRecord("e1", "trace-1", "process order", Map.of("orderId", "ORD-1"),
-                ExecutionState.RUNNING, T0, null, List.of()));
-        store.upsertStep("e1", StepRecord.started("validate", "validate_order", "k1", T0).completed(T0.plusMillis(20)));
+        store.createExecution(new ExecutionRecord(
+                "e1",
+                "trace-1",
+                "process order",
+                Map.of("orderId", "ORD-1"),
+                ExecutionState.RUNNING,
+                T0,
+                null,
+                List.of()));
+        store.upsertStep(
+                "e1", StepRecord.started("validate", "validate_order", "k1", T0).completed(T0.plusMillis(20)));
 
         JsonNode body = getJson("/api/executions/e1", 200);
 
@@ -151,7 +170,9 @@ class ExecutionHistoryEndpointsTest {
 
     @Test
     void detailReturns404ForUnknownExecution() throws Exception {
-        assertEquals("Execution not found", getJson("/api/executions/nope", 404).get("error").asText());
+        assertEquals(
+                "Execution not found",
+                getJson("/api/executions/nope", 404).get("error").asText());
     }
 
     @Test
@@ -159,8 +180,12 @@ class ExecutionHistoryEndpointsTest {
         insert("e1", "goal", ExecutionState.COMPLETED, T0);
         store.close();
 
-        assertEquals("Execution detail query failed", getJson("/api/executions/e1", 500).get("error").asText());
-        assertEquals("Execution history query failed", getJson("/api/executions", 500).get("error").asText());
+        assertEquals(
+                "Execution detail query failed",
+                getJson("/api/executions/e1", 500).get("error").asText());
+        assertEquals(
+                "Execution history query failed",
+                getJson("/api/executions", 500).get("error").asText());
     }
 
     @Test
@@ -168,7 +193,8 @@ class ExecutionHistoryEndpointsTest {
         try (NexoraEngine noStore = NexoraEngine.builder().build()) {
             HttpServer bare = startServer(noStore);
             try {
-                URI base = URI.create("http://" + LOOPBACK + ":" + bare.getAddress().getPort());
+                URI base = URI.create(
+                        "http://" + LOOPBACK + ":" + bare.getAddress().getPort());
                 assertEquals(503, get(base.resolve("/api/executions")).statusCode());
                 assertEquals(503, get(base.resolve("/api/executions/e1")).statusCode());
             } finally {
@@ -180,9 +206,11 @@ class ExecutionHistoryEndpointsTest {
     @Test
     void rejectsUnsupportedMethodsWithAllowHeader() throws Exception {
         HttpResponse<String> postList = send(HttpRequest.newBuilder(uri("/api/executions"))
-                .POST(HttpRequest.BodyPublishers.noBody()).build());
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .build());
         HttpResponse<String> putDetail = send(HttpRequest.newBuilder(uri("/api/executions/e1"))
-                .PUT(HttpRequest.BodyPublishers.noBody()).build());
+                .PUT(HttpRequest.BodyPublishers.noBody())
+                .build());
 
         assertEquals(405, postList.statusCode());
         assertEquals("GET", postList.headers().firstValue("Allow").orElse(null));
@@ -203,7 +231,8 @@ class ExecutionHistoryEndpointsTest {
     }
 
     private void insert(String id, String goal, ExecutionState state, Instant startedAt) {
-        store.createExecution(new ExecutionRecord(id, "trace-" + id, goal, Map.of(), state, startedAt, null, List.of()));
+        store.createExecution(
+                new ExecutionRecord(id, "trace-" + id, goal, Map.of(), state, startedAt, null, List.of()));
     }
 
     private JsonNode getJson(String pathAndQuery, int expectedStatus) throws Exception {

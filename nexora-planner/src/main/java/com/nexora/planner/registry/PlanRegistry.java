@@ -1,7 +1,6 @@
 package com.nexora.planner.registry;
 
 import com.nexora.planner.model.StepDefinition;
-
 import java.util.ArrayList;
 import java.util.List;
 
@@ -14,8 +13,6 @@ public class PlanRegistry {
     }
 
     public List<StepDefinition> getMatching(String intent) {
-        return steps.stream()
-                .filter(s -> s.matches(intent))
-                .toList();
+        return steps.stream().filter(s -> s.matches(intent)).toList();
     }
 }

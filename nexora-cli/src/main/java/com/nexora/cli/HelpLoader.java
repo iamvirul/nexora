@@ -1,10 +1,9 @@
 package com.nexora.cli;
 
-import picocli.CommandLine;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import picocli.CommandLine;
 
 /**
  * Loads help text from {@code help/<command-name>.help} classpath resources

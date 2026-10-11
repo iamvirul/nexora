@@ -14,8 +14,8 @@ public record ExponentialBackoffPolicy(
         Duration initialDelay,
         double multiplier,
         Duration maxDelay,
-        Set<Class<? extends Throwable>> retryableExceptions
-) implements RetryPolicy {
+        Set<Class<? extends Throwable>> retryableExceptions)
+        implements RetryPolicy {
 
     public ExponentialBackoffPolicy {
         Objects.requireNonNull(initialDelay, "initialDelay must not be null");
@@ -53,10 +53,25 @@ public record ExponentialBackoffPolicy(
         private Duration maxDelay = Duration.ofSeconds(10);
         private Set<Class<? extends Throwable>> retryableExceptions = Set.of();
 
-        public Builder maxAttempts(int v) { maxAttempts = v; return this; }
-        public Builder initialDelay(Duration v) { initialDelay = v; return this; }
-        public Builder multiplier(double v) { multiplier = v; return this; }
-        public Builder maxDelay(Duration v) { maxDelay = v; return this; }
+        public Builder maxAttempts(int v) {
+            maxAttempts = v;
+            return this;
+        }
+
+        public Builder initialDelay(Duration v) {
+            initialDelay = v;
+            return this;
+        }
+
+        public Builder multiplier(double v) {
+            multiplier = v;
+            return this;
+        }
+
+        public Builder maxDelay(Duration v) {
+            maxDelay = v;
+            return this;
+        }
 
         @SafeVarargs
         public final Builder retryOn(Class<? extends Throwable>... types) {

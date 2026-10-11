@@ -1,5 +1,7 @@
 package com.nexora.api;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.nexora.core.capability.CapabilityResult;
 import com.nexora.core.execution.ExecutionResult;
 import com.nexora.core.execution.ExecutionStatus;
@@ -15,17 +17,14 @@ import com.nexora.spi.CapabilityProvider;
 import com.nexora.spi.NexoraPlugin;
 import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 class DeadLetterIntegrationTest {
 
@@ -51,7 +50,8 @@ class DeadLetterIntegrationTest {
 
     @Test
     void failedExecutionCreatesExactlyOneDeadLetter() throws Exception {
-        ExecutionResult result = engine.execute(new Intent("fail this goal", Map.of())).get();
+        ExecutionResult result =
+                engine.execute(new Intent("fail this goal", Map.of())).get();
 
         assertEquals(ExecutionStatus.FAILED, result.status());
 
@@ -68,9 +68,13 @@ class DeadLetterIntegrationTest {
     void deadLetteredEventFiresWithCorrectDetails() throws Exception {
         List<ExecutionDeadLetteredEvent> events = new CopyOnWriteArrayList<>();
         CountDownLatch latch = new CountDownLatch(1);
-        engine.subscribe(ExecutionDeadLetteredEvent.class, e -> { events.add(e); latch.countDown(); });
+        engine.subscribe(ExecutionDeadLetteredEvent.class, e -> {
+            events.add(e);
+            latch.countDown();
+        });
 
-        ExecutionResult result = engine.execute(new Intent("fail this goal", Map.of())).get();
+        ExecutionResult result =
+                engine.execute(new Intent("fail this goal", Map.of())).get();
         assertTrue(latch.await(5, TimeUnit.SECONDS), "ExecutionDeadLetteredEvent not delivered within 5s");
 
         assertEquals(1, events.size());
@@ -91,7 +95,8 @@ class DeadLetterIntegrationTest {
                         .build())
                 .build();
 
-        ExecutionResult result = successEngine.execute(new Intent("pass this goal", Map.of())).get();
+        ExecutionResult result =
+                successEngine.execute(new Intent("pass this goal", Map.of())).get();
 
         assertEquals(ExecutionStatus.COMPLETED, result.status());
         List<DeadLetterRecord> dls = localStore.findDeadLetters(null, 0, 10);
@@ -117,41 +122,63 @@ class DeadLetterIntegrationTest {
 
     private NexoraPlugin failingPlugin() {
         return new NexoraPlugin() {
-            @Override public PluginDescriptor descriptor() {
+            @Override
+            public PluginDescriptor descriptor() {
                 return new PluginDescriptor("test-failing", "1.0", "test", List.of(), null);
             }
-            @Override public void initialize(PluginContext ctx) {}
-            @Override public List<CapabilityProvider> capabilityProviders() {
+
+            @Override
+            public void initialize(PluginContext ctx) {}
+
+            @Override
+            public List<CapabilityProvider> capabilityProviders() {
                 return List.of(new CapabilityProvider() {
-                    @Override public CapabilityDescriptor descriptor() {
-                        return new CapabilityDescriptor("always_fail", "always_fail", List.of(), List.of(), true, false);
+                    @Override
+                    public CapabilityDescriptor descriptor() {
+                        return new CapabilityDescriptor(
+                                "always_fail", "always_fail", List.of(), List.of(), true, false);
                     }
-                    @Override public Capability create(PluginContext ctx) {
+
+                    @Override
+                    public Capability create(PluginContext ctx) {
                         return req -> CapabilityResult.failure("TEST_FAIL", "Intentional test failure");
                     }
                 });
             }
-            @Override public void shutdown() {}
+
+            @Override
+            public void shutdown() {}
         };
     }
 
     private NexoraPlugin successPlugin() {
         return new NexoraPlugin() {
-            @Override public PluginDescriptor descriptor() {
+            @Override
+            public PluginDescriptor descriptor() {
                 return new PluginDescriptor("test-success", "1.0", "test", List.of(), null);
             }
-            @Override public void initialize(PluginContext ctx) {}
-            @Override public List<CapabilityProvider> capabilityProviders() {
+
+            @Override
+            public void initialize(PluginContext ctx) {}
+
+            @Override
+            public List<CapabilityProvider> capabilityProviders() {
                 return List.of(new CapabilityProvider() {
-                    @Override public CapabilityDescriptor descriptor() {
-                        return new CapabilityDescriptor("always_pass", "always_pass", List.of(), List.of(), true, false);
+                    @Override
+                    public CapabilityDescriptor descriptor() {
+                        return new CapabilityDescriptor(
+                                "always_pass", "always_pass", List.of(), List.of(), true, false);
                     }
-                    @Override public Capability create(PluginContext ctx) {
+
+                    @Override
+                    public Capability create(PluginContext ctx) {
                         return req -> CapabilityResult.success("ok");
                     }
                 });
             }
-            @Override public void shutdown() {}
+
+            @Override
+            public void shutdown() {}
         };
     }
 }

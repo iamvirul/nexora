@@ -14,8 +14,7 @@ public record ScheduleRecord(
         Instant lastFiredAt,
         Instant nextFireAt,
         ScheduleStatus lastStatus,
-        boolean active
-) {
+        boolean active) {
     public ScheduleRecord {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(cronExpression, "cronExpression");

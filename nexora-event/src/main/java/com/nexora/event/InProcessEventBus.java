@@ -1,12 +1,11 @@
 package com.nexora.event;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * In-process event bus backed by CopyOnWriteArrayList per event type.
@@ -20,8 +19,8 @@ public final class InProcessEventBus implements ExecutionEventBus {
 
     private static final Logger log = LoggerFactory.getLogger(InProcessEventBus.class);
 
-    private final ConcurrentHashMap<Class<?>, CopyOnWriteArrayList<SubscriptionEntry<?>>> handlers
-            = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Class<?>, CopyOnWriteArrayList<SubscriptionEntry<?>>> handlers =
+            new ConcurrentHashMap<>();
     private final Executor dispatchExecutor;
 
     public InProcessEventBus(Executor dispatchExecutor) {
@@ -49,8 +48,11 @@ public final class InProcessEventBus implements ExecutionEventBus {
         try {
             handler.onEvent(event);
         } catch (Exception e) {
-            log.warn("Event handler threw for event={} handler={}",
-                    event.getClass().getSimpleName(), handler.getClass().getSimpleName(), e);
+            log.warn(
+                    "Event handler threw for event={} handler={}",
+                    event.getClass().getSimpleName(),
+                    handler.getClass().getSimpleName(),
+                    e);
         }
     }
 
@@ -69,7 +71,8 @@ public final class InProcessEventBus implements ExecutionEventBus {
         return register(eventType, handler, true);
     }
 
-    private <E extends ExecutionEvent> Subscription register(Class<E> eventType, EventHandler<E> handler, boolean synchronous) {
+    private <E extends ExecutionEvent> Subscription register(
+            Class<E> eventType, EventHandler<E> handler, boolean synchronous) {
         SubscriptionEntry<E> entry = new SubscriptionEntry<>(handler, synchronous);
         handlers.computeIfAbsent(eventType, k -> new CopyOnWriteArrayList<>()).add(entry);
         return () -> entry.active = false;

@@ -2,33 +2,31 @@ package com.nexora.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexora.api.NexoraEngine;
-import picocli.CommandLine;
-import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
-import picocli.CommandLine.Spec;
-import picocli.CommandLine.Model.CommandSpec;
-
 import java.io.File;
 import java.util.concurrent.Callable;
+import picocli.CommandLine;
+import picocli.CommandLine.Command;
+import picocli.CommandLine.Model.CommandSpec;
+import picocli.CommandLine.Option;
+import picocli.CommandLine.Spec;
 
 @Command(
         name = "nexora",
         mixinStandardHelpOptions = true,
         version = "Nexora 1.0-SNAPSHOT",
         subcommands = {
-                RunCommand.class,
-                PlanCommand.class,
-                CapsCommand.class,
-                PluginsCommand.class,
-                ObserveCommand.class,
-                DemoCommand.class,
-                DlqCommand.class,
-                ScheduleCommand.class,
-                CancelCommand.class,
-                ReplayCommand.class,
-                CommandLine.HelpCommand.class
-        }
-)
+            RunCommand.class,
+            PlanCommand.class,
+            CapsCommand.class,
+            PluginsCommand.class,
+            ObserveCommand.class,
+            DemoCommand.class,
+            DlqCommand.class,
+            ScheduleCommand.class,
+            CancelCommand.class,
+            ReplayCommand.class,
+            CommandLine.HelpCommand.class
+        })
 public class NexoraCli implements Callable<Integer> {
 
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -36,12 +34,15 @@ public class NexoraCli implements Callable<Integer> {
     @Spec
     CommandSpec spec;
 
-    @Option(names = {"-c", "--config"},
+    @Option(
+            names = {"-c", "--config"},
             description = "Path to config file (JSON). Default: ./nexora.json",
             defaultValue = "nexora.json")
     private File configFile;
 
-    @Option(names = {"-v", "--verbose"}, description = "Enable engine debug logging.")
+    @Option(
+            names = {"-v", "--verbose"},
+            description = "Enable engine debug logging.")
     boolean verbose;
 
     // Lazily initialised — not all subcommands need the engine (e.g. plan, demo build their own)
@@ -55,8 +56,9 @@ public class NexoraCli implements Callable<Integer> {
             try {
                 _config = JSON.readValue(configFile, CliConfig.class);
             } catch (Exception e) {
-                spec.commandLine().getErr().println(
-                        "Warning: could not parse config file " + configFile + " — " + e.getMessage());
+                spec.commandLine()
+                        .getErr()
+                        .println("Warning: could not parse config file " + configFile + " — " + e.getMessage());
                 _config = new CliConfig();
             }
         } else {

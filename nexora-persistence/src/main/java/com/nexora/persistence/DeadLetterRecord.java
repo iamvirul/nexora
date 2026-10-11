@@ -13,8 +13,7 @@ public record DeadLetterRecord(
         String failureMessage,
         Instant failedAt,
         DeadLetterReviewState reviewState,
-        String resolveReason
-) {
+        String resolveReason) {
     public DeadLetterRecord {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(executionId, "executionId");
@@ -23,11 +22,23 @@ public record DeadLetterRecord(
         context = context == null ? Map.of() : Map.copyOf(context);
     }
 
-    public static DeadLetterRecord pending(String id, String executionId, String goal,
-                                           Map<String, Object> context,
-                                           String failureCode, String failureMessage,
-                                           Instant failedAt) {
-        return new DeadLetterRecord(id, executionId, goal, context,
-                failureCode, failureMessage, failedAt, DeadLetterReviewState.PENDING, null);
+    public static DeadLetterRecord pending(
+            String id,
+            String executionId,
+            String goal,
+            Map<String, Object> context,
+            String failureCode,
+            String failureMessage,
+            Instant failedAt) {
+        return new DeadLetterRecord(
+                id,
+                executionId,
+                goal,
+                context,
+                failureCode,
+                failureMessage,
+                failedAt,
+                DeadLetterReviewState.PENDING,
+                null);
     }
 }

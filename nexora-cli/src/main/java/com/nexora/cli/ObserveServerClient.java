@@ -2,8 +2,6 @@ package com.nexora.cli;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import picocli.CommandLine.Model.CommandSpec;
-
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URI;
@@ -16,6 +14,7 @@ import java.time.Duration;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import picocli.CommandLine.Model.CommandSpec;
 
 /**
  * Shared plumbing for CLI commands that act on executions inside a running {@code nexora observe}
@@ -47,8 +46,13 @@ final class ObserveServerClient {
      * @return the exit code from {@code reporter}, or {@link #EXIT_USAGE} / {@link #EXIT_FAILED} when
      *         the arguments are invalid or the server cannot be reached
      */
-    static int call(CommandSpec spec, URI server, String executionId, String method, String pathSuffix,
-                    ResponseReporter reporter) {
+    static int call(
+            CommandSpec spec,
+            URI server,
+            String executionId,
+            String method,
+            String pathSuffix,
+            ResponseReporter reporter) {
         PrintWriter out = spec.commandLine().getOut();
         PrintWriter err = spec.commandLine().getErr();
 
@@ -56,19 +60,23 @@ final class ObserveServerClient {
             err.println("Error: EXECUTION_ID must not be blank.");
             return EXIT_USAGE;
         }
-        if (server.getScheme() == null || !ALLOWED_SCHEMES.contains(server.getScheme().toLowerCase(Locale.ROOT))
+        if (server.getScheme() == null
+                || !ALLOWED_SCHEMES.contains(server.getScheme().toLowerCase(Locale.ROOT))
                 || server.getHost() == null) {
             err.printf("Error: --server must be an http(s) URL such as http://localhost:9464, got: %s%n", server);
             return EXIT_USAGE;
         }
 
         URI target = URI.create(stripTrailingSlash(server.toString())
-                + ExecutionEndpoints.PATH_PREFIX + encodePathSegment(executionId) + pathSuffix);
+                + ExecutionEndpoints.PATH_PREFIX
+                + encodePathSegment(executionId)
+                + pathSuffix);
         HttpResponse<String> response;
         try {
             response = send(target, method);
         } catch (IOException e) {
-            err.printf("Error: could not reach the observe server at %s (%s). Is `nexora observe` running?%n",
+            err.printf(
+                    "Error: could not reach the observe server at %s (%s). Is `nexora observe` running?%n",
                     server, describe(e));
             return EXIT_FAILED;
         } catch (InterruptedException e) {
@@ -95,7 +103,8 @@ final class ObserveServerClient {
     }
 
     private static HttpResponse<String> send(URI target, String method) throws IOException, InterruptedException {
-        HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
+        HttpClient client =
+                HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
         HttpRequest request = HttpRequest.newBuilder(target)
                 .timeout(REQUEST_TIMEOUT)
                 .method(method, HttpRequest.BodyPublishers.noBody())

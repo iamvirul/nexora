@@ -1,14 +1,13 @@
 package com.nexora.persistence;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Set;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import org.junit.jupiter.api.Test;
 
 class ExecutionCursorAndFilterTest {
 
@@ -26,7 +25,7 @@ class ExecutionCursorAndFilterTest {
         String badTimestamp = encode("yesterday|exec-1");
         String missingId = encode("2026-10-01T10:00:00Z|");
 
-        for (String token : new String[]{notBase64, noSeparator, badTimestamp, missingId, "", "a".repeat(300)}) {
+        for (String token : new String[] {notBase64, noSeparator, badTimestamp, missingId, "", "a".repeat(300)}) {
             assertThrows(IllegalArgumentException.class, () -> ExecutionCursor.decode(token), token);
         }
     }
@@ -34,14 +33,16 @@ class ExecutionCursorAndFilterTest {
     @Test
     void filterRejectsLimitOutOfRange() {
         assertThrows(IllegalArgumentException.class, () -> ExecutionFilter.all().withLimit(0));
-        assertThrows(IllegalArgumentException.class, () -> ExecutionFilter.all().withLimit(ExecutionFilter.MAX_LIMIT + 1));
+        assertThrows(
+                IllegalArgumentException.class, () -> ExecutionFilter.all().withLimit(ExecutionFilter.MAX_LIMIT + 1));
     }
 
     @Test
     void filterRejectsFromNotBeforeTo() {
         Instant t = Instant.parse("2026-10-01T10:00:00Z");
 
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(
+                IllegalArgumentException.class,
                 () -> new ExecutionFilter(Set.of(), null, t, t, null, ExecutionFilter.DEFAULT_LIMIT));
     }
 

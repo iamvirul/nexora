@@ -8,17 +8,13 @@ import com.nexora.core.execution.ExecutionStatus;
 import com.nexora.core.intent.Intent;
 import com.nexora.event.StepCompletedEvent;
 import com.nexora.event.StepFailedEvent;
+import java.util.Map;
+import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
 
-import java.util.Map;
-import java.util.concurrent.Callable;
-
-@Command(
-        name = "run",
-        mixinStandardHelpOptions = true
-)
+@Command(name = "run", mixinStandardHelpOptions = true)
 public class RunCommand implements Callable<Integer> {
 
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -26,14 +22,21 @@ public class RunCommand implements Callable<Integer> {
     @ParentCommand
     private NexoraCli parent;
 
-    @Option(names = {"-g", "--goal"}, required = true, description = "Intent goal string.")
+    @Option(
+            names = {"-g", "--goal"},
+            required = true,
+            description = "Intent goal string.")
     private String goal;
 
-    @Option(names = {"-c", "--context"}, description = "Intent context as JSON object. Default: {}",
+    @Option(
+            names = {"-c", "--context"},
+            description = "Intent context as JSON object. Default: {}",
             defaultValue = "{}")
     private String contextJson;
 
-    @Option(names = {"--no-events"}, description = "Suppress per-step event output.")
+    @Option(
+            names = {"--no-events"},
+            description = "Suppress per-step event output.")
     private boolean noEvents;
 
     @Override
@@ -43,10 +46,13 @@ public class RunCommand implements Callable<Integer> {
         NexoraEngine engine = parent.engine();
 
         if (!noEvents) {
-            engine.subscribe(StepCompletedEvent.class, e ->
-                    System.out.printf("  ✓ %-22s %dms%n", e.stepId(), e.elapsed().toMillis()));
-            engine.subscribe(StepFailedEvent.class, e ->
-                    System.out.printf("  ✗ %-22s [%s] %s%n", e.stepId(), e.failureCode(), e.failureMessage()));
+            engine.subscribe(
+                    StepCompletedEvent.class,
+                    e -> System.out.printf(
+                            "  ✓ %-22s %dms%n", e.stepId(), e.elapsed().toMillis()));
+            engine.subscribe(
+                    StepFailedEvent.class,
+                    e -> System.out.printf("  ✗ %-22s [%s] %s%n", e.stepId(), e.failureCode(), e.failureMessage()));
         }
 
         System.out.println("Running: " + goal);
@@ -57,11 +63,15 @@ public class RunCommand implements Callable<Integer> {
         System.out.println();
         System.out.printf("Status:      %s%n", result.status());
         System.out.printf("ExecutionId: %s%n", result.executionId());
-        System.out.printf("Steps:       %d total, %d completed, %d failed%n",
+        System.out.printf(
+                "Steps:       %d total, %d completed, %d failed%n",
                 result.stepResults().size(),
-                result.stepResults().stream().filter(sr -> sr.getStatus() == ExecutionStatus.COMPLETED).count(),
-                result.stepResults().stream().filter(sr -> sr.getStatus() == ExecutionStatus.FAILED).count()
-        );
+                result.stepResults().stream()
+                        .filter(sr -> sr.getStatus() == ExecutionStatus.COMPLETED)
+                        .count(),
+                result.stepResults().stream()
+                        .filter(sr -> sr.getStatus() == ExecutionStatus.FAILED)
+                        .count());
 
         return result.status() == ExecutionStatus.COMPLETED ? 0 : 1;
     }

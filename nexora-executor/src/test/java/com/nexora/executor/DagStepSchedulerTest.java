@@ -1,5 +1,10 @@
 package com.nexora.executor;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import com.nexora.core.capability.CapabilityResult;
 import com.nexora.core.context.ExecutionContext;
 import com.nexora.core.context.TraceContext;
@@ -18,8 +23,6 @@ import com.nexora.registry.DefaultCapabilityRegistry;
 import com.nexora.retry.DefaultRetryPolicyRegistry;
 import com.nexora.spi.CapabilityDescriptor;
 import com.nexora.spi.CapabilityRegistry;
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,11 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.Test;
 
 class DagStepSchedulerTest {
 
@@ -45,7 +44,8 @@ class DagStepSchedulerTest {
         AtomicBoolean auditExecuted = new AtomicBoolean(false);
         AtomicReference<String> finalMessage = new AtomicReference<>();
 
-        Step auditStep = new Step("audit",
+        Step auditStep = new Step(
+                "audit",
                 "audit",
                 Map.of("source", InputBinding.fromStep("first")),
                 null,
@@ -53,15 +53,15 @@ class DagStepSchedulerTest {
                 null,
                 null,
                 null,
-                null
-        );
+                null);
 
-        registry.register(descriptor("first"), request -> CapabilityResult.success(
-                Map.of("validated", true),
-                List.of(
-                        new AddStepAmendment(auditStep),
-                        new ModifyInputAmendment("final", "message", "patched")
-                )));
+        registry.register(
+                descriptor("first"),
+                request -> CapabilityResult.success(
+                        Map.of("validated", true),
+                        List.of(
+                                new AddStepAmendment(auditStep),
+                                new ModifyInputAmendment("final", "message", "patched"))));
         registry.register(descriptor("audit"), request -> {
             auditExecuted.set(true);
             return CapabilityResult.success(Map.of("audited", true));
@@ -83,9 +83,7 @@ class DagStepSchedulerTest {
                             null,
                             null,
                             null,
-                            null
-                    )
-            ));
+                            null)));
 
             ExecutionResult result = harness.scheduler.schedule(plan, context()).join();
 
@@ -102,8 +100,9 @@ class DagStepSchedulerTest {
         AtomicInteger legacyCalls = new AtomicInteger();
         AtomicInteger finalCalls = new AtomicInteger();
 
-        registry.register(descriptor("first"), request ->
-                CapabilityResult.success(Map.of(), List.of(new SkipStepAmendment("legacy"))));
+        registry.register(
+                descriptor("first"),
+                request -> CapabilityResult.success(Map.of(), List.of(new SkipStepAmendment("legacy"))));
         registry.register(descriptor("legacy"), request -> {
             legacyCalls.incrementAndGet();
             return CapabilityResult.success("legacy");
@@ -117,8 +116,7 @@ class DagStepSchedulerTest {
             Plan plan = new Plan(List.of(
                     Step.of("first", "first"),
                     new Step("legacy", "legacy", Map.of(), null, Set.of("first"), null, null, null, null),
-                    new Step("final", "final", Map.of(), null, Set.of("first"), null, null, null, null)
-            ));
+                    new Step("final", "final", Map.of(), null, Set.of("first"), null, null, null, null)));
 
             ExecutionResult result = harness.scheduler.schedule(plan, context()).join();
 
@@ -144,13 +142,10 @@ class DagStepSchedulerTest {
         try (TestHarness harness = new TestHarness(registry)) {
             Plan cyclicPlan = new Plan(List.of(
                     new Step("a", "a", Map.of(), null, Set.of("b"), null, null, null, null),
-                    new Step("b", "b", Map.of(), null, Set.of("a"), null, null, null, null)
-            ));
+                    new Step("b", "b", Map.of(), null, Set.of("a"), null, null, null, null)));
 
-            IllegalStateException ex = assertThrows(
-                    IllegalStateException.class,
-                    () -> harness.scheduler.schedule(cyclicPlan, context())
-            );
+            IllegalStateException ex =
+                    assertThrows(IllegalStateException.class, () -> harness.scheduler.schedule(cyclicPlan, context()));
             assertTrue(ex.getMessage().contains("Cycle detected"));
         }
     }
@@ -160,9 +155,8 @@ class DagStepSchedulerTest {
         CapabilityRegistry registry = new DefaultCapabilityRegistry();
 
         try (TestHarness harness = new TestHarness(registry)) {
-            ExecutionResult result = harness.scheduler
-                    .schedule(new Plan(List.of()), context())
-                    .join();
+            ExecutionResult result =
+                    harness.scheduler.schedule(new Plan(List.of()), context()).join();
 
             assertEquals(ExecutionStatus.COMPLETED, result.status());
             assertTrue(result.stepResults().isEmpty());
@@ -183,8 +177,7 @@ class DagStepSchedulerTest {
         try (TestHarness harness = new TestHarness(registry)) {
             Plan plan = new Plan(List.of(
                     Step.of("first", "first"),
-                    new Step("final", "final", Map.of(), null, Set.of("first"), null, null, null, null)
-            ));
+                    new Step("final", "final", Map.of(), null, Set.of("first"), null, null, null, null)));
 
             HaltSignal halt = new HaltSignal();
             halt.halt(HaltSignal.Reason.DEADLINE);
@@ -233,7 +226,8 @@ class DagStepSchedulerTest {
             HaltSignal halt = new HaltSignal();
             halt.halt(HaltSignal.Reason.CANCELLED);
 
-            ExecutionResult result = harness.scheduler.schedule(plan, context(), halt).future().join();
+            ExecutionResult result =
+                    harness.scheduler.schedule(plan, context(), halt).future().join();
 
             assertEquals(ExecutionStatus.CANCELLED, result.status());
             assertEquals(0, calls.get());
@@ -268,8 +262,7 @@ class DagStepSchedulerTest {
         try (TestHarness harness = new TestHarness(registry)) {
             Plan plan = new Plan(List.of(
                     Step.of("slow", "slow"),
-                    new Step("dependent", "dependent", Map.of(), null, Set.of("slow"), null, null, null, null)
-            ));
+                    new Step("dependent", "dependent", Map.of(), null, Set.of("slow"), null, null, null, null)));
             HaltSignal halt = new HaltSignal();
             DagStepScheduler.ScheduleSession session = harness.scheduler.schedule(plan, context(), halt);
             assertTrue(slowStarted.await(5, TimeUnit.SECONDS), "slow step never started");
@@ -325,7 +318,8 @@ class DagStepSchedulerTest {
             HaltSignal halt = new HaltSignal();
             ExecutionResult result = harness.scheduler
                     .schedule(new Plan(List.of(Step.of("a", "work"))), context(), halt)
-                    .future().join();
+                    .future()
+                    .join();
 
             assertEquals(ExecutionStatus.COMPLETED, result.status());
             assertFalse(halt.halt(HaltSignal.Reason.CANCELLED));
@@ -338,7 +332,10 @@ class DagStepSchedulerTest {
             HaltSignal halt = new HaltSignal();
             halt.halt(HaltSignal.Reason.CANCELLED);
 
-            ExecutionResult result = harness.scheduler.schedule(new Plan(List.of()), context(), halt).future().join();
+            ExecutionResult result = harness.scheduler
+                    .schedule(new Plan(List.of()), context(), halt)
+                    .future()
+                    .join();
 
             assertEquals(ExecutionStatus.CANCELLED, result.status());
         }
@@ -363,16 +360,9 @@ class DagStepSchedulerTest {
         private TestHarness(CapabilityRegistry registry) {
             this.executor = Executors.newFixedThreadPool(4);
             InterceptorPipeline pipeline = new InterceptorPipeline(
-                    List.of(),
-                    new CapabilityInvoker(registry, new CapabilityContractMonitor())
-            );
+                    List.of(), new CapabilityInvoker(registry, new CapabilityContractMonitor()));
             this.scheduler = new DagStepScheduler(
-                    pipeline,
-                    new DefaultRetryPolicyRegistry(),
-                    new InProcessEventBus(executor),
-                    executor,
-                    registry
-            );
+                    pipeline, new DefaultRetryPolicyRegistry(), new InProcessEventBus(executor), executor, registry);
         }
 
         @Override

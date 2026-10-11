@@ -5,7 +5,6 @@ import com.nexora.core.plan.Plan;
 import com.nexora.core.plan.Step;
 import com.nexora.planner.model.StepDefinition;
 import com.nexora.planner.registry.PlanRegistry;
-
 import java.util.List;
 
 public class PlannerEngine {
@@ -19,10 +18,7 @@ public class PlannerEngine {
     public Plan createPlan(Intent intent) {
         String goal = intent.getGoal();
 
-        List<Step> steps = registry.getMatching(goal)
-                .stream()
-                .map(this::toStep)
-                .toList();
+        List<Step> steps = registry.getMatching(goal).stream().map(this::toStep).toList();
 
         return new Plan(steps);
     }
@@ -37,7 +33,6 @@ public class PlannerEngine {
                 def.getRetryPolicyId(),
                 def.getTimeout(),
                 def.getCompensateCapabilityId(),
-                def.getCondition()
-        );
+                def.getCondition());
     }
 }

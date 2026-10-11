@@ -7,7 +7,6 @@ import com.nexora.executor.InterceptorChain;
 import com.nexora.tracing.Span;
 import com.nexora.tracing.SpanStatus;
 import com.nexora.tracing.Tracer;
-
 import java.util.Objects;
 
 public final class TracingInterceptor implements ExecutionInterceptor {

@@ -2,7 +2,6 @@ package com.nexora.planner.model;
 
 import com.nexora.core.plan.InputBinding;
 import com.nexora.core.plan.StepCondition;
-
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -50,7 +49,17 @@ public class StepDefinition {
             String retryPolicyId,
             Duration timeout,
             String compensateCapabilityId) {
-        this(id, capabilityId, matcher, inputs, outputKey, dependsOn, retryPolicyId, timeout, compensateCapabilityId, null);
+        this(
+                id,
+                capabilityId,
+                matcher,
+                inputs,
+                outputKey,
+                dependsOn,
+                retryPolicyId,
+                timeout,
+                compensateCapabilityId,
+                null);
     }
 
     public StepDefinition(
@@ -76,15 +85,41 @@ public class StepDefinition {
         this.condition = condition;
     }
 
-    public String getId() { return id; }
-    public String getCapabilityId() { return capabilityId; }
-    public Map<String, InputBinding> getInputs() { return inputs; }
-    public String getOutputKey() { return outputKey; }
-    public Set<String> getDependsOn() { return dependsOn; }
-    public String getRetryPolicyId() { return retryPolicyId; }
-    public Duration getTimeout() { return timeout; }
-    public String getCompensateCapabilityId() { return compensateCapabilityId; }
-    public StepCondition getCondition() { return condition; }
+    public String getId() {
+        return id;
+    }
+
+    public String getCapabilityId() {
+        return capabilityId;
+    }
+
+    public Map<String, InputBinding> getInputs() {
+        return inputs;
+    }
+
+    public String getOutputKey() {
+        return outputKey;
+    }
+
+    public Set<String> getDependsOn() {
+        return dependsOn;
+    }
+
+    public String getRetryPolicyId() {
+        return retryPolicyId;
+    }
+
+    public Duration getTimeout() {
+        return timeout;
+    }
+
+    public String getCompensateCapabilityId() {
+        return compensateCapabilityId;
+    }
+
+    public StepCondition getCondition() {
+        return condition;
+    }
 
     public boolean matches(String goal) {
         return matcher.test(goal);
@@ -152,7 +187,17 @@ public class StepDefinition {
         }
 
         public StepDefinition build() {
-            return new StepDefinition(id, capabilityId, matcher, inputs, outputKey, dependsOn, retryPolicyId, timeout, compensateCapabilityId, condition);
+            return new StepDefinition(
+                    id,
+                    capabilityId,
+                    matcher,
+                    inputs,
+                    outputKey,
+                    dependsOn,
+                    retryPolicyId,
+                    timeout,
+                    compensateCapabilityId,
+                    condition);
         }
     }
 }

@@ -3,9 +3,6 @@ package com.nexora.registry;
 import com.nexora.spi.Capability;
 import com.nexora.spi.CapabilityDescriptor;
 import com.nexora.spi.CapabilityRegistry;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -13,6 +10,8 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class DefaultCapabilityRegistry implements CapabilityRegistry {
 
@@ -78,9 +77,5 @@ public final class DefaultCapabilityRegistry implements CapabilityRegistry {
         }
     }
 
-    private record CapabilityEntry(
-            CapabilityDescriptor descriptor,
-            Capability capability,
-            Instant registeredAt
-    ) {}
+    private record CapabilityEntry(CapabilityDescriptor descriptor, Capability capability, Instant registeredAt) {}
 }

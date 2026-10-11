@@ -11,18 +11,17 @@ import com.nexora.core.capability.CapabilityContract;
 import com.nexora.core.capability.CapabilityResult;
 import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.intent.Intent;
-import com.nexora.event.ScheduledExecutionFiredEvent;
-import com.nexora.persistence.MissedFirePolicy;
 import com.nexora.core.plan.AddStepAmendment;
 import com.nexora.core.plan.InputBinding;
 import com.nexora.core.plan.Step;
 import com.nexora.event.ExecutionDeadLetteredEvent;
+import com.nexora.event.ScheduledExecutionFiredEvent;
 import com.nexora.persistence.DeadLetterReviewState;
 import com.nexora.persistence.ExecutionCursor;
 import com.nexora.persistence.ExecutionFilter;
 import com.nexora.persistence.ExecutionRecord;
 import com.nexora.persistence.ExecutionState;
-import com.nexora.persistence.ExecutionStore;
+import com.nexora.persistence.MissedFirePolicy;
 import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import com.nexora.planner.model.StepDefinition;
 import com.nexora.spi.Capability;
@@ -33,10 +32,6 @@ import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import org.java_websocket.WebSocket;
-import org.java_websocket.handshake.ClientHandshake;
-import org.java_websocket.server.WebSocketServer;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
@@ -52,6 +47,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
+import org.java_websocket.WebSocket;
+import org.java_websocket.handshake.ClientHandshake;
+import org.java_websocket.server.WebSocketServer;
 
 /**
  * 8-step payment fraud detection pipeline demo.
@@ -87,9 +85,8 @@ public class PaymentPipelineApp {
 
     static final int HTTP_PORT = 9464;
     static final int WS_PORT = 9465;
-    static final ObjectMapper JSON = new ObjectMapper()
-            .findAndRegisterModules()
-            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+    static final ObjectMapper JSON =
+            new ObjectMapper().findAndRegisterModules().disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     static final AtomicLong requestCounter = new AtomicLong(1);
     static JdbcExecutionStore executionStore;
 
@@ -98,8 +95,10 @@ public class PaymentPipelineApp {
         NexoraEngine engine = buildEngine();
         NexoraObservability obs = NexoraObservability.attach(engine, 50, 300);
 
-        engine.subscribe(ExecutionDeadLetteredEvent.class, e ->
-                System.out.printf("%n  >>> DEAD LETTER CREATED  executionId=%s  code=%s  dlId=%s%n",
+        engine.subscribe(
+                ExecutionDeadLetteredEvent.class,
+                e -> System.out.printf(
+                        "%n  >>> DEAD LETTER CREATED  executionId=%s  code=%s  dlId=%s%n",
                         e.executionId(), e.failureCode(), e.deadLetterId()));
 
         // WebSocket broadcaster
@@ -132,8 +131,7 @@ public class PaymentPipelineApp {
                 sendText(exchange, 405, "Method Not Allowed");
                 return;
             }
-            send(exchange, 200, obs.metricsContentType(),
-                    obs.scrapePrometheus().getBytes(StandardCharsets.UTF_8));
+            send(exchange, 200, obs.metricsContentType(), obs.scrapePrometheus().getBytes(StandardCharsets.UTF_8));
         });
 
         http.createContext("/api/process", exchange -> {
@@ -141,8 +139,7 @@ public class PaymentPipelineApp {
                 sendText(exchange, 405, "Method Not Allowed");
                 return;
             }
-            send(exchange, 200, "application/json; charset=utf-8",
-                    JSON.writeValueAsBytes(obs.processSnapshot()));
+            send(exchange, 200, "application/json; charset=utf-8", JSON.writeValueAsBytes(obs.processSnapshot()));
         });
 
         http.createContext("/api/execute", exchange -> {
@@ -163,10 +160,9 @@ public class PaymentPipelineApp {
             }
             Map<String, Object> ctx = req.context() == null ? Map.of() : req.context();
             ExecutionHandle handle = engine.submit(new Intent(req.goal(), ctx));
-            handle.result()
-                    .whenComplete((r, ex) -> {
-                        if (ex != null) System.err.println("Execution error: " + ex.getMessage());
-                    });
+            handle.result().whenComplete((r, ex) -> {
+                if (ex != null) System.err.println("Execution error: " + ex.getMessage());
+            });
             sendJson(exchange, 202, Map.of("accepted", true, "goal", req.goal(), "executionId", handle.executionId()));
         });
 
@@ -197,9 +193,13 @@ public class PaymentPipelineApp {
                     }
                 }
                 ExecutionCursor cursor = q.containsKey("cursor") ? ExecutionCursor.decode(q.get("cursor")) : null;
-                filter = new ExecutionFilter(states, q.get("goal"),
-                        parseTimestamp("from", q.get("from")), parseTimestamp("to", q.get("to")),
-                        cursor, pageSize + 1);
+                filter = new ExecutionFilter(
+                        states,
+                        q.get("goal"),
+                        parseTimestamp("from", q.get("from")),
+                        parseTimestamp("to", q.get("to")),
+                        cursor,
+                        pageSize + 1);
             } catch (IllegalArgumentException e) {
                 sendJson(exchange, 400, Map.of("error", e.getMessage() == null ? "Invalid query" : e.getMessage()));
                 return;
@@ -209,8 +209,15 @@ public class PaymentPipelineApp {
                 boolean hasMore = rows.size() > pageSize;
                 var page = hasMore ? rows.subList(0, pageSize) : rows;
                 var body = new java.util.LinkedHashMap<String, Object>();
-                body.put("data", page.stream().map(PaymentPipelineApp::historyRow).toList());
-                body.put("cursor", hasMore ? ExecutionCursor.after(page.get(page.size() - 1)).encode() : null);
+                body.put(
+                        "data",
+                        page.stream().map(PaymentPipelineApp::historyRow).toList());
+                body.put(
+                        "cursor",
+                        hasMore
+                                ? ExecutionCursor.after(page.get(page.size() - 1))
+                                        .encode()
+                                : null);
                 body.put("total", executionStore.count(filter));
                 sendJson(exchange, 200, body);
             } catch (RuntimeException e) {
@@ -263,7 +270,10 @@ public class PaymentPipelineApp {
                 if (e.getCause() instanceof ExecutionNotFoundException) {
                     sendJson(exchange, 404, Map.of("error", "Execution not found", "executionId", id));
                 } else if (e.getCause() instanceof ExecutionNotOwnedException) {
-                    sendJson(exchange, 409, Map.of("error", "Execution is not running on this engine instance", "executionId", id));
+                    sendJson(
+                            exchange,
+                            409,
+                            Map.of("error", "Execution is not running on this engine instance", "executionId", id));
                 } else {
                     sendJson(exchange, 500, Map.of("error", "Cancel request failed", "executionId", id));
                 }
@@ -295,11 +305,17 @@ public class PaymentPipelineApp {
                 try {
                     replay = engine.replayDeadLetter(dl);
                 } catch (ExecutionNotReplayableException e) {
-                    sendJson(exchange, 409, Map.of("error", "Original execution is " + e.state() + " and cannot be replayed yet"));
+                    sendJson(
+                            exchange,
+                            409,
+                            Map.of("error", "Original execution is " + e.state() + " and cannot be replayed yet"));
                     return;
                 }
                 executionStore.updateDeadLetterState(dlId, DeadLetterReviewState.REPLAYED, null);
-                sendJson(exchange, 202, Map.of("accepted", true, "deadLetterId", dlId, "executionId", replay.executionId()));
+                sendJson(
+                        exchange,
+                        202,
+                        Map.of("accepted", true, "deadLetterId", dlId, "executionId", replay.executionId()));
                 return;
             }
             if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && remainder.endsWith("/resolve")) {
@@ -342,10 +358,11 @@ public class PaymentPipelineApp {
                     switch (kv[0]) {
                         case "state" -> {
                             if ("ALL".equalsIgnoreCase(kv[1])) stateFilter = null;
-                            else try {
-                                stateFilter = DeadLetterReviewState.valueOf(kv[1].toUpperCase());
-                            } catch (IllegalArgumentException ignored) {
-                            }
+                            else
+                                try {
+                                    stateFilter = DeadLetterReviewState.valueOf(kv[1].toUpperCase());
+                                } catch (IllegalArgumentException ignored) {
+                                }
                         }
                         case "page" -> {
                             try {
@@ -377,7 +394,10 @@ public class PaymentPipelineApp {
                                 "missedFirePolicy", r.missedFirePolicy().name(),
                                 "active", r.active(),
                                 "nextFireAt", r.nextFireAt().toString(),
-                                "lastFiredAt", r.lastFiredAt() != null ? r.lastFiredAt().toString() : "",
+                                "lastFiredAt",
+                                        r.lastFiredAt() != null
+                                                ? r.lastFiredAt().toString()
+                                                : "",
                                 "lastStatus", r.lastStatus().name()))
                         .toList();
                 sendJson(exchange, 200, Map.of("schedules", schedules));
@@ -407,7 +427,14 @@ public class PaymentPipelineApp {
                 }
                 try {
                     var handle = engine.schedule(cron, new Intent(goal, Map.of()), policy);
-                    sendJson(exchange, 201, Map.of("id", handle.id(), "nextFireAt", handle.nextFireTime().toString()));
+                    sendJson(
+                            exchange,
+                            201,
+                            Map.of(
+                                    "id",
+                                    handle.id(),
+                                    "nextFireAt",
+                                    handle.nextFireTime().toString()));
                 } catch (IllegalArgumentException e) {
                     sendJson(exchange, 400, Map.of("error", e.getMessage()));
                 }
@@ -430,7 +457,8 @@ public class PaymentPipelineApp {
         http.createContext("/api/mock-webhook", exchange -> {
             System.out.println();
             System.out.println("  >>> WEBHOOK CALLBACK RECEIVED!");
-            System.out.println("  >>> Signature: " + exchange.getRequestHeaders().getFirst("nexora-signature"));
+            System.out.println(
+                    "  >>> Signature: " + exchange.getRequestHeaders().getFirst("nexora-signature"));
             exchange.sendResponseHeaders(200, -1);
             exchange.close();
         });
@@ -459,9 +487,12 @@ public class PaymentPipelineApp {
         System.out.println();
         System.out.println("DAG (8 steps):");
         System.out.println("  validate_request ──────────────────────────────────────────────┐");
-        System.out.println("                                                                    ├──> process_payment ──┬──> send_confirmation");
-        System.out.println("  enrich_user_data ─┐                                             │                       │");
-        System.out.println("                    ├──> run_fraud_check ─────────────────────────┘                       └──> update_ledger");
+        System.out.println(
+                "                                                                    ├──> process_payment ──┬──> send_confirmation");
+        System.out.println(
+                "  enrich_user_data ─┐                                             │                       │");
+        System.out.println(
+                "                    ├──> run_fraud_check ─────────────────────────┘                       └──> update_ledger");
         System.out.println("  check_velocity ───┤");
         System.out.println("                    │");
         System.out.println("  screen_sanctions ─┘");
@@ -472,77 +503,99 @@ public class PaymentPipelineApp {
         System.out.println("  1  Happy path       amount=450,  low risk");
         System.out.println("  2  High risk         amount=1500, fraud review amendment");
         System.out.println("  3  Gateway failure   forceFailure=true, saga compensates + DLQ entry");
-        System.out.println("  4  Sanctions hit     forceBlockedUser=true, early failure + partial compensation + DLQ entry");
+        System.out.println(
+                "  4  Sanctions hit     forceBlockedUser=true, early failure + partial compensation + DLQ entry");
         System.out.println("  5  Execution timeout deadline=100ms, watchdog cancels execution + saga compensates");
         System.out.println("  6  Circuit Breaker   trigger failures to open the circuit, then test fallback routing");
         System.out.println("  7  Webhook Callback  dispatch webhook on execution completion with HMAC signature");
         System.out.println("  8  DLQ Replay        replays a dead-lettered execution from the DLQ");
         System.out.println("  9  Cron Schedule     registers a recurring payment reconciliation job (every minute)");
-        System.out.println(" 10  Cancellation      slow profile lookup is cancelled mid-run, saga compensates finished steps");
+        System.out.println(
+                " 10  Cancellation      slow profile lookup is cancelled mid-run, saga compensates finished steps");
         System.out.println();
         System.out.println("Firing test scenarios...");
         System.out.println();
 
         // Scenario 1 — happy path, low risk
         System.out.println("  [1/5] Happy path — amount=450, low risk");
-        engine.execute("process payment",
-                Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
-                        "amount", 450.00,
-                        "userId", "USR-99"));
+        engine.execute(
+                "process payment",
+                Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(), "amount", 450.00, "userId", "USR-99"));
         sleep(200);
 
         // Scenario 2 — high risk, triggers flag_for_review amendment
         System.out.println("  [2/5] High risk — amount=1500, fraud review path");
-        engine.execute("process payment",
-                Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
-                        "amount", 1500.00,
-                        "userId", "USR-42"));
+        engine.execute(
+                "process payment",
+                Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(), "amount", 1500.00, "userId", "USR-42"));
         sleep(200);
 
         // Scenario 3 — payment gateway rejects, saga compensates completed steps
         System.out.println("  [3/5] Gateway failure — process_payment fails, saga compensates");
-        engine.execute("process payment",
-                Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
-                        "amount", 250.00,
-                        "userId", "USR-77",
-                        "forceFailure", true));
+        engine.execute(
+                "process payment",
+                Map.of(
+                        "requestId",
+                        "REQ-" + requestCounter.getAndIncrement(),
+                        "amount",
+                        250.00,
+                        "userId",
+                        "USR-77",
+                        "forceFailure",
+                        true));
         sleep(200);
 
         // Scenario 4 — sanctions blocklist hit, screen_sanctions fails early, partial compensation
         System.out.println("  [4/5] Sanctions hit — forceBlockedUser=true, early failure + partial compensation");
-        engine.execute("process payment",
-                Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
-                        "amount", 200.00,
-                        "userId", "USR-BLOCKED",
-                        "forceBlockedUser", true));
+        engine.execute(
+                "process payment",
+                Map.of(
+                        "requestId",
+                        "REQ-" + requestCounter.getAndIncrement(),
+                        "amount",
+                        200.00,
+                        "userId",
+                        "USR-BLOCKED",
+                        "forceBlockedUser",
+                        true));
         sleep(200);
 
         // Scenario 5 — execution timeout, cancels plan execution and triggers compensation
-        System.out.println("  [5/5] Execution timeout — 100ms deadline, watchdog cancels execution and triggers saga compensation");
-        engine.execute("process payment",
-                Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
-                        "amount", 300.00,
-                        "userId", "USR-TIMEOUT"),
+        System.out.println(
+                "  [5/5] Execution timeout — 100ms deadline, watchdog cancels execution and triggers saga compensation");
+        engine.execute(
+                "process payment",
+                Map.of(
+                        "requestId",
+                        "REQ-" + requestCounter.getAndIncrement(),
+                        "amount",
+                        300.00,
+                        "userId",
+                        "USR-TIMEOUT"),
                 Duration.ofMillis(100));
 
         System.out.println();
         System.out.println("  [6/6] Circuit Breaker Demo — trip the breaker and observe fallback routing");
         for (int i = 0; i < 5; i++) {
             System.out.println("        Sending failing request " + (i + 1));
-            engine.execute("process payment",
-                    Map.of("requestId", "REQ-CB-" + i,
-                            "amount", 100.00,
-                            "userId", "USR-CB",
-                            "forceFailure", true));
+            engine.execute(
+                    "process payment",
+                    Map.of("requestId", "REQ-CB-" + i, "amount", 100.00, "userId", "USR-CB", "forceFailure", true));
             sleep(150); // wait for execution
         }
 
         System.out.println("        Circuit should now be OPEN. Sending a normal request...");
-        engine.execute("process payment",
-                Map.of("requestId", "REQ-CB-NORMAL",
-                        "amount", 100.00,
-                        "userId", "USR-CB",
-                        "forceFailure", false)); // Not forcing failure, but should still hit fallback!
+        engine.execute(
+                "process payment",
+                Map.of(
+                        "requestId",
+                        "REQ-CB-NORMAL",
+                        "amount",
+                        100.00,
+                        "userId",
+                        "USR-CB",
+                        "forceFailure",
+                        false)); // Not forcing failure, but should still hit fallback!
         sleep(200);
 
         System.out.println();
@@ -552,8 +605,10 @@ public class PaymentPipelineApp {
                 Map.of("requestId", "REQ-WEBHOOK", "amount", 50.00, "userId", "USR-WH"),
                 null,
                 "http://localhost:" + HTTP_PORT + "/api/mock-webhook",
-                List.of(com.nexora.core.execution.ExecutionStatus.COMPLETED, com.nexora.core.execution.ExecutionStatus.FAILED, com.nexora.core.execution.ExecutionStatus.TIMED_OUT)
-        ));
+                List.of(
+                        com.nexora.core.execution.ExecutionStatus.COMPLETED,
+                        com.nexora.core.execution.ExecutionStatus.FAILED,
+                        com.nexora.core.execution.ExecutionStatus.TIMED_OUT)));
         sleep(200);
 
         // Scenario 8 — DLQ replay: wait for dead letters from scenarios 3 & 4, then replay one
@@ -566,14 +621,15 @@ public class PaymentPipelineApp {
         System.out.printf("  DLQ has %d pending dead letters.%n", pendingDls.size());
         if (!pendingDls.isEmpty()) {
             var dl = pendingDls.get(0);
-            System.out.printf("  Replaying dead letter id=%s executionId=%s goal='%s'%n",
-                    dl.id(), dl.executionId(), dl.goal());
+            System.out.printf(
+                    "  Replaying dead letter id=%s executionId=%s goal='%s'%n", dl.id(), dl.executionId(), dl.goal());
             engine.execute(dl.goal(), dl.context());
             executionStore.updateDeadLetterState(dl.id(), DeadLetterReviewState.REPLAYED, null);
             System.out.println("  Dead letter marked REPLAYED.");
             if (pendingDls.size() > 1) {
                 var dl2 = pendingDls.get(1);
-                executionStore.updateDeadLetterState(dl2.id(), DeadLetterReviewState.RESOLVED, "False positive — investigated");
+                executionStore.updateDeadLetterState(
+                        dl2.id(), DeadLetterReviewState.RESOLVED, "False positive — investigated");
                 System.out.println("  Second dead letter marked RESOLVED (false positive).");
             }
         } else {
@@ -584,17 +640,22 @@ public class PaymentPipelineApp {
         // Scenario 9 — cron schedule: reconciliation job fires every minute
         System.out.println();
         System.out.println("  [9/9] Cron Schedule — registering a recurring payment reconciliation job");
-        engine.subscribe(ScheduledExecutionFiredEvent.class, e ->
-                System.out.printf("%n  >>> SCHEDULED EXECUTION FIRED  scheduleId=%s  executionId=%s%n",
+        engine.subscribe(
+                ScheduledExecutionFiredEvent.class,
+                e -> System.out.printf(
+                        "%n  >>> SCHEDULED EXECUTION FIRED  scheduleId=%s  executionId=%s%n",
                         e.scheduleId(), e.executionId()));
         var scheduleHandle = engine.schedule(
                 "* * * * *",
-                new Intent("process payment", Map.of(
-                        "requestId", "SCHED-RECONCILE",
-                        "amount", 1.00,
-                        "userId", "USR-RECONCILE")),
+                new Intent(
+                        "process payment",
+                        Map.of(
+                                "requestId", "SCHED-RECONCILE",
+                                "amount", 1.00,
+                                "userId", "USR-RECONCILE")),
                 MissedFirePolicy.FIRE_ONCE);
-        System.out.printf("  Schedule registered id=%s cron='* * * * *' nextFire=%s%n",
+        System.out.printf(
+                "  Schedule registered id=%s cron='* * * * *' nextFire=%s%n",
                 scheduleHandle.id(), scheduleHandle.nextFireTime());
         System.out.printf("  GET  http://localhost:8090/api/schedules         — list all schedules%n");
         System.out.printf("  DELETE http://localhost:8090/api/schedules/%s  — cancel it%n", scheduleHandle.id());
@@ -605,16 +666,16 @@ public class PaymentPipelineApp {
         // run_fraud_check and everything after it never start.
         System.out.println();
         System.out.println("  [10/10] Cancellation — slow profile lookup (30s), cancelled after 1s");
-        ExecutionHandle slow = engine.submit(new Intent("process payment", Map.of(
-                "requestId", "REQ-CANCEL",
-                "amount", 120.00,
-                "userId", "USR-SLOW",
-                "slowUpstreamMs", 30_000)));
+        ExecutionHandle slow = engine.submit(new Intent(
+                "process payment",
+                Map.of("requestId", "REQ-CANCEL", "amount", 120.00, "userId", "USR-SLOW", "slowUpstreamMs", 30_000)));
         sleep(1000);
-        System.out.printf("  Cancelling executionId=%s -> accepted=%s%n",
+        System.out.printf(
+                "  Cancelling executionId=%s -> accepted=%s%n",
                 slow.executionId(), engine.cancel(slow.executionId()).join());
         slow.result().thenAccept(r -> System.out.printf("  Cancelled run finished with status=%s%n", r.status()));
-        System.out.println("  Try it yourself: press \"Slow payment\" then Run in the UI, and Cancel it from the list.");
+        System.out.println(
+                "  Try it yourself: press \"Slow payment\" then Run in the UI, and Cancel it from the list.");
 
         System.out.println();
         System.out.println("Ready. Open http://localhost:9464/ in your browser.");
@@ -634,63 +695,111 @@ public class PaymentPipelineApp {
                 .withSagaEnabled(true)
                 // step 1 - starts immediately
                 .withStepDefinition(new StepDefinition(
-                        "validate_request", "validate_request",
+                        "validate_request",
+                        "validate_request",
                         g -> g.contains("process"),
                         Map.of("requestId", InputBinding.fromContext("intent.context.requestId")),
-                        "validation", Set.of(), null, null,
+                        "validation",
+                        Set.of(),
+                        null,
+                        null,
                         "validate_request_compensate"))
                 // step 2 - starts immediately, parallel with step 1
                 .withStepDefinition(new StepDefinition(
-                        "enrich_user_data", "enrich_user_data",
+                        "enrich_user_data",
+                        "enrich_user_data",
                         g -> g.contains("process"),
-                        Map.of("userId", InputBinding.fromContext("intent.context.userId"),
-                                "slowUpstreamMs", InputBinding.fromContext("intent.context.slowUpstreamMs")),
-                        "userProfile", Set.of(), null, null,
+                        Map.of(
+                                "userId",
+                                InputBinding.fromContext("intent.context.userId"),
+                                "slowUpstreamMs",
+                                InputBinding.fromContext("intent.context.slowUpstreamMs")),
+                        "userProfile",
+                        Set.of(),
+                        null,
+                        null,
                         "enrich_user_data_compensate"))
                 // step 3 - starts immediately, parallel with steps 1-2
                 .withStepDefinition(new StepDefinition(
-                        "check_velocity", "check_velocity",
+                        "check_velocity",
+                        "check_velocity",
                         g -> g.contains("payment"),
-                        Map.of("userId", InputBinding.fromContext("intent.context.userId"),
-                                "forceVelocityFail", InputBinding.fromContext("intent.context.forceVelocityFail")),
-                        "velocityOk", Set.of(), null, null,
+                        Map.of(
+                                "userId",
+                                InputBinding.fromContext("intent.context.userId"),
+                                "forceVelocityFail",
+                                InputBinding.fromContext("intent.context.forceVelocityFail")),
+                        "velocityOk",
+                        Set.of(),
+                        null,
+                        null,
                         "check_velocity_compensate"))
                 // step 4 - starts immediately, parallel with steps 1-3
                 .withStepDefinition(new StepDefinition(
-                        "screen_sanctions", "screen_sanctions",
+                        "screen_sanctions",
+                        "screen_sanctions",
                         g -> g.contains("payment"),
-                        Map.of("userId", InputBinding.fromContext("intent.context.userId"),
-                                "forceBlockedUser", InputBinding.fromContext("intent.context.forceBlockedUser")),
-                        "sanctionsOk", Set.of(), null, null,
+                        Map.of(
+                                "userId",
+                                InputBinding.fromContext("intent.context.userId"),
+                                "forceBlockedUser",
+                                InputBinding.fromContext("intent.context.forceBlockedUser")),
+                        "sanctionsOk",
+                        Set.of(),
+                        null,
+                        null,
                         "screen_sanctions_compensate"))
                 // step 5 - waits for steps 2, 3, 4
                 .withStepDefinition(new StepDefinition(
-                        "run_fraud_check", "run_fraud_check",
+                        "run_fraud_check",
+                        "run_fraud_check",
                         g -> g.contains("payment"),
-                        Map.of("amount", InputBinding.fromContext("intent.context.amount"),
-                                "forceFailure", InputBinding.fromContext("intent.context.forceFailure")),
-                        "riskScore", Set.of("enrich_user_data", "check_velocity", "screen_sanctions"), null, null,
+                        Map.of(
+                                "amount",
+                                InputBinding.fromContext("intent.context.amount"),
+                                "forceFailure",
+                                InputBinding.fromContext("intent.context.forceFailure")),
+                        "riskScore",
+                        Set.of("enrich_user_data", "check_velocity", "screen_sanctions"),
+                        null,
+                        null,
                         "run_fraud_check_compensate"))
                 // step 6 - waits for steps 1, 5; has p99 SLA + fallback
                 .withStepDefinition(new StepDefinition(
-                        "process_payment", "process_payment",
+                        "process_payment",
+                        "process_payment",
                         g -> g.contains("payment"),
-                        Map.of("requestId", InputBinding.fromContext("intent.context.requestId"),
-                                "amount", InputBinding.fromContext("intent.context.amount"),
-                                "forceFailure", InputBinding.fromContext("intent.context.forceFailure")),
-                        "paymentId", Set.of("validate_request", "run_fraud_check"), null, null))
+                        Map.of(
+                                "requestId",
+                                InputBinding.fromContext("intent.context.requestId"),
+                                "amount",
+                                InputBinding.fromContext("intent.context.amount"),
+                                "forceFailure",
+                                InputBinding.fromContext("intent.context.forceFailure")),
+                        "paymentId",
+                        Set.of("validate_request", "run_fraud_check"),
+                        null,
+                        null))
                 // step 7 - waits for step 6, parallel with step 8
                 .withStepDefinition(new StepDefinition(
-                        "send_confirmation", "send_confirmation",
+                        "send_confirmation",
+                        "send_confirmation",
                         g -> g.contains("payment"),
                         Map.of("paymentId", InputBinding.fromStep("process_payment", "paymentId")),
-                        null, Set.of("process_payment"), null, null))
+                        null,
+                        Set.of("process_payment"),
+                        null,
+                        null))
                 // step 8 - waits for step 6, parallel with step 7
                 .withStepDefinition(new StepDefinition(
-                        "update_ledger", "update_ledger",
+                        "update_ledger",
+                        "update_ledger",
                         g -> g.contains("process"),
                         Map.of("paymentId", InputBinding.fromStep("process_payment", "paymentId")),
-                        null, Set.of("process_payment"), null, null))
+                        null,
+                        Set.of("process_payment"),
+                        null,
+                        null))
                 .build();
     }
 
@@ -698,16 +807,15 @@ public class PaymentPipelineApp {
         return new NexoraPlugin() {
             @Override
             public PluginDescriptor descriptor() {
-                return new PluginDescriptor("payment-plugin", "1.0.0", "Payment fraud detection capabilities", List.of(), null);
+                return new PluginDescriptor(
+                        "payment-plugin", "1.0.0", "Payment fraud detection capabilities", List.of(), null);
             }
 
             @Override
-            public void initialize(PluginContext ctx) {
-            }
+            public void initialize(PluginContext ctx) {}
 
             @Override
-            public void shutdown() {
-            }
+            public void shutdown() {}
 
             @Override
             public List<CapabilityProvider> capabilityProviders() {
@@ -731,7 +839,9 @@ public class PaymentPipelineApp {
                             String userId = String.valueOf(req.inputs().get("userId"));
                             long delayMs = req.inputs().get("slowUpstreamMs") instanceof Number n ? n.longValue() : 60;
                             if (delayMs > 60) {
-                                System.out.printf("  [enrich_user_data] profile service slow for %s, waiting %dms%n", userId, delayMs);
+                                System.out.printf(
+                                        "  [enrich_user_data] profile service slow for %s, waiting %dms%n",
+                                        userId, delayMs);
                             }
                             try {
                                 Thread.sleep(delayMs);
@@ -754,8 +864,8 @@ public class PaymentPipelineApp {
                             boolean fail = Boolean.TRUE.equals(req.inputs().get("forceVelocityFail"));
                             if (fail) {
                                 System.out.println("  [check_velocity] EXCEEDED - too many transactions");
-                                return CapabilityResult.failure("VELOCITY_EXCEEDED",
-                                        "Transaction rate limit breached for user");
+                                return CapabilityResult.failure(
+                                        "VELOCITY_EXCEEDED", "Transaction rate limit breached for user");
                             }
                             System.out.println("  [check_velocity] velocity within limits");
                             return CapabilityResult.success(Map.of("velocityOk", true, "txLast24h", 3));
@@ -768,8 +878,8 @@ public class PaymentPipelineApp {
                             String userId = String.valueOf(req.inputs().get("userId"));
                             if (blocked) {
                                 System.out.println("  [screen_sanctions] " + userId + " BLOCKED - sanctions hit");
-                                return CapabilityResult.failure("SANCTIONS_HIT",
-                                        "User is on the sanctions blocklist: " + userId);
+                                return CapabilityResult.failure(
+                                        "SANCTIONS_HIT", "User is on the sanctions blocklist: " + userId);
                             }
                             System.out.println("  [screen_sanctions] " + userId + " cleared");
                             return CapabilityResult.success(Map.of("sanctionsOk", true, "userId", userId));
@@ -783,24 +893,27 @@ public class PaymentPipelineApp {
                             System.out.printf("  [run_fraud_check] amount=%.2f risk=%.2f%n", amount, risk);
 
                             Step flagStep = new Step(
-                                    "flag_for_review", "flag_for_review",
+                                    "flag_for_review",
+                                    "flag_for_review",
                                     Map.of("risk", InputBinding.literal(risk)),
                                     null,
                                     Set.of("run_fraud_check"),
-                                    null, null, null, null);
+                                    null,
+                                    null,
+                                    null,
+                                    null);
 
                             // Note: Map.of() prohibits null values — do NOT include optional
                             // flags here; they are read directly from the request context.
                             return CapabilityResult.success(
-                                    Map.of("riskScore", risk,
-                                            "decision", risk > 0.5 ? "REVIEW" : "PASS"),
-                                    List.of(new AddStepAmendment(flagStep))
-                            );
+                                    Map.of("riskScore", risk, "decision", risk > 0.5 ? "REVIEW" : "PASS"),
+                                    List.of(new AddStepAmendment(flagStep)));
                         }),
 
                         // p99=300ms SLA, fallback to process_payment_fallback
                         // fails when forceFailure=true — triggers saga compensation
-                        cap("process_payment",
+                        cap(
+                                "process_payment",
                                 CapabilityContract.builder()
                                         .p99Latency(Duration.ofMillis(300))
                                         .maxErrorRate(0.05)
@@ -810,36 +923,35 @@ public class PaymentPipelineApp {
                                         .build(),
                                 req -> {
                                     sleep(80);
-                                    boolean forceFailure = Boolean.TRUE.equals(req.inputs().get("forceFailure"));
+                                    boolean forceFailure =
+                                            Boolean.TRUE.equals(req.inputs().get("forceFailure"));
                                     if (forceFailure) {
                                         System.out.println("  [process_payment] FAILED - payment gateway rejected");
-                                        return CapabilityResult.failure("GATEWAY_REJECTED",
-                                                "Payment gateway returned a hard decline");
+                                        return CapabilityResult.failure(
+                                                "GATEWAY_REJECTED", "Payment gateway returned a hard decline");
                                     }
                                     String pid = "PAY-" + System.currentTimeMillis();
                                     System.out.println("  [process_payment] charged -> " + pid);
                                     return CapabilityResult.success(Map.of("paymentId", pid, "status", "CAPTURED"));
                                 }),
-
                         cap("process_payment_fallback", CapabilityContract.none(), req -> {
                             sleep(40);
                             String pid = "PAY-FALLBACK-" + System.currentTimeMillis();
                             System.out.println("  [process_payment_fallback] fallback charged -> " + pid);
                             return CapabilityResult.success(Map.of("paymentId", pid, "status", "CAPTURED_FALLBACK"));
                         }),
-
                         cap("send_confirmation", CapabilityContract.none(), req -> {
                             sleep(25);
-                            System.out.println("  [send_confirmation] email sent for " + req.inputs().get("paymentId"));
+                            System.out.println("  [send_confirmation] email sent for "
+                                    + req.inputs().get("paymentId"));
                             return CapabilityResult.success(Map.of("channel", "email", "delivered", true));
                         }),
-
                         cap("update_ledger", CapabilityContract.none(), req -> {
                             sleep(30);
-                            System.out.println("  [update_ledger] ledger updated for " + req.inputs().get("paymentId"));
+                            System.out.println("  [update_ledger] ledger updated for "
+                                    + req.inputs().get("paymentId"));
                             return CapabilityResult.success(Map.of("ledgerEntry", "recorded"));
                         }),
-
                         cap("flag_for_review", CapabilityContract.none(), req -> {
                             sleep(20);
                             double risk = ((Number) req.inputs().getOrDefault("risk", 0)).doubleValue();
@@ -854,31 +966,26 @@ public class PaymentPipelineApp {
                             System.out.println("  [validate_request_compensate] request record voided");
                             return CapabilityResult.success(Map.of("voided", true));
                         }),
-
                         cap("enrich_user_data_compensate", CapabilityContract.none(), req -> {
                             sleep(10);
                             System.out.println("  [enrich_user_data_compensate] cached profile invalidated");
                             return CapabilityResult.success(Map.of("invalidated", true));
                         }),
-
                         cap("check_velocity_compensate", CapabilityContract.none(), req -> {
                             sleep(10);
                             System.out.println("  [check_velocity_compensate] velocity counter decremented");
                             return CapabilityResult.success(Map.of("decremented", true));
                         }),
-
                         cap("run_fraud_check_compensate", CapabilityContract.none(), req -> {
                             sleep(10);
                             System.out.println("  [run_fraud_check_compensate] fraud record retracted");
                             return CapabilityResult.success(Map.of("retracted", true));
                         }),
-
                         cap("screen_sanctions_compensate", CapabilityContract.none(), req -> {
                             sleep(10);
                             System.out.println("  [screen_sanctions_compensate] sanctions flag cleared");
                             return CapabilityResult.success(Map.of("cleared", true));
-                        })
-                );
+                        }));
             }
         };
     }
@@ -917,8 +1024,14 @@ public class PaymentPipelineApp {
 
     /** POST /api/executions/{id}/replay: 202 with the new executionId, 404 unknown, 409 not replayable. */
     static void replayExecution(NexoraEngine engine, HttpExchange exchange, String id) throws IOException {
-        if (id.isBlank() || id.contains("/")) { sendText(exchange, 404, "Not Found"); return; }
-        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendText(exchange, 405, "Method Not Allowed"); return; }
+        if (id.isBlank() || id.contains("/")) {
+            sendText(exchange, 404, "Not Found");
+            return;
+        }
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            sendText(exchange, 405, "Method Not Allowed");
+            return;
+        }
         try {
             ExecutionHandle replay = engine.replay(id);
             System.out.printf("%n  >>> REPLAY STARTED  executionId=%s  replayOf=%s%n", replay.executionId(), id);
@@ -926,9 +1039,16 @@ public class PaymentPipelineApp {
         } catch (ExecutionNotFoundException e) {
             sendJson(exchange, 404, Map.of("error", "Execution not found", "executionId", id));
         } catch (ExecutionNotReplayableException e) {
-            sendJson(exchange, 409, Map.of(
-                    "error", "Only FAILED, TIMED_OUT, CANCELLED and COMPENSATED executions can be replayed",
-                    "executionId", id, "state", e.state().name()));
+            sendJson(
+                    exchange,
+                    409,
+                    Map.of(
+                            "error",
+                            "Only FAILED, TIMED_OUT, CANCELLED and COMPENSATED executions can be replayed",
+                            "executionId",
+                            id,
+                            "state",
+                            e.state().name()));
         } catch (RuntimeException e) {
             System.err.println("Replay failed executionId=" + id + ": " + e.getMessage());
             sendJson(exchange, 500, Map.of("error", "Replay request failed", "executionId", id));
@@ -942,7 +1062,8 @@ public class PaymentPipelineApp {
         for (String pair : rawQuery.split("&")) {
             String[] kv = pair.split("=", 2);
             if (kv[0].isEmpty()) continue;
-            params.put(java.net.URLDecoder.decode(kv[0], StandardCharsets.UTF_8),
+            params.put(
+                    java.net.URLDecoder.decode(kv[0], StandardCharsets.UTF_8),
                     kv.length == 2 ? java.net.URLDecoder.decode(kv[1], StandardCharsets.UTF_8) : "");
         }
         return params;
@@ -965,7 +1086,8 @@ public class PaymentPipelineApp {
         try {
             return java.time.OffsetDateTime.parse(raw).toInstant();
         } catch (java.time.format.DateTimeParseException e) {
-            throw new IllegalArgumentException(name + " must be an ISO-8601 timestamp with an offset (encode '+' as %2B)");
+            throw new IllegalArgumentException(
+                    name + " must be an ISO-8601 timestamp with an offset (encode '+' as %2B)");
         }
     }
 
@@ -976,7 +1098,11 @@ public class PaymentPipelineApp {
         row.put("state", r.state().name());
         row.put("startedAt", r.startedAt().toString());
         row.put("completedAt", r.completedAt() == null ? null : r.completedAt().toString());
-        row.put("durationMs", r.completedAt() == null ? null : Duration.between(r.startedAt(), r.completedAt()).toMillis());
+        row.put(
+                "durationMs",
+                r.completedAt() == null
+                        ? null
+                        : Duration.between(r.startedAt(), r.completedAt()).toMillis());
         return row;
     }
 
@@ -1002,8 +1128,7 @@ public class PaymentPipelineApp {
         };
     }
 
-    record ExecuteRequest(String goal, Map<String, Object> context) {
-    }
+    record ExecuteRequest(String goal, Map<String, Object> context) {}
 
     // WebSocket broadcaster
 
@@ -1014,24 +1139,19 @@ public class PaymentPipelineApp {
         }
 
         @Override
-        public void onOpen(WebSocket conn, ClientHandshake h) {
-        }
+        public void onOpen(WebSocket conn, ClientHandshake h) {}
 
         @Override
-        public void onClose(WebSocket conn, int code, String reason, boolean remote) {
-        }
+        public void onClose(WebSocket conn, int code, String reason, boolean remote) {}
 
         @Override
-        public void onMessage(WebSocket conn, String message) {
-        }
+        public void onMessage(WebSocket conn, String message) {}
 
         @Override
-        public void onError(WebSocket conn, Exception ex) {
-        }
+        public void onError(WebSocket conn, Exception ex) {}
 
         @Override
-        public void onStart() {
-        }
+        public void onStart() {}
 
         void broadcastSnapshot(String json) {
             Collection<WebSocket> conns = getConnections();

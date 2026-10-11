@@ -1,12 +1,11 @@
 package com.nexora.tracing.otel;
 
-import com.nexora.core.context.TraceContext;
-import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
 
+import com.nexora.core.context.TraceContext;
 import java.util.Map;
 import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
 
 class W3CTraceparentTest {
 
@@ -42,18 +41,17 @@ class W3CTraceparentTest {
 
     @Test
     void parseRejectsForbiddenVersionAndAllZeroIdentifiers() {
-        assertThat(W3CTraceparent.parse(
-                "ff-1234567890abcdef1234567890abcdef-fedcba0987654321-01")).isEmpty();
-        assertThat(W3CTraceparent.parse(
-                "00-00000000000000000000000000000000-fedcba0987654321-01")).isEmpty();
-        assertThat(W3CTraceparent.parse(
-                "00-1234567890abcdef1234567890abcdef-0000000000000000-01")).isEmpty();
+        assertThat(W3CTraceparent.parse("ff-1234567890abcdef1234567890abcdef-fedcba0987654321-01"))
+                .isEmpty();
+        assertThat(W3CTraceparent.parse("00-00000000000000000000000000000000-fedcba0987654321-01"))
+                .isEmpty();
+        assertThat(W3CTraceparent.parse("00-1234567890abcdef1234567890abcdef-0000000000000000-01"))
+                .isEmpty();
     }
 
     @Test
     void parseSupportsHigherVersionsWithExtensions() {
-        var parsed = W3CTraceparent.parse(
-                "01-1234567890abcdef1234567890abcdef-fedcba0987654321-03-future-field");
+        var parsed = W3CTraceparent.parse("01-1234567890abcdef1234567890abcdef-fedcba0987654321-03-future-field");
 
         assertThat(parsed).isPresent();
         assertThat(parsed.get().version()).isEqualTo("01");
@@ -62,16 +60,15 @@ class W3CTraceparentTest {
 
     @Test
     void parseRejectsExtensionsForVersionZeroAndInvalidHigherVersionBoundaries() {
-        assertThat(W3CTraceparent.parse(
-                "00-1234567890abcdef1234567890abcdef-fedcba0987654321-01-extra")).isEmpty();
-        assertThat(W3CTraceparent.parse(
-                "01-1234567890abcdef1234567890abcdef-fedcba0987654321-01extra")).isEmpty();
+        assertThat(W3CTraceparent.parse("00-1234567890abcdef1234567890abcdef-fedcba0987654321-01-extra"))
+                .isEmpty();
+        assertThat(W3CTraceparent.parse("01-1234567890abcdef1234567890abcdef-fedcba0987654321-01extra"))
+                .isEmpty();
     }
 
     @Test
     void toTraceContextBuildsARootContextWithNoBaggage() {
-        var parsed = new W3CTraceparent.Parsed(
-                "00", "1234567890abcdef1234567890abcdef", "fedcba0987654321", false);
+        var parsed = new W3CTraceparent.Parsed("00", "1234567890abcdef1234567890abcdef", "fedcba0987654321", false);
 
         TraceContext ctx = W3CTraceparent.toTraceContext(parsed);
 
@@ -85,11 +82,9 @@ class W3CTraceparentTest {
 
     @Test
     void formatPreservesUnsampledDecision() {
-        TraceContext ctx = new TraceContext(
-                "1234567890abcdef", "fedcba0987654321", null, Map.of(), false);
+        TraceContext ctx = new TraceContext("1234567890abcdef", "fedcba0987654321", null, Map.of(), false);
 
-        assertThat(W3CTraceparent.format(ctx))
-                .isEqualTo("00-1234567890abcdef1234567890abcdef-fedcba0987654321-00");
+        assertThat(W3CTraceparent.format(ctx)).isEqualTo("00-1234567890abcdef1234567890abcdef-fedcba0987654321-00");
     }
 
     @Test
