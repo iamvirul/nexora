@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.nexora.api.ExecutionNotFoundException;
 import com.nexora.api.ExecutionNotOwnedException;
+import com.nexora.api.ExecutionNotReplayableException;
 import com.nexora.api.NexoraEngine;
 import com.nexora.api.observability.NexoraObservability;
 import com.nexora.core.capability.CapabilityContract;
@@ -218,9 +219,14 @@ public class PaymentPipelineApp {
             }
         });
 
-        // GET one execution with its steps; DELETE cancels it (200 cancelled, 404 unknown, 409 already finished)
+        // GET one execution with its steps; DELETE cancels it (200 cancelled, 404 unknown, 409 already finished);
+        // POST {id}/replay re-runs a failed, timed-out, cancelled or compensated execution
         http.createContext("/api/executions/", exchange -> {
             String id = exchange.getRequestURI().getPath().substring("/api/executions/".length());
+            if (id.endsWith("/replay")) {
+                replayExecution(engine, exchange, id.substring(0, id.length() - "/replay".length()));
+                return;
+            }
             if (id.isBlank() || id.contains("/")) {
                 sendText(exchange, 404, "Not Found");
                 return;
@@ -285,7 +291,13 @@ public class PaymentPipelineApp {
                     sendJson(exchange, 409, Map.of("error", "Not in PENDING state"));
                     return;
                 }
-                ExecutionHandle replay = engine.submit(new Intent(dl.goal(), dl.context()));
+                ExecutionHandle replay;
+                try {
+                    replay = engine.replayDeadLetter(dl);
+                } catch (ExecutionNotReplayableException e) {
+                    sendJson(exchange, 409, Map.of("error", "Original execution is " + e.state() + " and cannot be replayed yet"));
+                    return;
+                }
                 executionStore.updateDeadLetterState(dlId, DeadLetterReviewState.REPLAYED, null);
                 sendJson(exchange, 202, Map.of("accepted", true, "deadLetterId", dlId, "executionId", replay.executionId()));
                 return;
@@ -900,6 +912,26 @@ public class PaymentPipelineApp {
             return html.getBytes(StandardCharsets.UTF_8);
         } catch (IOException e) {
             return ("<h1>Failed to load UI: " + e.getMessage() + "</h1>").getBytes(StandardCharsets.UTF_8);
+        }
+    }
+
+    /** POST /api/executions/{id}/replay: 202 with the new executionId, 404 unknown, 409 not replayable. */
+    static void replayExecution(NexoraEngine engine, HttpExchange exchange, String id) throws IOException {
+        if (id.isBlank() || id.contains("/")) { sendText(exchange, 404, "Not Found"); return; }
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendText(exchange, 405, "Method Not Allowed"); return; }
+        try {
+            ExecutionHandle replay = engine.replay(id);
+            System.out.printf("%n  >>> REPLAY STARTED  executionId=%s  replayOf=%s%n", replay.executionId(), id);
+            sendJson(exchange, 202, Map.of("accepted", true, "executionId", replay.executionId(), "replayOf", id));
+        } catch (ExecutionNotFoundException e) {
+            sendJson(exchange, 404, Map.of("error", "Execution not found", "executionId", id));
+        } catch (ExecutionNotReplayableException e) {
+            sendJson(exchange, 409, Map.of(
+                    "error", "Only FAILED, TIMED_OUT, CANCELLED and COMPENSATED executions can be replayed",
+                    "executionId", id, "state", e.state().name()));
+        } catch (RuntimeException e) {
+            System.err.println("Replay failed executionId=" + id + ": " + e.getMessage());
+            sendJson(exchange, 500, Map.of("error", "Replay request failed", "executionId", id));
         }
     }
 
