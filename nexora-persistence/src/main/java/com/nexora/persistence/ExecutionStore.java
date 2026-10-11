@@ -15,6 +15,7 @@ public interface ExecutionStore extends AutoCloseable {
 
     void createExecution(ExecutionRecord record);
 
+    /** @throws IllegalStateException if the state could not be written */
     void updateExecution(String executionId, ExecutionState state, Instant completedAt);
 
     /** Upserts step-level state into the store. */

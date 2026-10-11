@@ -174,6 +174,15 @@ class JdbcExecutionHistoryTest {
     }
 
     @Test
+    void updateExecutionReportsStoreFailure() {
+        insert("a", "goal", ExecutionState.RUNNING, T0);
+        store.close();
+
+        assertThrows(IllegalStateException.class,
+                () -> store.updateExecution("a", ExecutionState.COMPLETED, T0.plusSeconds(1)));
+    }
+
+    @Test
     void historyQueriesReportStoreFailure() {
         store.close();
 

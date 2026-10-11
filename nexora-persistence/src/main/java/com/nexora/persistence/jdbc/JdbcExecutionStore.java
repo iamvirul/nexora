@@ -176,7 +176,9 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.setString(3, executionId);
             ps.executeUpdate();
         } catch (SQLException e) {
-            log.error("Failed to update execution state executionId={}", executionId, e);
+            // Thrown, not swallowed: the engine retries state writes, and a silently lost
+            // terminal state (e.g. stuck at COMPENSATING) would block replay forever.
+            throw new IllegalStateException("Failed to update execution state executionId=" + executionId, e);
         }
     }
 
