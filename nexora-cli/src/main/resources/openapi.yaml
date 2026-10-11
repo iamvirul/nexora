@@ -1,0 +1,1434 @@
+openapi: 3.1.0
+info:
+  title: Nexora Observe Server API
+  version: 0.3.0
+  summary: HTTP API of the `nexora observe` server.
+  description: |
+    Endpoints served by `nexora observe`: execution control and history, the dead letter queue,
+    cron schedules, health probes, Prometheus metrics, and the live process snapshot.
+
+    Authentication is not enforced yet ([#30](https://github.com/iamvirul/nexora/issues/30)).
+    Do not expose the observe server to untrusted networks.
+
+    This document is maintained by hand. Every route registered by the server must appear here;
+    `OpenApiSpecTest` fails the build when a route is added without updating this file.
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: /
+    description: The observe server this document was loaded from
+
+tags:
+  - name: Executions
+    description: Start, inspect, cancel and replay executions.
+  - name: Dead letters
+    description: Executions that failed permanently, for review, replay or resolution.
+  - name: Schedules
+    description: Recurring cron-based executions. Requires a persistence store.
+  - name: Webhooks
+    description: Audit log of webhook delivery attempts.
+  - name: Health
+    description: Liveness and readiness probes. Unauthenticated by design.
+  - name: Observability
+    description: Prometheus metrics and the live process snapshot.
+  - name: UI and docs
+    description: The dashboard, this document, and Swagger UI.
+
+paths:
+  /api/execute:
+    post:
+      tags: [Executions]
+      operationId: executeIntent
+      summary: Start an execution
+      description: |
+        Plans and starts the goal asynchronously and returns immediately with the new execution id.
+        A W3C `traceparent` header continues the caller's trace.
+      parameters:
+        - name: traceparent
+          in: header
+          required: false
+          description: W3C trace context, e.g. `00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01`.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecuteRequest'
+            examples:
+              payment:
+                summary: Goal with context and a webhook
+                value:
+                  goal: process payment
+                  context: { orderId: ORD-99, amount: 450 }
+                  webhookUrl: https://your-api.example.com/webhooks/nexora
+                  webhookEvents: [COMPLETED, FAILED]
+      responses:
+        '202':
+          description: Execution accepted and started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecuteAccepted'
+              examples:
+                accepted:
+                  value:
+                    accepted: true
+                    message: Execution accepted
+                    goal: process payment
+                    executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c
+        '400':
+          description: Invalid JSON or missing `goal`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecuteRejected'
+              examples:
+                missingGoal:
+                  value: { accepted: false, error: "Field 'goal' is required" }
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+
+  /api/executions:
+    get:
+      tags: [Executions]
+      operationId: listExecutions
+      summary: List execution history
+      description: |
+        Newest first (`startedAt` descending), cursor-paginated. Pass the returned `cursor` to get the
+        next page; it is `null` on the last page. `total` counts every match, not just this page.
+        Keep the same filters when following a cursor. Requires a persistence store.
+      parameters:
+        - name: status
+          in: query
+          description: One or more execution states, comma-separated, case-insensitive.
+          schema:
+            type: string
+            examples: [FAILED,CANCELLED]
+        - name: goal
+          in: query
+          description: Case-insensitive substring of the goal.
+          schema:
+            type: string
+            maxLength: 200
+        - name: from
+          in: query
+          description: Inclusive lower bound on `startedAt`, ISO-8601 with an offset. Encode `+` as `%2B`.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: Exclusive upper bound on `startedAt`, ISO-8601 with an offset.
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          description: Page size.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          description: The `cursor` value from the previous page.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: One page of executions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionPage'
+              examples:
+                page:
+                  value:
+                    data:
+                      - executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c
+                        traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+                        goal: process payment
+                        state: FAILED
+                        startedAt: '2026-10-01T10:00:00.123Z'
+                        completedAt: '2026-10-01T10:00:01.456Z'
+                        durationMs: 1333
+                    cursor: MjAyNi0xMC0wMVQxMDowMDowMC4xMjNafDRmM2ExYzJk
+                    total: 42
+        '400':
+          description: Invalid query parameter.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                badLimit:
+                  value: { error: limit must be an integer between 1 and 100 }
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+        '500':
+          $ref: '#/components/responses/HistoryQueryFailed'
+        '503':
+          $ref: '#/components/responses/PersistenceDisabled'
+
+  /api/executions/{executionId}:
+    parameters:
+      - $ref: '#/components/parameters/ExecutionId'
+    get:
+      tags: [Executions]
+      operationId: getExecution
+      summary: Get one execution with its steps
+      description: Step outputs are not persisted yet ([#32](https://github.com/iamvirul/nexora/issues/32)).
+      responses:
+        '200':
+          description: The execution, its context and step records.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionDetail'
+              examples:
+                failed:
+                  value:
+                    executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c
+                    traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+                    goal: process payment
+                    context: { orderId: ORD-99 }
+                    state: FAILED
+                    startedAt: '2026-10-01T10:00:00.123Z'
+                    completedAt: '2026-10-01T10:00:01.456Z'
+                    steps:
+                      - stepId: charge
+                        capabilityId: charge_card
+                        idempotencyKey: 0b8f6a2e-3c4d-4e5f-8a9b-1c2d3e4f5a6b
+                        state: FAILED
+                        failureCode: DECLINED
+                        failureMessage: card declined
+                        startedAt: '2026-10-01T10:00:00.200Z'
+                        completedAt: '2026-10-01T10:00:01.400Z'
+                        durationMs: 1200
+        '404':
+          $ref: '#/components/responses/ExecutionNotFound'
+        '500':
+          description: The store could not be queried.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                storeDown:
+                  value: { error: Execution detail query failed, executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c }
+        '503':
+          $ref: '#/components/responses/PersistenceDisabled'
+    delete:
+      tags: [Executions]
+      operationId: cancelExecution
+      summary: Cancel a running execution
+      description: |
+        Steps that have not started are never started, running steps are interrupted, and the
+        execution finishes as `CANCELLED`. Safe to repeat: a second cancel while it is stopping also
+        returns `200`.
+      responses:
+        '200':
+          description: Cancellation requested.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelAccepted'
+              examples:
+                cancelled:
+                  value: { cancelled: true, executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c }
+        '404':
+          $ref: '#/components/responses/ExecutionNotFound'
+        '409':
+          description: Already finished, or running on another engine instance.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                finished:
+                  value: { error: Execution has already finished, executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c }
+                notOwned:
+                  value: { error: Execution is not running on this engine instance, executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c }
+        '500':
+          description: The store could not be queried.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                failed:
+                  value: { error: Cancel request failed, executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c }
+        '503':
+          description: The cancel request timed out.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                timedOut:
+                  value: { error: Cancel request timed out, executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c }
+
+  /api/executions/{executionId}/replay:
+    parameters:
+      - $ref: '#/components/parameters/ExecutionId'
+    post:
+      tags: [Executions]
+      operationId: replayExecution
+      summary: Replay an unsuccessful execution
+      description: |
+        Re-runs a `FAILED`, `TIMED_OUT`, `CANCELLED` or `COMPENSATED` execution with the same goal and
+        context under a new execution id. The replay's context carries the original id as `_replayOf`.
+        Completed steps reuse their idempotency keys unless the original was compensated.
+      responses:
+        '202':
+          description: Replay started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplayAccepted'
+              examples:
+                started:
+                  value:
+                    accepted: true
+                    executionId: 9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+                    replayOf: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c
+        '404':
+          $ref: '#/components/responses/ExecutionNotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+        '409':
+          description: The execution's state does not allow a replay.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotReplayable'
+              examples:
+                completed:
+                  value:
+                    error: Only FAILED, TIMED_OUT, CANCELLED and COMPENSATED executions can be replayed
+                    executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c
+                    state: COMPLETED
+        '500':
+          description: The store could not be queried.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                failed:
+                  value: { error: Replay request failed, executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c }
+        '503':
+          $ref: '#/components/responses/PersistenceDisabled'
+
+  /api/webhook-deliveries/{executionId}:
+    get:
+      tags: [Webhooks]
+      operationId: listWebhookDeliveries
+      summary: Webhook delivery attempts for an execution
+      parameters:
+        - $ref: '#/components/parameters/ExecutionId'
+      responses:
+        '200':
+          description: Every delivery attempt, possibly empty.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WebhookDelivery'
+              examples:
+                attempts:
+                  value:
+                    - deliveryId: 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
+                      executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c
+                      url: https://your-api.example.com/webhooks/nexora
+                      statusCode: 200
+                      attempt: 1
+                      successful: true
+                      timestamp: '2026-10-01T10:00:02Z'
+                      errorMessage: null
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+        '500':
+          description: The store could not be queried.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InternalError'
+              examples:
+                failed:
+                  value: { error: internal, details: Failed to query webhook deliveries }
+        '503':
+          $ref: '#/components/responses/PersistenceDisabled'
+
+  /api/dead-letters:
+    get:
+      tags: [Dead letters]
+      operationId: listDeadLetters
+      summary: List dead letters
+      parameters:
+        - name: state
+          in: query
+          description: Review state to filter by, or `ALL`.
+          schema:
+            type: string
+            enum: [PENDING, RESOLVED, REPLAYED, ALL]
+            default: PENDING
+        - name: page
+          in: query
+          description: Zero-based page number.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          description: Page size; values above 100 are capped at 100.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: One page of dead letters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeadLetterPage'
+              examples:
+                pending:
+                  value:
+                    items:
+                      - id: 6d5c4b3a-2f1e-4d0c-9b8a-7f6e5d4c3b2a
+                        executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c
+                        goal: process payment
+                        context: { orderId: ORD-99 }
+                        failureCode: STEP_FAILED
+                        failureMessage: Payment gateway returned a hard decline
+                        failedAt: '2026-10-01T10:00:01.456Z'
+                        reviewState: PENDING
+                        resolveReason: null
+                    page: 0
+                    size: 20
+        '400':
+          description: Unknown `state` value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                badState:
+                  value: { error: "Invalid state 'OPEN'. Allowed: PENDING, RESOLVED, REPLAYED, ALL" }
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+        '503':
+          $ref: '#/components/responses/PersistenceDisabled'
+
+  /api/dead-letters/{deadLetterId}/replay:
+    parameters:
+      - $ref: '#/components/parameters/DeadLetterId'
+    post:
+      tags: [Dead letters]
+      operationId: replayDeadLetter
+      summary: Replay a dead letter
+      description: |
+        Replays the original execution (see `POST /api/executions/{executionId}/replay`) and marks
+        the dead letter `REPLAYED`. Falls back to the dead letter's own goal and context when the
+        original execution record no longer exists.
+      responses:
+        '202':
+          description: Replay started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeadLetterReplayAccepted'
+              examples:
+                started:
+                  value:
+                    accepted: true
+                    deadLetterId: 6d5c4b3a-2f1e-4d0c-9b8a-7f6e5d4c3b2a
+                    executionId: 9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+        '404':
+          $ref: '#/components/responses/DeadLetterNotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedJson'
+        '409':
+          description: Not `PENDING`, or the original execution is still running or compensating.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notPending:
+                  value: { error: Dead letter is not in PENDING state }
+                compensating:
+                  value: { error: Original execution is COMPENSATING and cannot be replayed yet }
+        '503':
+          $ref: '#/components/responses/PersistenceDisabled'
+
+  /api/dead-letters/{deadLetterId}/resolve:
+    parameters:
+      - $ref: '#/components/parameters/DeadLetterId'
+    post:
+      tags: [Dead letters]
+      operationId: resolveDeadLetter
+      summary: Mark a dead letter resolved
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveRequest'
+            examples:
+              withReason:
+                value: { reason: 'False positive, investigated' }
+      responses:
+        '200':
+          description: Dead letter marked `RESOLVED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolveAccepted'
+              examples:
+                resolved:
+                  value: { resolved: true, deadLetterId: 6d5c4b3a-2f1e-4d0c-9b8a-7f6e5d4c3b2a }
+        '404':
+          $ref: '#/components/responses/DeadLetterNotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedJson'
+        '503':
+          $ref: '#/components/responses/PersistenceDisabled'
+
+  /api/schedules:
+    get:
+      tags: [Schedules]
+      operationId: listSchedules
+      summary: List all cron schedules
+      responses:
+        '200':
+          description: Active and inactive schedules.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleList'
+              examples:
+                nightly:
+                  value:
+                    schedules:
+                      - id: 18af1c72-3b4c-4d5e-8f6a-7b8c9d0e1f2a
+                        cronExpression: 0 0 * * *
+                        goal: nightly cleanup
+                        missedFirePolicy: FIRE_ONCE
+                        active: true
+                        nextFireAt: '2026-10-02T00:00:00Z'
+                        lastFiredAt: null
+                        lastStatus: NEVER_RUN
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+        '500':
+          $ref: '#/components/responses/ScheduleFailure'
+        '503':
+          $ref: '#/components/responses/SchedulingUnavailable'
+    post:
+      tags: [Schedules]
+      operationId: createSchedule
+      summary: Register a cron schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateScheduleRequest'
+            examples:
+              nightly:
+                value: { cronExpression: 0 0 * * *, goal: nightly cleanup, missedFirePolicy: SKIP }
+      responses:
+        '201':
+          description: Schedule registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleCreated'
+              examples:
+                created:
+                  value: { id: 18af1c72-3b4c-4d5e-8f6a-7b8c9d0e1f2a, nextFireAt: '2026-10-02T00:00:00Z' }
+        '400':
+          description: Invalid JSON, missing fields, bad cron expression, or unknown policy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingFields:
+                  value: { error: cronExpression and goal are required }
+                badPolicy:
+                  value: { error: 'Invalid missedFirePolicy: SOMETIMES' }
+        '500':
+          $ref: '#/components/responses/ScheduleFailure'
+        '503':
+          $ref: '#/components/responses/SchedulingUnavailable'
+
+  /api/schedules/{scheduleId}:
+    delete:
+      tags: [Schedules]
+      operationId: cancelSchedule
+      summary: Cancel a cron schedule
+      parameters:
+        - name: scheduleId
+          in: path
+          required: true
+          description: Schedule id from `GET /api/schedules`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Schedule cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleCancelled'
+              examples:
+                cancelled:
+                  value: { cancelled: true, id: 18af1c72-3b4c-4d5e-8f6a-7b8c9d0e1f2a }
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+        '500':
+          $ref: '#/components/responses/ScheduleFailure'
+        '503':
+          $ref: '#/components/responses/SchedulingUnavailable'
+
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: liveness
+      summary: Liveness probe
+      description: '`200` while the process is serving HTTP. Checks nothing else.'
+      responses:
+        '200':
+          description: Process is up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveStatus'
+              examples:
+                up:
+                  value: { status: UP }
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: readiness
+      summary: Readiness probe
+      description: |
+        `200` when persistence, plugins and the executor are all `UP`; `503` with the per-check
+        breakdown otherwise. Capability circuit state does not affect readiness.
+      responses:
+        '200':
+          description: Ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              examples:
+                ready:
+                  value: { status: UP, checks: { persistence: UP, plugins: UP, executor: UP } }
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+        '503':
+          description: Not ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              examples:
+                dbDown:
+                  value: { status: DOWN, checks: { persistence: DOWN, plugins: UP, executor: UP } }
+
+  /health:
+    get:
+      tags: [Health]
+      operationId: healthSummary
+      summary: Health summary
+      description: Readiness plus the Nexora version and capability circuit states (informational).
+      responses:
+        '200':
+          description: Ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthSummary'
+              examples:
+                up:
+                  value:
+                    status: UP
+                    version: 0.3.0
+                    checks: { persistence: UP, plugins: UP, executor: UP }
+                    capabilities:
+                      - capabilityId: charge_card
+                        state: CLOSED
+                        sampleCount: 120
+                        errorRate: 0.01
+                        p99Latency: PT0.25S
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+        '503':
+          description: Not ready; same body shape.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthSummary'
+              examples:
+                down:
+                  value:
+                    status: DOWN
+                    version: 0.3.0
+                    checks: { persistence: DOWN, plugins: UP, executor: UP }
+                    capabilities: []
+
+  /metrics:
+    get:
+      tags: [Observability]
+      operationId: prometheusMetrics
+      summary: Prometheus metrics
+      responses:
+        '200':
+          description: Prometheus text exposition format.
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                sample:
+                  value: |
+                    # TYPE nexora_plan_started_total counter
+                    nexora_plan_started_total 42.0
+                    # TYPE nexora_ready gauge
+                    nexora_ready 1.0
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+
+  /api/process:
+    get:
+      tags: [Observability]
+      operationId: processSnapshot
+      summary: Live process snapshot
+      description: |
+        In-memory view of recent executions with per-step timelines, as streamed to the dashboard
+        over WebSocket. Not persisted; use `/api/executions` for history.
+      responses:
+        '200':
+          description: Current snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessSnapshot'
+              examples:
+                running:
+                  value:
+                    generatedAtMs: 1791636000000
+                    activeExecutions: 1
+                    executions:
+                      - executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c
+                        traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+                        status: RUNNING
+                        startedAtMs: 1791635999000
+                        finishedAtMs: 0
+                        totalSteps: 2
+                        runningSteps: 1
+                        completedSteps: 1
+                        failedSteps: 0
+                        skippedSteps: 0
+                        steps:
+                          - stepId: validate
+                            capabilityId: validate_order
+                            status: COMPLETED
+                            startedAtMs: 1791635999010
+                            finishedAtMs: 1791635999040
+                            elapsedMs: 30
+                            failureCode: null
+                            failureMessage: null
+                        timeline:
+                          - occurredAtMs: 1791635999000
+                            type: plan_started
+                            message: Execution started
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+
+  /:
+    get:
+      tags: [UI and docs]
+      operationId: dashboard
+      summary: Process observer dashboard
+      description: The live dashboard. Also served at `/index.html`.
+      responses:
+        '200':
+          description: Dashboard HTML.
+          content:
+            text/html:
+              schema:
+                type: string
+              examples:
+                page:
+                  value: <!DOCTYPE html><html>...</html>
+        '404':
+          $ref: '#/components/responses/NotFoundText'
+
+  /openapi.yaml:
+    get:
+      tags: [UI and docs]
+      operationId: openApiDocument
+      summary: This OpenAPI document
+      responses:
+        '200':
+          description: OpenAPI 3.1 document.
+          content:
+            application/yaml:
+              schema:
+                type: string
+              examples:
+                document:
+                  value: 'openapi: 3.1.0'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+
+  /docs:
+    get:
+      tags: [UI and docs]
+      operationId: swaggerUi
+      summary: Swagger UI for this document
+      description: Served from assets bundled in the server; makes no external requests.
+      responses:
+        '200':
+          description: Swagger UI HTML.
+          content:
+            text/html:
+              schema:
+                type: string
+              examples:
+                page:
+                  value: <!DOCTYPE html><html>...</html>
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+
+  /docs/{asset}:
+    get:
+      tags: [UI and docs]
+      operationId: swaggerUiAsset
+      summary: Swagger UI static asset
+      parameters:
+        - name: asset
+          in: path
+          required: true
+          description: One of the bundled Swagger UI files.
+          schema:
+            type: string
+            enum: [swagger-ui.css, swagger-ui-bundle.js, swagger-ui-init.js, favicon-32x32.png]
+      responses:
+        '200':
+          description: The asset.
+          content:
+            text/css:
+              schema:
+                type: string
+            text/javascript:
+              schema:
+                type: string
+            image/png:
+              schema:
+                type: string
+                contentMediaType: image/png
+              examples:
+                icon:
+                  value: (binary PNG)
+        '404':
+          $ref: '#/components/responses/NotFoundText'
+
+components:
+  parameters:
+    ExecutionId:
+      name: executionId
+      in: path
+      required: true
+      description: Execution id, as returned by `POST /api/execute` or listed by `GET /api/executions`.
+      schema:
+        type: string
+      example: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c
+    DeadLetterId:
+      name: deadLetterId
+      in: path
+      required: true
+      description: Dead letter id from `GET /api/dead-letters`.
+      schema:
+        type: string
+      example: 6d5c4b3a-2f1e-4d0c-9b8a-7f6e5d4c3b2a
+
+  responses:
+    MethodNotAllowedText:
+      description: HTTP method not supported on this path.
+      headers:
+        Allow:
+          description: Supported methods, sent by some routes.
+          schema:
+            type: string
+      content:
+        text/plain:
+          schema:
+            type: string
+          examples:
+            notAllowed:
+              value: Method Not Allowed
+    MethodNotAllowedJson:
+      description: HTTP method not supported on this path.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            notAllowed:
+              value: { error: Method Not Allowed }
+    NotFoundText:
+      description: Unknown path.
+      content:
+        text/plain:
+          schema:
+            type: string
+          examples:
+            notFound:
+              value: Not Found
+    PersistenceDisabled:
+      description: The server has no persistence store configured.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            disabled:
+              value: { error: Persistence disabled }
+    ExecutionNotFound:
+      description: No execution with this id.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            notFound:
+              value: { error: Execution not found, executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c }
+    DeadLetterNotFound:
+      description: No dead letter with this id.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            notFound:
+              value: { error: Dead letter not found }
+    HistoryQueryFailed:
+      description: The store could not be queried.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            failed:
+              value: { error: Execution history query failed }
+    SchedulingUnavailable:
+      description: Cron scheduling needs a persistence store.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            noStore:
+              value: { error: Cron scheduling requires a persistence store. Call builder.withExecutionStore(...) first. }
+    ScheduleFailure:
+      description: Unexpected scheduler failure.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            failed:
+              value: { error: Failed to persist schedule }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable reason.
+        executionId:
+          type: string
+          description: Present on execution-scoped errors.
+      additionalProperties: true
+    InternalError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          const: internal
+        details:
+          type: [string, 'null']
+    ExecutionState:
+      type: string
+      description: Persisted execution state.
+      enum: [RUNNING, COMPLETED, FAILED, TIMED_OUT, CANCELLED, COMPENSATING, COMPENSATED]
+    ExecutionStatus:
+      type: string
+      description: Engine-level execution status, used to select webhook events.
+      enum: [PENDING, RUNNING, COMPLETED, FAILED, TIMED_OUT, CANCELLED]
+    StepState:
+      type: string
+      enum: [PENDING, RUNNING, COMPLETED, FAILED, SKIPPED, COMPENSATING, COMPENSATED, COMPENSATION_FAILED]
+    HealthStatus:
+      type: string
+      enum: [UP, DOWN]
+
+    ExecuteRequest:
+      type: object
+      required: [goal]
+      properties:
+        goal:
+          type: string
+          minLength: 1
+        context:
+          type: object
+          additionalProperties: true
+        webhookUrl:
+          type: string
+          format: uri
+        webhookEvents:
+          type: array
+          description: Terminal statuses that trigger the webhook. Defaults to all terminal statuses.
+          items:
+            $ref: '#/components/schemas/ExecutionStatus'
+    ExecuteAccepted:
+      type: object
+      required: [accepted, message, goal, executionId]
+      properties:
+        accepted:
+          type: boolean
+          const: true
+        message:
+          type: string
+        goal:
+          type: string
+        executionId:
+          type: string
+    ExecuteRejected:
+      type: object
+      required: [accepted, error]
+      properties:
+        accepted:
+          type: boolean
+          const: false
+        error:
+          type: string
+
+    ExecutionSummary:
+      type: object
+      required: [executionId, goal, state, startedAt]
+      properties:
+        executionId:
+          type: string
+        traceId:
+          type: [string, 'null']
+        goal:
+          type: string
+        state:
+          $ref: '#/components/schemas/ExecutionState'
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: [string, 'null']
+          format: date-time
+        durationMs:
+          type: [integer, 'null']
+          description: '`null` while running.'
+    ExecutionPage:
+      type: object
+      required: [data, cursor, total]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExecutionSummary'
+        cursor:
+          type: [string, 'null']
+          description: Opaque token for the next page; `null` on the last page.
+        total:
+          type: integer
+          minimum: 0
+    StepRecord:
+      type: object
+      required: [stepId, capabilityId, state, durationMs]
+      properties:
+        stepId:
+          type: string
+        capabilityId:
+          type: string
+        idempotencyKey:
+          type: [string, 'null']
+        state:
+          $ref: '#/components/schemas/StepState'
+        failureCode:
+          type: [string, 'null']
+        failureMessage:
+          type: [string, 'null']
+        startedAt:
+          type: [string, 'null']
+          format: date-time
+        completedAt:
+          type: [string, 'null']
+          format: date-time
+        durationMs:
+          type: integer
+    ExecutionDetail:
+      type: object
+      required: [executionId, goal, context, state, startedAt, steps]
+      properties:
+        executionId:
+          type: string
+        traceId:
+          type: [string, 'null']
+        goal:
+          type: string
+        context:
+          type: object
+          additionalProperties: true
+        state:
+          $ref: '#/components/schemas/ExecutionState'
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: [string, 'null']
+          format: date-time
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/StepRecord'
+    CancelAccepted:
+      type: object
+      required: [cancelled, executionId]
+      properties:
+        cancelled:
+          type: boolean
+          const: true
+        executionId:
+          type: string
+    ReplayAccepted:
+      type: object
+      required: [accepted, executionId, replayOf]
+      properties:
+        accepted:
+          type: boolean
+          const: true
+        executionId:
+          type: string
+          description: Id of the new execution.
+        replayOf:
+          type: string
+          description: Id of the execution being replayed.
+    NotReplayable:
+      type: object
+      required: [error, executionId, state]
+      properties:
+        error:
+          type: string
+        executionId:
+          type: string
+        state:
+          $ref: '#/components/schemas/ExecutionState'
+
+    WebhookDelivery:
+      type: object
+      required: [deliveryId, executionId, url, statusCode, attempt, successful, timestamp]
+      properties:
+        deliveryId:
+          type: string
+        executionId:
+          type: string
+        url:
+          type: string
+        statusCode:
+          type: integer
+        attempt:
+          type: integer
+        successful:
+          type: boolean
+        timestamp:
+          type: string
+          format: date-time
+        errorMessage:
+          type: [string, 'null']
+
+    DeadLetter:
+      type: object
+      required: [id, executionId, goal, failedAt, reviewState]
+      properties:
+        id:
+          type: string
+        executionId:
+          type: string
+        goal:
+          type: string
+        context:
+          type: object
+          additionalProperties: true
+        failureCode:
+          type: [string, 'null']
+        failureMessage:
+          type: [string, 'null']
+        failedAt:
+          type: string
+          format: date-time
+        reviewState:
+          type: string
+          enum: [PENDING, RESOLVED, REPLAYED]
+        resolveReason:
+          type: [string, 'null']
+    DeadLetterPage:
+      type: object
+      required: [items, page, size]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeadLetter'
+        page:
+          type: integer
+        size:
+          type: integer
+    DeadLetterReplayAccepted:
+      type: object
+      required: [accepted, deadLetterId, executionId]
+      properties:
+        accepted:
+          type: boolean
+          const: true
+        deadLetterId:
+          type: string
+        executionId:
+          type: string
+          description: Id of the new execution.
+    ResolveRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+    ResolveAccepted:
+      type: object
+      required: [resolved, deadLetterId]
+      properties:
+        resolved:
+          type: boolean
+          const: true
+        deadLetterId:
+          type: string
+
+    Schedule:
+      type: object
+      required: [id, cronExpression, goal, missedFirePolicy, active, nextFireAt, lastStatus]
+      properties:
+        id:
+          type: string
+        cronExpression:
+          type: string
+          description: 5-field UNIX cron expression.
+        goal:
+          type: string
+        missedFirePolicy:
+          $ref: '#/components/schemas/MissedFirePolicy'
+        active:
+          type: boolean
+        nextFireAt:
+          type: string
+          format: date-time
+        lastFiredAt:
+          type: [string, 'null']
+          format: date-time
+        lastStatus:
+          type: string
+          enum: [NEVER_RUN, FIRED, FAILED, MISSED, CANCELED]
+    MissedFirePolicy:
+      type: string
+      enum: [SKIP, FIRE_ONCE, FIRE_ALL]
+      default: FIRE_ONCE
+    ScheduleList:
+      type: object
+      required: [schedules]
+      properties:
+        schedules:
+          type: array
+          items:
+            $ref: '#/components/schemas/Schedule'
+    CreateScheduleRequest:
+      type: object
+      required: [cronExpression, goal]
+      properties:
+        cronExpression:
+          type: string
+        goal:
+          type: string
+        missedFirePolicy:
+          $ref: '#/components/schemas/MissedFirePolicy'
+    ScheduleCreated:
+      type: object
+      required: [id, nextFireAt]
+      properties:
+        id:
+          type: string
+        nextFireAt:
+          type: string
+          format: date-time
+    ScheduleCancelled:
+      type: object
+      required: [cancelled, id]
+      properties:
+        cancelled:
+          type: boolean
+          const: true
+        id:
+          type: string
+
+    LiveStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: UP
+    ReadinessChecks:
+      type: object
+      required: [persistence, plugins, executor]
+      properties:
+        persistence:
+          $ref: '#/components/schemas/HealthStatus'
+        plugins:
+          $ref: '#/components/schemas/HealthStatus'
+        executor:
+          $ref: '#/components/schemas/HealthStatus'
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          $ref: '#/components/schemas/HealthStatus'
+        checks:
+          $ref: '#/components/schemas/ReadinessChecks'
+    CapabilitySnapshot:
+      type: object
+      required: [capabilityId, state, sampleCount, errorRate, p99Latency]
+      properties:
+        capabilityId:
+          type: string
+        state:
+          type: string
+          enum: [CLOSED, OPEN, HALF_OPEN]
+        sampleCount:
+          type: integer
+        errorRate:
+          type: number
+        p99Latency:
+          type: string
+          description: ISO-8601 duration, e.g. `PT0.25S`.
+    HealthSummary:
+      type: object
+      required: [status, version, checks, capabilities]
+      properties:
+        status:
+          $ref: '#/components/schemas/HealthStatus'
+        version:
+          type: string
+        checks:
+          $ref: '#/components/schemas/ReadinessChecks'
+        capabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/CapabilitySnapshot'
+
+    ProcessSnapshot:
+      type: object
+      required: [generatedAtMs, activeExecutions, executions]
+      properties:
+        generatedAtMs:
+          type: integer
+          description: Epoch milliseconds.
+        activeExecutions:
+          type: integer
+        executions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExecutionSnapshot'
+    ExecutionSnapshot:
+      type: object
+      properties:
+        executionId:
+          type: string
+        traceId:
+          type: [string, 'null']
+        status:
+          type: string
+          enum: [RUNNING, COMPLETED, FAILED, TIMED_OUT, CANCELLED]
+        startedAtMs:
+          type: integer
+        finishedAtMs:
+          type: integer
+          description: 0 while running.
+        totalSteps:
+          type: integer
+        runningSteps:
+          type: integer
+        completedSteps:
+          type: integer
+        failedSteps:
+          type: integer
+        skippedSteps:
+          type: integer
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/StepSnapshot'
+        timeline:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimelineEntry'
+    StepSnapshot:
+      type: object
+      properties:
+        stepId:
+          type: string
+        capabilityId:
+          type: string
+        status:
+          type: string
+        startedAtMs:
+          type: integer
+        finishedAtMs:
+          type: integer
+        elapsedMs:
+          type: integer
+        failureCode:
+          type: [string, 'null']
+        failureMessage:
+          type: [string, 'null']
+    TimelineEntry:
+      type: object
+      properties:
+        occurredAtMs:
+          type: integer
+        type:
+          type: string
+        message:
+          type: string

@@ -1,0 +1,7 @@
+# Lint config for the observe server's OpenAPI document (nexora-cli/src/main/resources/openapi.yaml).
+extends:
+  - recommended
+
+rules:
+  # The observe server has no authentication yet; re-enable once #30 adds a security scheme.
+  security-defined: off
