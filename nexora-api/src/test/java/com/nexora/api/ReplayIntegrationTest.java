@@ -43,6 +43,7 @@ class ReplayIntegrationTest {
     private final Map<String, Map<String, String>> keysSeen = new ConcurrentHashMap<>();
     private final AtomicInteger chargeCalls = new AtomicInteger();
     private final AtomicInteger failChargeTimes = new AtomicInteger(1);
+    private volatile Runnable releaseHook = () -> {};
 
     private JdbcExecutionStore store;
     private NexoraEngine engine;
@@ -142,6 +143,46 @@ class ReplayIntegrationTest {
     }
 
     @Test
+    void replayIsRejectedWhileCompensationIsStillRunning() throws Exception {
+        CountDownLatch releaseStarted = new CountDownLatch(1);
+        CountDownLatch finishRelease = new CountDownLatch(1);
+        releaseHook = () -> {
+            releaseStarted.countDown();
+            awaitQuietly(finishRelease);
+        };
+        engine = buildEngine(true);
+        ExecutionResult original = run();
+        assertThat(releaseStarted.await(WAIT_SECONDS, TimeUnit.SECONDS)).as("compensation started").isTrue();
+
+        // Whatever the store says mid-compensation, the engine still owns this run.
+        assertThatThrownBy(() -> engine.replay(original.executionId()))
+                .isInstanceOf(ExecutionNotReplayableException.class)
+                .satisfies(e -> assertThat(((ExecutionNotReplayableException) e).state()).isEqualTo(ExecutionState.RUNNING));
+
+        finishRelease.countDown();
+        awaitState(original.executionId(), ExecutionState.COMPENSATED);
+        awaitCondition(() -> {
+            try {
+                engine.replay(original.executionId());
+                return true;
+            } catch (ExecutionNotReplayableException stillRunning) {
+                return false;
+            }
+        });
+    }
+
+    @Test
+    void compensatedStateWriteIsRetriedAfterTransientStoreFailure() throws Exception {
+        FlakyExecutionStore flaky = new FlakyExecutionStore(store);
+        flaky.failNextUpdates(ExecutionState.COMPENSATED, 2);
+        engine = buildEngine(true, flaky);
+
+        ExecutionResult original = run();
+
+        awaitState(original.executionId(), ExecutionState.COMPENSATED);
+    }
+
+    @Test
     void replayOfCompletedExecutionIsRejected() throws Exception {
         failChargeTimes.set(0);
         engine = buildEngine(false);
@@ -213,8 +254,12 @@ class ReplayIntegrationTest {
     }
 
     private NexoraEngine buildEngine(boolean sagaEnabled) {
+        return buildEngine(sagaEnabled, store);
+    }
+
+    private NexoraEngine buildEngine(boolean sagaEnabled, com.nexora.persistence.ExecutionStore executionStore) {
         return NexoraEngine.builder()
-                .withExecutionStore(store)
+                .withExecutionStore(executionStore)
                 .withSagaEnabled(sagaEnabled)
                 .withPlugin(plugin())
                 .withStepDefinition(StepDefinition.builder("reserve", "reserve")
@@ -240,7 +285,10 @@ class ReplayIntegrationTest {
                             recordKey(req.executionId(), req.stepId(), req.idempotencyKey());
                             return CapabilityResult.success("reserved");
                         }),
-                        provider("release", req -> CapabilityResult.success("released")),
+                        provider("release", req -> {
+                            releaseHook.run();
+                            return CapabilityResult.success("released");
+                        }),
                         provider("charge", req -> {
                             recordKey(req.executionId(), req.stepId(), req.idempotencyKey());
                             chargeCalls.incrementAndGet();
@@ -251,6 +299,14 @@ class ReplayIntegrationTest {
             }
             @Override public void shutdown() {}
         };
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            latch.await(WAIT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void recordKey(String executionId, String stepId, String key) {
