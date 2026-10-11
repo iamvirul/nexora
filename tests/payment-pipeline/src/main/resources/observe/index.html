@@ -585,6 +585,7 @@
     .sched-flash.err { color: var(--red); }
 
     .hist-row { cursor: pointer; }
+    .hist-row:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
     .hist-row.open td { background: var(--surface2); }
     .hist-detail td { background: var(--surface2); padding: 4px 8px 12px 24px !important; }
     .hist-steps { width: 100%; border-collapse: collapse; font-size: 11px; }
@@ -718,6 +719,7 @@
               <option value="FAILED">FAILED</option>
               <option value="TIMED_OUT">TIMED_OUT</option>
               <option value="CANCELLED">CANCELLED</option>
+              <option value="COMPENSATING">COMPENSATING</option>
               <option value="COMPENSATED">COMPENSATED</option>
             </select>
           </div>
@@ -1148,6 +1150,13 @@ const histStatus = document.getElementById('hist-status');
 const histGoal   = document.getElementById('hist-goal');
 let histCursor = null;
 let histPages  = 0;
+// Filters last submitted with Search. Paging and refresh use these, never half-edited inputs,
+// so a cursor is always sent with the filters it was issued for.
+let histApplied = { status: '', goal: '' };
+// Each request takes a sequence number; only the newest may render. A stale refresh can't
+// overwrite a newer search, and Load more can't run twice at once.
+let histSeq  = 0;
+let histBusy = false;
 
 // History values come from the store, so escape for attributes too, not just text.
 function escAttr(v) {
@@ -1163,13 +1172,18 @@ function histMessage(text) {
 }
 
 async function loadHistory(reset) {
+  if (!reset && (histBusy || !histCursor)) return;
+  const seq = ++histSeq;
+  histBusy = true;
+  histMore.disabled = true;
   const params = new URLSearchParams({ limit: String(HIST_PAGE_SIZE) });
-  if (histStatus.value) params.set('status', histStatus.value);
-  if (histGoal.value.trim()) params.set('goal', histGoal.value.trim());
-  if (!reset && histCursor) params.set('cursor', histCursor);
+  if (histApplied.status) params.set('status', histApplied.status);
+  if (histApplied.goal) params.set('goal', histApplied.goal);
+  if (!reset) params.set('cursor', histCursor);
   try {
     const r = await fetch('/api/executions?' + params);
     const p = await r.json().catch(() => ({}));
+    if (seq !== histSeq) return; // superseded by a newer search or refresh
     if (r.status === 503) {
       histBody.innerHTML = histMessage('Persistence is disabled. Configure an execution store to keep history.');
       histCount.textContent = '';
@@ -1190,13 +1204,20 @@ async function loadHistory(reset) {
     histCount.textContent = `(${p.total})`;
     histFlash.textContent = '';
   } catch (ex) {
+    if (seq !== histSeq) return;
     histFlash.className = 'sched-flash err';
     histFlash.textContent = 'History failed: ' + ex.message;
+  } finally {
+    if (seq === histSeq) {
+      histBusy = false;
+      histMore.disabled = false;
+    }
   }
 }
 
 function histRow(e) {
-  return `<tr class="hist-row" data-id="${escAttr(e.executionId)}">
+  return `<tr class="hist-row" data-id="${escAttr(e.executionId)}" tabindex="0" role="button"
+      aria-expanded="false" aria-label="Show steps for execution ${escAttr(e.executionId)}">
     <td class="sched-time">${esc(fmtDateTime(e.startedAt))}</td>
     <td class="sched-goal">${esc(e.goal)}</td>
     <td><span class="badge ${sc(e.state)}">${esc(e.state)}</span></td>
@@ -1210,9 +1231,11 @@ async function toggleHistDetail(row) {
   if (next && next.classList.contains('hist-detail')) {
     next.remove();
     row.classList.remove('open');
+    row.setAttribute('aria-expanded', 'false');
     return;
   }
   row.classList.add('open');
+  row.setAttribute('aria-expanded', 'true');
   row.insertAdjacentHTML('afterend', `<tr class="hist-detail"><td colspan="${HIST_COLUMNS}">Loading steps…</td></tr>`);
   const cell = row.nextElementSibling.firstElementChild;
   try {
@@ -1241,9 +1264,17 @@ histBody.addEventListener('click', e => {
   const row = e.target.closest('.hist-row');
   if (row) toggleHistDetail(row);
 });
+histBody.addEventListener('keydown', e => {
+  const row = e.target.closest('.hist-row');
+  if (row && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault(); // Space would otherwise scroll the page
+    toggleHistDetail(row);
+  }
+});
 histMore.addEventListener('click', () => loadHistory(false));
 document.getElementById('hist-form').addEventListener('submit', e => {
   e.preventDefault();
+  histApplied = { status: histStatus.value, goal: histGoal.value.trim() };
   loadHistory(true);
 });
 
