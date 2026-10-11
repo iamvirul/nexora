@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexora.persistence.DeadLetterRecord;
 import com.nexora.persistence.DeadLetterReviewState;
+import com.nexora.persistence.ExecutionCursor;
+import com.nexora.persistence.ExecutionFilter;
 import com.nexora.persistence.ExecutionRecord;
 import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.ExecutionStore;
@@ -23,7 +25,9 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -79,6 +83,9 @@ public final class JdbcExecutionStore implements ExecutionStore {
                     completed_at  TIMESTAMP
                 )
             """);
+            // Backs the history API's keyset pagination (ORDER BY started_at DESC, execution_id DESC).
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_nexora_executions_started "
+                    + "ON nexora_executions (started_at, execution_id)");
             stmt.execute("""
                 CREATE TABLE IF NOT EXISTS nexora_steps (
                     execution_id     VARCHAR(36)  NOT NULL,
@@ -263,8 +270,8 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 return Optional.of(withSteps(exec));
             }
         } catch (Exception e) {
-            log.error("Failed to find execution executionId={}", executionId, e);
-            return Optional.empty();
+            // Never report a failed lookup as "not found": callers would answer 404 for an outage.
+            throw new IllegalStateException("Failed to find execution executionId=" + executionId, e);
         }
     }
 
@@ -573,6 +580,107 @@ public final class JdbcExecutionStore implements ExecutionStore {
         } catch (SQLException e) {
             log.warn("Persistence health check failed sqlState={}", e.getSQLState(), e);
             return false;
+        }
+    }
+
+    private static final String HISTORY_COLUMNS =
+            "execution_id, trace_id, goal, context_json, state, started_at, completed_at";
+
+    @Override
+    public synchronized List<ExecutionRecord> findByFilter(ExecutionFilter filter) {
+        HistoryQuery where = HistoryQuery.from(filter, true);
+        String sql = "SELECT " + HISTORY_COLUMNS + " FROM nexora_executions" + where.clause()
+                + " ORDER BY started_at DESC, execution_id DESC LIMIT ?";
+        List<ExecutionRecord> results = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            int next = where.bind(ps);
+            ps.setInt(next, filter.limit());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    results.add(mapExecution(rs));
+                }
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to query execution history", e);
+        }
+        return results;
+    }
+
+    @Override
+    public synchronized long count(ExecutionFilter filter) {
+        HistoryQuery where = HistoryQuery.from(filter, false);
+        String sql = "SELECT COUNT(*) FROM nexora_executions" + where.clause();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            where.bind(ps);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getLong(1);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to count execution history", e);
+        }
+    }
+
+    /**
+     * WHERE clause for the history queries. The SQL text is assembled only from the constant
+     * fragments below; every user-supplied value is a bound parameter.
+     */
+    private record HistoryQuery(List<String> conditions, List<Object> params) {
+
+        private static final char LIKE_ESCAPE = '\\';
+
+        static HistoryQuery from(ExecutionFilter filter, boolean includeCursor) {
+            List<String> conditions = new ArrayList<>();
+            List<Object> params = new ArrayList<>();
+            if (!filter.states().isEmpty()) {
+                conditions.add("state IN (" + String.join(", ", Collections.nCopies(filter.states().size(), "?")) + ")");
+                filter.states().stream().map(Enum::name).sorted().forEach(params::add);
+            }
+            if (filter.goalContains() != null) {
+                conditions.add("LOWER(goal) LIKE ? ESCAPE '\\'");
+                params.add("%" + escapeLike(filter.goalContains().toLowerCase(Locale.ROOT)) + "%");
+            }
+            if (filter.from() != null) {
+                conditions.add("started_at >= ?");
+                params.add(Timestamp.from(filter.from()));
+            }
+            if (filter.to() != null) {
+                conditions.add("started_at < ?");
+                params.add(Timestamp.from(filter.to()));
+            }
+            ExecutionCursor after = filter.after();
+            if (includeCursor && after != null) {
+                Timestamp cursorTime = Timestamp.from(after.startedAt());
+                conditions.add("(started_at < ? OR (started_at = ? AND execution_id < ?))");
+                params.add(cursorTime);
+                params.add(cursorTime);
+                params.add(after.executionId());
+            }
+            return new HistoryQuery(conditions, params);
+        }
+
+        String clause() {
+            return conditions.isEmpty() ? "" : " WHERE " + String.join(" AND ", conditions);
+        }
+
+        /** Binds all parameters and returns the next free parameter index. */
+        int bind(PreparedStatement ps) throws SQLException {
+            int index = 1;
+            for (Object param : params) {
+                ps.setObject(index++, param);
+            }
+            return index;
+        }
+
+        private static String escapeLike(String value) {
+            StringBuilder escaped = new StringBuilder(value.length());
+            for (char c : value.toCharArray()) {
+                if (c == LIKE_ESCAPE || c == '%' || c == '_') {
+                    escaped.append(LIKE_ESCAPE);
+                }
+                escaped.append(c);
+            }
+            return escaped.toString();
         }
     }
 
