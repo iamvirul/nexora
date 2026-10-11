@@ -2,6 +2,7 @@ package com.nexora.cli;
 
 import com.nexora.api.ExecutionNotFoundException;
 import com.nexora.api.ExecutionNotOwnedException;
+import com.nexora.api.ExecutionNotReplayableException;
 import com.nexora.api.NexoraEngine;
 import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.execution.ExecutionStatus;
@@ -42,6 +43,10 @@ import java.util.concurrent.TimeoutException;
  *
  * <p>{@code GET /api/executions/{executionId}} returns one execution with its step records.
  *
+ * <p>{@code POST /api/executions/{executionId}/replay} re-runs a failed, timed-out, cancelled or
+ * compensated execution: {@code 202} with the new {@code executionId}, {@code 409} for any other
+ * state, {@code 404} when unknown.
+ *
  * <p>{@code DELETE /api/executions/{executionId}} cancels a running execution:
  * {@code 200} when cancelled (repeat calls also return 200), {@code 409} when it already finished
  * or is owned by another engine instance, {@code 404} when unknown.
@@ -55,6 +60,7 @@ final class ExecutionEndpoints {
     static final String EXECUTE_PATH = "/api/execute";
     static final String LIST_PATH = "/api/executions";
     static final String PATH_PREFIX = LIST_PATH + "/";
+    static final String REPLAY_SUFFIX = "/replay";
 
     private static final Logger log = LoggerFactory.getLogger(ExecutionEndpoints.class);
 
@@ -185,7 +191,12 @@ final class ExecutionEndpoints {
     }
 
     private void handle(HttpExchange exchange) throws IOException {
-        String executionId = exchange.getRequestURI().getPath().substring(PATH_PREFIX.length());
+        String remainder = exchange.getRequestURI().getPath().substring(PATH_PREFIX.length());
+        if (remainder.endsWith(REPLAY_SUFFIX)) {
+            handleReplay(exchange, remainder.substring(0, remainder.length() - REPLAY_SUFFIX.length()));
+            return;
+        }
+        String executionId = remainder;
         if (executionId.isBlank() || executionId.contains("/")) {
             ObserveCommand.sendText(exchange, STATUS_NOT_FOUND, "Not Found");
             return;
@@ -197,6 +208,39 @@ final class ExecutionEndpoints {
                 exchange.getResponseHeaders().set("Allow", "GET, DELETE");
                 ObserveCommand.sendText(exchange, STATUS_METHOD_NOT_ALLOWED, "Method Not Allowed");
             }
+        }
+    }
+
+    private void handleReplay(HttpExchange exchange, String executionId) throws IOException {
+        if (executionId.isBlank() || executionId.contains("/")) {
+            ObserveCommand.sendText(exchange, STATUS_NOT_FOUND, "Not Found");
+            return;
+        }
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            exchange.getResponseHeaders().set("Allow", "POST");
+            ObserveCommand.sendText(exchange, STATUS_METHOD_NOT_ALLOWED, "Method Not Allowed");
+            return;
+        }
+        if (engine.getStore() == null) {
+            ObserveCommand.sendJson(exchange, STATUS_UNAVAILABLE, Map.of("error", "Persistence disabled"));
+            return;
+        }
+        try {
+            ExecutionHandle replay = engine.replay(executionId);
+            ObserveCommand.sendJson(exchange, STATUS_ACCEPTED, Map.of(
+                    "accepted", true,
+                    "executionId", replay.executionId(),
+                    "replayOf", executionId));
+        } catch (ExecutionNotFoundException e) {
+            sendError(exchange, STATUS_NOT_FOUND, executionId, "Execution not found");
+        } catch (ExecutionNotReplayableException e) {
+            ObserveCommand.sendJson(exchange, STATUS_CONFLICT, Map.of(
+                    "error", "Only FAILED, TIMED_OUT, CANCELLED and COMPENSATED executions can be replayed",
+                    "executionId", executionId,
+                    "state", e.state()));
+        } catch (RuntimeException e) {
+            log.error("Replay request failed executionId={}", executionId, e);
+            sendError(exchange, STATUS_INTERNAL_ERROR, executionId, "Replay request failed");
         }
     }
 

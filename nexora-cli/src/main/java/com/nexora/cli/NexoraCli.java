@@ -25,6 +25,7 @@ import java.util.concurrent.Callable;
                 DlqCommand.class,
                 ScheduleCommand.class,
                 CancelCommand.class,
+                ReplayCommand.class,
                 CommandLine.HelpCommand.class
         }
 )

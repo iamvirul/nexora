@@ -2,6 +2,7 @@ package com.nexora.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.nexora.api.ExecutionNotReplayableException;
 import com.nexora.api.NexoraEngine;
 import com.nexora.api.observability.NexoraObservability;
 import com.nexora.core.execution.ExecutionHandle;
@@ -153,8 +154,13 @@ public class ObserveCommand implements Callable<Integer> {
                     try { sendJson(exchange, 409, Map.of("error", "Dead letter is not in PENDING state")); } catch(Exception ignored) {}
                     return;
                 }
-                com.nexora.core.intent.Intent replayIntent = new com.nexora.core.intent.Intent(dl.goal(), dl.context());
-                ExecutionHandle replay = engine.submit(replayIntent);
+                ExecutionHandle replay;
+                try {
+                    replay = engine.replayDeadLetter(dl);
+                } catch (ExecutionNotReplayableException e) {
+                    try { sendJson(exchange, 409, Map.of("error", "Original execution is " + e.state() + " and cannot be replayed yet")); } catch(Exception ignored) {}
+                    return;
+                }
                 replay.result().whenComplete((r, ex) -> {
                     if (ex != null) System.err.printf("DLQ replay failed id=%s error=%s%n", dlId, ex.getMessage());
                 });

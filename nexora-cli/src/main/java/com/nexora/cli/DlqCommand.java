@@ -1,8 +1,9 @@
 package com.nexora.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nexora.api.ExecutionNotReplayableException;
 import com.nexora.api.NexoraEngine;
-import com.nexora.core.intent.Intent;
+import com.nexora.core.execution.ExecutionResult;
 import com.nexora.persistence.DeadLetterRecord;
 import com.nexora.persistence.DeadLetterReviewState;
 import com.nexora.persistence.ExecutionStore;
@@ -123,7 +124,14 @@ public class DlqCommand implements Callable<Integer> {
             }
 
             System.out.printf("Replaying dead letter %s (goal: %s)%n", id, dl.goal());
-            var result = engine.execute(new Intent(dl.goal(), dl.context())).get();
+            ExecutionResult result;
+            try {
+                result = engine.replayDeadLetter(dl).result().get();
+            } catch (ExecutionNotReplayableException e) {
+                System.err.printf("Error: original execution %s is %s and cannot be replayed yet%n",
+                        dl.executionId(), e.state());
+                return 1;
+            }
             store.updateDeadLetterState(id, DeadLetterReviewState.REPLAYED, null);
             System.out.printf("Replay complete. New executionId=%s status=%s%n",
                     result.executionId(), result.status());

@@ -190,7 +190,7 @@ class ExecutionCancellationTest {
 
         CommandResult result = runCancelCommand(executionId, "--server", serverUrl());
 
-        assertEquals(CancelCommand.EXIT_OK, result.exitCode(), result.err());
+        assertEquals(ObserveServerClient.EXIT_OK, result.exitCode(), result.err());
         assertTrue(result.out().contains("Cancellation requested"), result.out());
         assertEquals(ExecutionStatus.CANCELLED, execution.get(WAIT_SECONDS, TimeUnit.SECONDS).status());
     }
@@ -199,7 +199,7 @@ class ExecutionCancellationTest {
     void cancelCommandReportsUnknownExecution() {
         CommandResult result = runCancelCommand("no-such-execution", "--server", serverUrl());
 
-        assertEquals(CancelCommand.EXIT_FAILED, result.exitCode());
+        assertEquals(ObserveServerClient.EXIT_FAILED, result.exitCode());
         assertTrue(result.err().contains("no execution found"), result.err());
     }
 
@@ -212,7 +212,7 @@ class ExecutionCancellationTest {
 
         CommandResult result = runCancelCommand("any-id", "--server", "http://" + LOOPBACK + ":" + closedPort);
 
-        assertEquals(CancelCommand.EXIT_FAILED, result.exitCode());
+        assertEquals(ObserveServerClient.EXIT_FAILED, result.exitCode());
         assertTrue(result.err().contains("could not reach"), result.err());
     }
 
@@ -220,7 +220,7 @@ class ExecutionCancellationTest {
     void cancelCommandRejectsNonHttpServerUrl() {
         CommandResult result = runCancelCommand("any-id", "--server", "file:///etc/passwd");
 
-        assertEquals(CancelCommand.EXIT_USAGE, result.exitCode());
+        assertEquals(ObserveServerClient.EXIT_USAGE, result.exitCode());
         assertTrue(result.err().contains("--server must be an http(s) URL"), result.err());
     }
 
