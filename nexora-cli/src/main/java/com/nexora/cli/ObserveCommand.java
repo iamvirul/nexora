@@ -94,6 +94,46 @@ public class ObserveCommand implements Callable<Integer> {
         HttpServer server = HttpServer.create(new InetSocketAddress(host, port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
+        registerRoutes(server, engine, observability, indexHtml);
+
+        CountDownLatch shutdownLatch = new CountDownLatch(1);
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                server.stop(0);
+                try {
+                    broadcaster.stop(500);
+                } catch (InterruptedException ignored) {
+                }
+                observability.close();
+            } finally {
+                shutdownLatch.countDown();
+            }
+        }));
+
+        server.start();
+        System.out.println("Nexora Observability Server");
+        System.out.println("===========================");
+        System.out.printf("UI:        http://%s:%d/%n", hostForDisplay(host), port);
+        System.out.printf("Metrics:   http://%s:%d/metrics%n", hostForDisplay(host), port);
+        System.out.printf("Process:   http://%s:%d/api/process%n", hostForDisplay(host), port);
+        System.out.printf(
+                "Health:    http://%s:%d/health (live: /health/live, ready: /health/ready)%n",
+                hostForDisplay(host), port);
+        System.out.printf("API docs:  http://%s:%d/docs (OpenAPI: /openapi.yaml)%n", hostForDisplay(host), port);
+        System.out.printf("WebSocket: ws://%s:%d/%n", hostForDisplay(host), wsPort);
+        System.out.println();
+        System.out.println("Press Ctrl+C to stop.");
+
+        shutdownLatch.await();
+        return 0;
+    }
+
+    /**
+     * Registers every HTTP route of the observe server. Kept separate from {@link #call()} so
+     * {@code OpenApiSpecTest} can check that each registered route is documented in openapi.yaml.
+     */
+    static void registerRoutes(
+            HttpServer server, NexoraEngine engine, NexoraObservability observability, byte[] indexHtml) {
         server.createContext("/metrics", exchange -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 sendText(exchange, 405, "Method Not Allowed");
@@ -459,6 +499,7 @@ public class ObserveCommand implements Callable<Integer> {
 
         new HealthEndpoints(engine, NEXORA_VERSION).register(server);
         new ExecutionEndpoints(engine).register(server);
+        ApiDocsEndpoints.load().register(server);
 
         server.createContext("/", exchange -> {
             String path = exchange.getRequestURI().getPath();
@@ -466,38 +507,13 @@ public class ObserveCommand implements Callable<Integer> {
                 sendText(exchange, 404, "Not Found");
                 return;
             }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.getResponseHeaders().set("Allow", "GET");
+                sendText(exchange, 405, "Method Not Allowed");
+                return;
+            }
             send(exchange, 200, "text/html; charset=utf-8", indexHtml);
         });
-
-        CountDownLatch shutdownLatch = new CountDownLatch(1);
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try {
-                server.stop(0);
-                try {
-                    broadcaster.stop(500);
-                } catch (InterruptedException ignored) {
-                }
-                observability.close();
-            } finally {
-                shutdownLatch.countDown();
-            }
-        }));
-
-        server.start();
-        System.out.println("Nexora Observability Server");
-        System.out.println("===========================");
-        System.out.printf("UI:        http://%s:%d/%n", hostForDisplay(host), port);
-        System.out.printf("Metrics:   http://%s:%d/metrics%n", hostForDisplay(host), port);
-        System.out.printf("Process:   http://%s:%d/api/process%n", hostForDisplay(host), port);
-        System.out.printf(
-                "Health:    http://%s:%d/health (live: /health/live, ready: /health/ready)%n",
-                hostForDisplay(host), port);
-        System.out.printf("WebSocket: ws://%s:%d/%n", hostForDisplay(host), wsPort);
-        System.out.println();
-        System.out.println("Press Ctrl+C to stop.");
-
-        shutdownLatch.await();
-        return 0;
     }
 
     private static String hostForDisplay(String host) {
@@ -513,7 +529,7 @@ public class ObserveCommand implements Callable<Integer> {
         send(exchange, status, "text/plain; charset=utf-8", body.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static void send(HttpExchange exchange, int status, String contentType, byte[] payload) throws IOException {
+    static void send(HttpExchange exchange, int status, String contentType, byte[] payload) throws IOException {
         exchange.getResponseHeaders().set("Content-Type", contentType);
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
         exchange.sendResponseHeaders(status, payload.length);

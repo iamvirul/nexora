@@ -1,0 +1,33 @@
+name: OpenAPI
+
+# Validates the observe server's OpenAPI document. Route coverage (every registered route is
+# documented, every documented path is served) is enforced separately by OpenApiSpecTest in the
+# Maven build.
+on:
+  push:
+    branches: [main, advance-implementation]
+  pull_request:
+    branches: [main, advance-implementation]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Validate OpenAPI spec
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: Lint openapi.yaml
+        # Redocly CLI validates OpenAPI 3.1 (swagger-cli is archived and does not fully support it).
+        # Rules are configured in redocly.yaml at the repository root.
+        run: npx --yes @redocly/cli@2.54.3 lint nexora-cli/src/main/resources/openapi.yaml
