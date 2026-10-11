@@ -34,6 +34,19 @@
             <artifactId>jackson-databind</artifactId>
             </dependency>
         <dependency>
+            <!-- Swagger UI static assets for GET /docs, served from the jar: no CDN requests -->
+            <groupId>org.webjars</groupId>
+            <artifactId>swagger-ui</artifactId>
+            <version>${swagger-ui.version}</version>
+        </dependency>
+        <dependency>
+            <!-- Parses openapi.yaml in OpenApiSpecTest -->
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-yaml</artifactId>
+            <version>${jackson.core.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <!-- ISO-8601 Instants in the execution history API; picked up by findAndRegisterModules() -->
             <groupId>com.fasterxml.jackson.datatype</groupId>
             <artifactId>jackson-datatype-jsr310</artifactId>
