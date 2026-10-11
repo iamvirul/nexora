@@ -54,38 +54,38 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 8-step payment fraud detection pipeline demo.
- *
+ * <p>
  * Base DAG (8 steps):
- *
- *   validate_request ──────────────────────────────────────────────┐
- *                                                                    ├──> process_payment ──┬──> send_confirmation
- *   enrich_user_data ─┐                                            │                       │
- *                     ├──> run_fraud_check ─────────────────────────┘                       └──> update_ledger
- *   check_velocity ───┤
- *                     │
- *   screen_sanctions ─┘
- *
+ * <p>
+ * validate_request ──────────────────────────────────────────────┐
+ * ├──> process_payment ──┬──> send_confirmation
+ * enrich_user_data ─┐                                            │                       │
+ * ├──> run_fraud_check ─────────────────────────┘                       └──> update_ledger
+ * check_velocity ───┤
+ * │
+ * screen_sanctions ─┘
+ * <p>
  * run_fraud_check injects flag_for_review as a plan amendment (high-risk path).
  * process_payment has a p99=300ms SLA with a declared fallback.
  * All compensate capabilities are registered for saga rollback.
- *
+ * <p>
  * Startup fires 4 scenarios automatically:
- *   1. Happy path          — all 8 steps complete, low risk
- *   2. High risk           — flag_for_review injected, REVIEW decision
- *   3. Gateway failure     — process_payment fails, saga compensates upstream steps
- *   4. Sanctions hit       — screen_sanctions blocks early, partial compensation
- *
+ * 1. Happy path          — all 8 steps complete, low risk
+ * 2. High risk           — flag_for_review injected, REVIEW decision
+ * 3. Gateway failure     — process_payment fails, saga compensates upstream steps
+ * 4. Sanctions hit       — screen_sanctions blocks early, partial compensation
+ * <p>
  * Manual execution via the form:
- *   Goal:    process payment
- *   Context: {"requestId":"REQ-X","amount":450.00,"userId":"USR-99"}
- *   Flags:   "forceFailure":true | "forceBlockedUser":true | "forceVelocityFail":true
- *            "slowUpstreamMs":30000 makes enrich_user_data wait, so the run can be cancelled
- *            from the UI (Cancel button) or with DELETE /api/executions/{executionId}
+ * Goal:    process payment
+ * Context: {"requestId":"REQ-X","amount":450.00,"userId":"USR-99"}
+ * Flags:   "forceFailure":true | "forceBlockedUser":true | "forceVelocityFail":true
+ * "slowUpstreamMs":30000 makes enrich_user_data wait, so the run can be cancelled
+ * from the UI (Cancel button) or with DELETE /api/executions/{executionId}
  */
 public class PaymentPipelineApp {
 
     static final int HTTP_PORT = 9464;
-    static final int WS_PORT   = 9465;
+    static final int WS_PORT = 9465;
     static final ObjectMapper JSON = new ObjectMapper()
             .findAndRegisterModules()
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -98,14 +98,16 @@ public class PaymentPipelineApp {
         NexoraObservability obs = NexoraObservability.attach(engine, 50, 300);
 
         engine.subscribe(ExecutionDeadLetteredEvent.class, e ->
-            System.out.printf("%n  >>> DEAD LETTER CREATED  executionId=%s  code=%s  dlId=%s%n",
-                e.executionId(), e.failureCode(), e.deadLetterId()));
+                System.out.printf("%n  >>> DEAD LETTER CREATED  executionId=%s  code=%s  dlId=%s%n",
+                        e.executionId(), e.failureCode(), e.deadLetterId()));
 
         // WebSocket broadcaster
         SnapshotBroadcaster broadcaster = new SnapshotBroadcaster(WS_PORT);
         obs.addSnapshotListener(snap -> {
-            try { broadcaster.broadcastSnapshot(JSON.writeValueAsString(snap)); }
-            catch (Exception ignored) {}
+            try {
+                broadcaster.broadcastSnapshot(JSON.writeValueAsString(snap));
+            } catch (Exception ignored) {
+            }
         });
         broadcaster.start();
 
@@ -125,19 +127,28 @@ public class PaymentPipelineApp {
         });
 
         http.createContext("/metrics", exchange -> {
-            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) { sendText(exchange, 405, "Method Not Allowed"); return; }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendText(exchange, 405, "Method Not Allowed");
+                return;
+            }
             send(exchange, 200, obs.metricsContentType(),
                     obs.scrapePrometheus().getBytes(StandardCharsets.UTF_8));
         });
 
         http.createContext("/api/process", exchange -> {
-            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) { sendText(exchange, 405, "Method Not Allowed"); return; }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendText(exchange, 405, "Method Not Allowed");
+                return;
+            }
             send(exchange, 200, "application/json; charset=utf-8",
                     JSON.writeValueAsBytes(obs.processSnapshot()));
         });
 
         http.createContext("/api/execute", exchange -> {
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendText(exchange, 405, "Method Not Allowed"); return; }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendText(exchange, 405, "Method Not Allowed");
+                return;
+            }
             ExecuteRequest req;
             try (InputStream body = exchange.getRequestBody()) {
                 req = JSON.readValue(body, ExecuteRequest.class);
@@ -152,25 +163,35 @@ public class PaymentPipelineApp {
             Map<String, Object> ctx = req.context() == null ? Map.of() : req.context();
             ExecutionHandle handle = engine.submit(new Intent(req.goal(), ctx));
             handle.result()
-                    .whenComplete((r, ex) -> { if (ex != null) System.err.println("Execution error: " + ex.getMessage()); });
+                    .whenComplete((r, ex) -> {
+                        if (ex != null) System.err.println("Execution error: " + ex.getMessage());
+                    });
             sendJson(exchange, 202, Map.of("accepted", true, "goal", req.goal(), "executionId", handle.executionId()));
         });
 
         // Execution history for the UI's history panel: newest first, cursor-paginated
         http.createContext("/api/executions", exchange -> {
-            if (!"/api/executions".equals(exchange.getRequestURI().getPath())) { sendText(exchange, 404, "Not Found"); return; }
-            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) { sendText(exchange, 405, "Method Not Allowed"); return; }
+            if (!"/api/executions".equals(exchange.getRequestURI().getPath())) {
+                sendText(exchange, 404, "Not Found");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendText(exchange, 405, "Method Not Allowed");
+                return;
+            }
             ExecutionFilter filter;
             int pageSize;
             try {
                 Map<String, String> q = queryParams(exchange.getRequestURI().getRawQuery());
                 pageSize = q.containsKey("limit") ? Integer.parseInt(q.get("limit")) : ExecutionFilter.DEFAULT_LIMIT;
-                if (pageSize < 1 || pageSize > ExecutionFilter.MAX_LIMIT - 1) throw new IllegalArgumentException("limit must be between 1 and 100");
+                if (pageSize < 1 || pageSize > ExecutionFilter.MAX_LIMIT - 1)
+                    throw new IllegalArgumentException("limit must be between 1 and 100");
                 Set<ExecutionState> states = new java.util.HashSet<>();
                 if (q.containsKey("status")) {
                     for (String st : q.get("status").split(",")) {
-                        try { states.add(ExecutionState.valueOf(st.trim().toUpperCase())); }
-                        catch (IllegalArgumentException e) {
+                        try {
+                            states.add(ExecutionState.valueOf(st.trim().toUpperCase()));
+                        } catch (IllegalArgumentException e) {
                             throw new IllegalArgumentException("Invalid status '" + st.trim() + "'. Allowed: "
                                     + java.util.Arrays.toString(ExecutionState.values()));
                         }
@@ -195,14 +216,23 @@ public class PaymentPipelineApp {
         // GET one execution with its steps; DELETE cancels it (200 cancelled, 404 unknown, 409 already finished)
         http.createContext("/api/executions/", exchange -> {
             String id = exchange.getRequestURI().getPath().substring("/api/executions/".length());
-            if (id.isBlank() || id.contains("/")) { sendText(exchange, 404, "Not Found"); return; }
+            if (id.isBlank() || id.contains("/")) {
+                sendText(exchange, 404, "Not Found");
+                return;
+            }
             if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 var record = executionStore.findById(id);
-                if (record.isEmpty()) { sendJson(exchange, 404, Map.of("error", "Execution not found", "executionId", id)); return; }
+                if (record.isEmpty()) {
+                    sendJson(exchange, 404, Map.of("error", "Execution not found", "executionId", id));
+                    return;
+                }
                 sendJson(exchange, 200, record.get());
                 return;
             }
-            if (!"DELETE".equalsIgnoreCase(exchange.getRequestMethod())) { sendText(exchange, 405, "Method Not Allowed"); return; }
+            if (!"DELETE".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendText(exchange, 405, "Method Not Allowed");
+                return;
+            }
             try {
                 boolean cancelled = engine.cancel(id).get(10, TimeUnit.SECONDS);
                 if (cancelled) {
@@ -234,10 +264,14 @@ public class PaymentPipelineApp {
             if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && remainder.endsWith("/replay")) {
                 String dlId = remainder.substring(0, remainder.length() - "/replay".length());
                 var dlOpt = executionStore.findDeadLetterById(dlId);
-                if (dlOpt.isEmpty()) { sendJson(exchange, 404, Map.of("error", "Not found")); return; }
+                if (dlOpt.isEmpty()) {
+                    sendJson(exchange, 404, Map.of("error", "Not found"));
+                    return;
+                }
                 var dl = dlOpt.get();
                 if (dl.reviewState() != DeadLetterReviewState.PENDING) {
-                    sendJson(exchange, 409, Map.of("error", "Not in PENDING state")); return;
+                    sendJson(exchange, 409, Map.of("error", "Not in PENDING state"));
+                    return;
                 }
                 ExecutionHandle replay = engine.submit(new Intent(dl.goal(), dl.context()));
                 executionStore.updateDeadLetterState(dlId, DeadLetterReviewState.REPLAYED, null);
@@ -247,17 +281,21 @@ public class PaymentPipelineApp {
             if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && remainder.endsWith("/resolve")) {
                 String dlId = remainder.substring(0, remainder.length() - "/resolve".length());
                 var dlOpt = executionStore.findDeadLetterById(dlId);
-                if (dlOpt.isEmpty()) { sendJson(exchange, 404, Map.of("error", "Not found")); return; }
+                if (dlOpt.isEmpty()) {
+                    sendJson(exchange, 404, Map.of("error", "Not found"));
+                    return;
+                }
                 String reason = null;
                 try (var body = exchange.getRequestBody()) {
                     byte[] bytes = body.readAllBytes();
                     if (bytes.length > 0) {
                         @SuppressWarnings("unchecked")
-                        var p = (java.util.Map<String,Object>) JSON.readValue(bytes, java.util.Map.class);
+                        var p = (java.util.Map<String, Object>) JSON.readValue(bytes, java.util.Map.class);
                         Object r = p.get("reason");
                         reason = r != null ? r.toString() : null;
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                }
                 executionStore.updateDeadLetterState(dlId, DeadLetterReviewState.RESOLVED, reason);
                 sendJson(exchange, 200, Map.of("resolved", true, "deadLetterId", dlId));
                 return;
@@ -267,7 +305,8 @@ public class PaymentPipelineApp {
 
         http.createContext("/api/dead-letters", exchange -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-                sendText(exchange, 405, "Method Not Allowed"); return;
+                sendText(exchange, 405, "Method Not Allowed");
+                return;
             }
             String query = exchange.getRequestURI().getQuery();
             DeadLetterReviewState stateFilter = DeadLetterReviewState.PENDING;
@@ -279,11 +318,23 @@ public class PaymentPipelineApp {
                     switch (kv[0]) {
                         case "state" -> {
                             if ("ALL".equalsIgnoreCase(kv[1])) stateFilter = null;
-                            else try { stateFilter = DeadLetterReviewState.valueOf(kv[1].toUpperCase()); }
-                                 catch (IllegalArgumentException ignored) {}
+                            else try {
+                                stateFilter = DeadLetterReviewState.valueOf(kv[1].toUpperCase());
+                            } catch (IllegalArgumentException ignored) {
+                            }
                         }
-                        case "page" -> { try { page = Integer.parseInt(kv[1]); } catch (NumberFormatException ignored) {} }
-                        case "size" -> { try { size = Math.min(100, Integer.parseInt(kv[1])); } catch (NumberFormatException ignored) {} }
+                        case "page" -> {
+                            try {
+                                page = Integer.parseInt(kv[1]);
+                            } catch (NumberFormatException ignored) {
+                            }
+                        }
+                        case "size" -> {
+                            try {
+                                size = Math.min(100, Integer.parseInt(kv[1]));
+                            } catch (NumberFormatException ignored) {
+                            }
+                        }
                     }
                 }
             }
@@ -324,8 +375,12 @@ public class PaymentPipelineApp {
                 Object rawPolicy = body.get("missedFirePolicy");
                 String policyStr = rawPolicy != null ? rawPolicy.toString() : "FIRE_ONCE";
                 MissedFirePolicy policy;
-                try { policy = MissedFirePolicy.valueOf(policyStr.toUpperCase()); }
-                catch (IllegalArgumentException e) { sendJson(exchange, 400, Map.of("error", "Invalid missedFirePolicy")); return; }
+                try {
+                    policy = MissedFirePolicy.valueOf(policyStr.toUpperCase());
+                } catch (IllegalArgumentException e) {
+                    sendJson(exchange, 400, Map.of("error", "Invalid missedFirePolicy"));
+                    return;
+                }
                 try {
                     var handle = engine.schedule(cron, new Intent(goal, Map.of()), policy);
                     sendJson(exchange, 201, Map.of("id", handle.id(), "nextFireAt", handle.nextFireTime().toString()));
@@ -358,9 +413,15 @@ public class PaymentPipelineApp {
 
         CountDownLatch shutdown = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try { http.stop(0); broadcaster.stop(500); obs.close(); executionStore.close(); }
-            catch (Exception ignored) {}
-            finally { shutdown.countDown(); }
+            try {
+                http.stop(0);
+                broadcaster.stop(500);
+                obs.close();
+                executionStore.close();
+            } catch (Exception ignored) {
+            } finally {
+                shutdown.countDown();
+            }
         }));
 
         http.start();
@@ -402,42 +463,42 @@ public class PaymentPipelineApp {
         System.out.println("  [1/5] Happy path — amount=450, low risk");
         engine.execute("process payment",
                 Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
-                       "amount", 450.00,
-                       "userId", "USR-99"));
+                        "amount", 450.00,
+                        "userId", "USR-99"));
         sleep(200);
 
         // Scenario 2 — high risk, triggers flag_for_review amendment
         System.out.println("  [2/5] High risk — amount=1500, fraud review path");
         engine.execute("process payment",
                 Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
-                       "amount", 1500.00,
-                       "userId", "USR-42"));
+                        "amount", 1500.00,
+                        "userId", "USR-42"));
         sleep(200);
 
         // Scenario 3 — payment gateway rejects, saga compensates completed steps
         System.out.println("  [3/5] Gateway failure — process_payment fails, saga compensates");
         engine.execute("process payment",
                 Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
-                       "amount", 250.00,
-                       "userId", "USR-77",
-                       "forceFailure", true));
+                        "amount", 250.00,
+                        "userId", "USR-77",
+                        "forceFailure", true));
         sleep(200);
 
         // Scenario 4 — sanctions blocklist hit, screen_sanctions fails early, partial compensation
         System.out.println("  [4/5] Sanctions hit — forceBlockedUser=true, early failure + partial compensation");
         engine.execute("process payment",
                 Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
-                       "amount", 200.00,
-                       "userId", "USR-BLOCKED",
-                       "forceBlockedUser", true));
+                        "amount", 200.00,
+                        "userId", "USR-BLOCKED",
+                        "forceBlockedUser", true));
         sleep(200);
 
         // Scenario 5 — execution timeout, cancels plan execution and triggers compensation
         System.out.println("  [5/5] Execution timeout — 100ms deadline, watchdog cancels execution and triggers saga compensation");
         engine.execute("process payment",
                 Map.of("requestId", "REQ-" + requestCounter.getAndIncrement(),
-                       "amount", 300.00,
-                       "userId", "USR-TIMEOUT"),
+                        "amount", 300.00,
+                        "userId", "USR-TIMEOUT"),
                 Duration.ofMillis(100));
 
         System.out.println();
@@ -446,18 +507,18 @@ public class PaymentPipelineApp {
             System.out.println("        Sending failing request " + (i + 1));
             engine.execute("process payment",
                     Map.of("requestId", "REQ-CB-" + i,
-                           "amount", 100.00,
-                           "userId", "USR-CB",
-                           "forceFailure", true));
+                            "amount", 100.00,
+                            "userId", "USR-CB",
+                            "forceFailure", true));
             sleep(150); // wait for execution
         }
-        
+
         System.out.println("        Circuit should now be OPEN. Sending a normal request...");
         engine.execute("process payment",
                 Map.of("requestId", "REQ-CB-NORMAL",
-                       "amount", 100.00,
-                       "userId", "USR-CB",
-                       "forceFailure", false)); // Not forcing failure, but should still hit fallback!
+                        "amount", 100.00,
+                        "userId", "USR-CB",
+                        "forceFailure", false)); // Not forcing failure, but should still hit fallback!
         sleep(200);
 
         System.out.println();
@@ -500,8 +561,8 @@ public class PaymentPipelineApp {
         System.out.println();
         System.out.println("  [9/9] Cron Schedule — registering a recurring payment reconciliation job");
         engine.subscribe(ScheduledExecutionFiredEvent.class, e ->
-            System.out.printf("%n  >>> SCHEDULED EXECUTION FIRED  scheduleId=%s  executionId=%s%n",
-                e.scheduleId(), e.executionId()));
+                System.out.printf("%n  >>> SCHEDULED EXECUTION FIRED  scheduleId=%s  executionId=%s%n",
+                        e.scheduleId(), e.executionId()));
         var scheduleHandle = engine.schedule(
                 "* * * * *",
                 new Intent("process payment", Map.of(
@@ -558,41 +619,41 @@ public class PaymentPipelineApp {
                 .withStepDefinition(new StepDefinition(
                         "enrich_user_data", "enrich_user_data",
                         g -> g.contains("process"),
-                        Map.of("userId",         InputBinding.fromContext("intent.context.userId"),
-                               "slowUpstreamMs", InputBinding.fromContext("intent.context.slowUpstreamMs")),
+                        Map.of("userId", InputBinding.fromContext("intent.context.userId"),
+                                "slowUpstreamMs", InputBinding.fromContext("intent.context.slowUpstreamMs")),
                         "userProfile", Set.of(), null, null,
                         "enrich_user_data_compensate"))
                 // step 3 - starts immediately, parallel with steps 1-2
                 .withStepDefinition(new StepDefinition(
                         "check_velocity", "check_velocity",
                         g -> g.contains("payment"),
-                        Map.of("userId",            InputBinding.fromContext("intent.context.userId"),
-                               "forceVelocityFail", InputBinding.fromContext("intent.context.forceVelocityFail")),
+                        Map.of("userId", InputBinding.fromContext("intent.context.userId"),
+                                "forceVelocityFail", InputBinding.fromContext("intent.context.forceVelocityFail")),
                         "velocityOk", Set.of(), null, null,
                         "check_velocity_compensate"))
                 // step 4 - starts immediately, parallel with steps 1-3
                 .withStepDefinition(new StepDefinition(
                         "screen_sanctions", "screen_sanctions",
                         g -> g.contains("payment"),
-                        Map.of("userId",             InputBinding.fromContext("intent.context.userId"),
-                               "forceBlockedUser",   InputBinding.fromContext("intent.context.forceBlockedUser")),
+                        Map.of("userId", InputBinding.fromContext("intent.context.userId"),
+                                "forceBlockedUser", InputBinding.fromContext("intent.context.forceBlockedUser")),
                         "sanctionsOk", Set.of(), null, null,
                         "screen_sanctions_compensate"))
                 // step 5 - waits for steps 2, 3, 4
                 .withStepDefinition(new StepDefinition(
                         "run_fraud_check", "run_fraud_check",
                         g -> g.contains("payment"),
-                        Map.of("amount",       InputBinding.fromContext("intent.context.amount"),
-                               "forceFailure", InputBinding.fromContext("intent.context.forceFailure")),
+                        Map.of("amount", InputBinding.fromContext("intent.context.amount"),
+                                "forceFailure", InputBinding.fromContext("intent.context.forceFailure")),
                         "riskScore", Set.of("enrich_user_data", "check_velocity", "screen_sanctions"), null, null,
                         "run_fraud_check_compensate"))
                 // step 6 - waits for steps 1, 5; has p99 SLA + fallback
                 .withStepDefinition(new StepDefinition(
                         "process_payment", "process_payment",
                         g -> g.contains("payment"),
-                        Map.of("requestId",    InputBinding.fromContext("intent.context.requestId"),
-                               "amount",       InputBinding.fromContext("intent.context.amount"),
-                               "forceFailure", InputBinding.fromContext("intent.context.forceFailure")),
+                        Map.of("requestId", InputBinding.fromContext("intent.context.requestId"),
+                                "amount", InputBinding.fromContext("intent.context.amount"),
+                                "forceFailure", InputBinding.fromContext("intent.context.forceFailure")),
                         "paymentId", Set.of("validate_request", "run_fraud_check"), null, null))
                 // step 7 - waits for step 6, parallel with step 8
                 .withStepDefinition(new StepDefinition(
@@ -611,180 +672,188 @@ public class PaymentPipelineApp {
 
     static NexoraPlugin buildPlugin() {
         return new NexoraPlugin() {
-            @Override public PluginDescriptor descriptor() {
+            @Override
+            public PluginDescriptor descriptor() {
                 return new PluginDescriptor("payment-plugin", "1.0.0", "Payment fraud detection capabilities", List.of(), null);
             }
-            @Override public void initialize(PluginContext ctx) {}
-            @Override public void shutdown() {}
 
-            @Override public List<CapabilityProvider> capabilityProviders() {
+            @Override
+            public void initialize(PluginContext ctx) {
+            }
+
+            @Override
+            public void shutdown() {
+            }
+
+            @Override
+            public List<CapabilityProvider> capabilityProviders() {
                 return List.of(
-                    // Happy-path capabilities
+                        // Happy-path capabilities
 
-                    cap("validate_request", CapabilityContract.none(), req -> {
-                        sleep(15);
-                        String id = String.valueOf(req.inputs().get("requestId"));
-                        if ("INVALID".equals(id)) {
-                            System.out.println("  [validate_request] " + id + " REJECTED - malformed request");
-                            return CapabilityResult.failure("VALIDATION_FAILED", "Request ID is invalid: " + id);
-                        }
-                        System.out.println("  [validate_request] " + id + " OK");
-                        return CapabilityResult.success(Map.of("valid", true, "requestId", id));
-                    }),
-
-                    // slowUpstreamMs simulates a hung profile service; it honours interrupts so
-                    // the run can be cancelled while this step is in flight.
-                    cap("enrich_user_data", CapabilityContract.none(), req -> {
-                        String userId = String.valueOf(req.inputs().get("userId"));
-                        long delayMs = req.inputs().get("slowUpstreamMs") instanceof Number n ? n.longValue() : 60;
-                        if (delayMs > 60) {
-                            System.out.printf("  [enrich_user_data] profile service slow for %s, waiting %dms%n", userId, delayMs);
-                        }
-                        try {
-                            Thread.sleep(delayMs);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            System.out.println("  [enrich_user_data] interrupted by cancel for " + userId);
-                            return CapabilityResult.failure("INTERRUPTED", "Profile lookup cancelled");
-                        }
-                        System.out.println("  [enrich_user_data] profile loaded for " + userId);
-                        return CapabilityResult.success(Map.of(
-                                "userId",   userId,
-                                "tier",     "premium",
-                                "country",  "US",
-                                "history",  "clean"));
-                    }),
-
-                    // fails when forceVelocityFail=true — simulates rate-limit breach
-                    cap("check_velocity", CapabilityContract.none(), req -> {
-                        sleep(35);
-                        boolean fail = Boolean.TRUE.equals(req.inputs().get("forceVelocityFail"));
-                        if (fail) {
-                            System.out.println("  [check_velocity] EXCEEDED - too many transactions");
-                            return CapabilityResult.failure("VELOCITY_EXCEEDED",
-                                    "Transaction rate limit breached for user");
-                        }
-                        System.out.println("  [check_velocity] velocity within limits");
-                        return CapabilityResult.success(Map.of("velocityOk", true, "txLast24h", 3));
-                    }),
-
-                    // fails when forceBlockedUser=true — simulates sanctions blocklist hit
-                    cap("screen_sanctions", CapabilityContract.none(), req -> {
-                        sleep(40);
-                        boolean blocked = Boolean.TRUE.equals(req.inputs().get("forceBlockedUser"));
-                        String userId = String.valueOf(req.inputs().get("userId"));
-                        if (blocked) {
-                            System.out.println("  [screen_sanctions] " + userId + " BLOCKED - sanctions hit");
-                            return CapabilityResult.failure("SANCTIONS_HIT",
-                                    "User is on the sanctions blocklist: " + userId);
-                        }
-                        System.out.println("  [screen_sanctions] " + userId + " cleared");
-                        return CapabilityResult.success(Map.of("sanctionsOk", true, "userId", userId));
-                    }),
-
-                    // injects flag_for_review as a plan amendment
-                    cap("run_fraud_check", CapabilityContract.none(), req -> {
-                        sleep(90);
-                        double amount = ((Number) req.inputs().getOrDefault("amount", 0)).doubleValue();
-                        double risk = amount > 1000 ? 0.85 : 0.12;
-                        System.out.printf("  [run_fraud_check] amount=%.2f risk=%.2f%n", amount, risk);
-
-                        Step flagStep = new Step(
-                                "flag_for_review", "flag_for_review",
-                                Map.of("risk", InputBinding.literal(risk)),
-                                null,
-                                Set.of("run_fraud_check"),
-                                null, null, null, null);
-
-                        // Note: Map.of() prohibits null values — do NOT include optional
-                        // flags here; they are read directly from the request context.
-                        return CapabilityResult.success(
-                                Map.of("riskScore", risk,
-                                       "decision", risk > 0.5 ? "REVIEW" : "PASS"),
-                                List.of(new AddStepAmendment(flagStep))
-                        );
-                    }),
-
-                    // p99=300ms SLA, fallback to process_payment_fallback
-                    // fails when forceFailure=true — triggers saga compensation
-                    cap("process_payment",
-                        CapabilityContract.builder()
-                            .p99Latency(Duration.ofMillis(300))
-                            .maxErrorRate(0.05)
-                            .openDuration(Duration.ofSeconds(10))
-                            .probeInterval(Duration.ofSeconds(5))
-                            .fallback("process_payment_fallback")
-                            .build(),
-                        req -> {
-                            sleep(80);
-                            boolean forceFailure = Boolean.TRUE.equals(req.inputs().get("forceFailure"));
-                            if (forceFailure) {
-                                System.out.println("  [process_payment] FAILED - payment gateway rejected");
-                                return CapabilityResult.failure("GATEWAY_REJECTED",
-                                        "Payment gateway returned a hard decline");
+                        cap("validate_request", CapabilityContract.none(), req -> {
+                            sleep(15);
+                            String id = String.valueOf(req.inputs().get("requestId"));
+                            if ("INVALID".equals(id)) {
+                                System.out.println("  [validate_request] " + id + " REJECTED - malformed request");
+                                return CapabilityResult.failure("VALIDATION_FAILED", "Request ID is invalid: " + id);
                             }
-                            String pid = "PAY-" + System.currentTimeMillis();
-                            System.out.println("  [process_payment] charged -> " + pid);
-                            return CapabilityResult.success(Map.of("paymentId", pid, "status", "CAPTURED"));
+                            System.out.println("  [validate_request] " + id + " OK");
+                            return CapabilityResult.success(Map.of("valid", true, "requestId", id));
                         }),
 
-                    cap("process_payment_fallback", CapabilityContract.none(), req -> {
-                        sleep(40);
-                        String pid = "PAY-FALLBACK-" + System.currentTimeMillis();
-                        System.out.println("  [process_payment_fallback] fallback charged -> " + pid);
-                        return CapabilityResult.success(Map.of("paymentId", pid, "status", "CAPTURED_FALLBACK"));
-                    }),
+                        // slowUpstreamMs simulates a hung profile service; it honours interrupts so
+                        // the run can be cancelled while this step is in flight.
+                        cap("enrich_user_data", CapabilityContract.none(), req -> {
+                            String userId = String.valueOf(req.inputs().get("userId"));
+                            long delayMs = req.inputs().get("slowUpstreamMs") instanceof Number n ? n.longValue() : 60;
+                            if (delayMs > 60) {
+                                System.out.printf("  [enrich_user_data] profile service slow for %s, waiting %dms%n", userId, delayMs);
+                            }
+                            try {
+                                Thread.sleep(delayMs);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                System.out.println("  [enrich_user_data] interrupted by cancel for " + userId);
+                                return CapabilityResult.failure("INTERRUPTED", "Profile lookup cancelled");
+                            }
+                            System.out.println("  [enrich_user_data] profile loaded for " + userId);
+                            return CapabilityResult.success(Map.of(
+                                    "userId", userId,
+                                    "tier", "premium",
+                                    "country", "US",
+                                    "history", "clean"));
+                        }),
 
-                    cap("send_confirmation", CapabilityContract.none(), req -> {
-                        sleep(25);
-                        System.out.println("  [send_confirmation] email sent for " + req.inputs().get("paymentId"));
-                        return CapabilityResult.success(Map.of("channel", "email", "delivered", true));
-                    }),
+                        // fails when forceVelocityFail=true — simulates rate-limit breach
+                        cap("check_velocity", CapabilityContract.none(), req -> {
+                            sleep(35);
+                            boolean fail = Boolean.TRUE.equals(req.inputs().get("forceVelocityFail"));
+                            if (fail) {
+                                System.out.println("  [check_velocity] EXCEEDED - too many transactions");
+                                return CapabilityResult.failure("VELOCITY_EXCEEDED",
+                                        "Transaction rate limit breached for user");
+                            }
+                            System.out.println("  [check_velocity] velocity within limits");
+                            return CapabilityResult.success(Map.of("velocityOk", true, "txLast24h", 3));
+                        }),
 
-                    cap("update_ledger", CapabilityContract.none(), req -> {
-                        sleep(30);
-                        System.out.println("  [update_ledger] ledger updated for " + req.inputs().get("paymentId"));
-                        return CapabilityResult.success(Map.of("ledgerEntry", "recorded"));
-                    }),
+                        // fails when forceBlockedUser=true — simulates sanctions blocklist hit
+                        cap("screen_sanctions", CapabilityContract.none(), req -> {
+                            sleep(40);
+                            boolean blocked = Boolean.TRUE.equals(req.inputs().get("forceBlockedUser"));
+                            String userId = String.valueOf(req.inputs().get("userId"));
+                            if (blocked) {
+                                System.out.println("  [screen_sanctions] " + userId + " BLOCKED - sanctions hit");
+                                return CapabilityResult.failure("SANCTIONS_HIT",
+                                        "User is on the sanctions blocklist: " + userId);
+                            }
+                            System.out.println("  [screen_sanctions] " + userId + " cleared");
+                            return CapabilityResult.success(Map.of("sanctionsOk", true, "userId", userId));
+                        }),
 
-                    cap("flag_for_review", CapabilityContract.none(), req -> {
-                        sleep(20);
-                        double risk = ((Number) req.inputs().getOrDefault("risk", 0)).doubleValue();
-                        System.out.printf("  [flag_for_review] risk=%.2f -> queued for manual review%n", risk);
-                        return CapabilityResult.success(Map.of("flagged", true, "queue", "fraud-review"));
-                    }),
+                        // injects flag_for_review as a plan amendment
+                        cap("run_fraud_check", CapabilityContract.none(), req -> {
+                            sleep(90);
+                            double amount = ((Number) req.inputs().getOrDefault("amount", 0)).doubleValue();
+                            double risk = amount > 1000 ? 0.85 : 0.12;
+                            System.out.printf("  [run_fraud_check] amount=%.2f risk=%.2f%n", amount, risk);
 
-                    // Compensate capabilities (saga rollback)
+                            Step flagStep = new Step(
+                                    "flag_for_review", "flag_for_review",
+                                    Map.of("risk", InputBinding.literal(risk)),
+                                    null,
+                                    Set.of("run_fraud_check"),
+                                    null, null, null, null);
 
-                    cap("validate_request_compensate", CapabilityContract.none(), req -> {
-                        sleep(10);
-                        System.out.println("  [validate_request_compensate] request record voided");
-                        return CapabilityResult.success(Map.of("voided", true));
-                    }),
+                            // Note: Map.of() prohibits null values — do NOT include optional
+                            // flags here; they are read directly from the request context.
+                            return CapabilityResult.success(
+                                    Map.of("riskScore", risk,
+                                            "decision", risk > 0.5 ? "REVIEW" : "PASS"),
+                                    List.of(new AddStepAmendment(flagStep))
+                            );
+                        }),
 
-                    cap("enrich_user_data_compensate", CapabilityContract.none(), req -> {
-                        sleep(10);
-                        System.out.println("  [enrich_user_data_compensate] cached profile invalidated");
-                        return CapabilityResult.success(Map.of("invalidated", true));
-                    }),
+                        // p99=300ms SLA, fallback to process_payment_fallback
+                        // fails when forceFailure=true — triggers saga compensation
+                        cap("process_payment",
+                                CapabilityContract.builder()
+                                        .p99Latency(Duration.ofMillis(300))
+                                        .maxErrorRate(0.05)
+                                        .openDuration(Duration.ofSeconds(10))
+                                        .probeInterval(Duration.ofSeconds(5))
+                                        .fallback("process_payment_fallback")
+                                        .build(),
+                                req -> {
+                                    sleep(80);
+                                    boolean forceFailure = Boolean.TRUE.equals(req.inputs().get("forceFailure"));
+                                    if (forceFailure) {
+                                        System.out.println("  [process_payment] FAILED - payment gateway rejected");
+                                        return CapabilityResult.failure("GATEWAY_REJECTED",
+                                                "Payment gateway returned a hard decline");
+                                    }
+                                    String pid = "PAY-" + System.currentTimeMillis();
+                                    System.out.println("  [process_payment] charged -> " + pid);
+                                    return CapabilityResult.success(Map.of("paymentId", pid, "status", "CAPTURED"));
+                                }),
 
-                    cap("check_velocity_compensate", CapabilityContract.none(), req -> {
-                        sleep(10);
-                        System.out.println("  [check_velocity_compensate] velocity counter decremented");
-                        return CapabilityResult.success(Map.of("decremented", true));
-                    }),
+                        cap("process_payment_fallback", CapabilityContract.none(), req -> {
+                            sleep(40);
+                            String pid = "PAY-FALLBACK-" + System.currentTimeMillis();
+                            System.out.println("  [process_payment_fallback] fallback charged -> " + pid);
+                            return CapabilityResult.success(Map.of("paymentId", pid, "status", "CAPTURED_FALLBACK"));
+                        }),
 
-                    cap("run_fraud_check_compensate", CapabilityContract.none(), req -> {
-                        sleep(10);
-                        System.out.println("  [run_fraud_check_compensate] fraud record retracted");
-                        return CapabilityResult.success(Map.of("retracted", true));
-                    }),
+                        cap("send_confirmation", CapabilityContract.none(), req -> {
+                            sleep(25);
+                            System.out.println("  [send_confirmation] email sent for " + req.inputs().get("paymentId"));
+                            return CapabilityResult.success(Map.of("channel", "email", "delivered", true));
+                        }),
 
-                    cap("screen_sanctions_compensate", CapabilityContract.none(), req -> {
-                        sleep(10);
-                        System.out.println("  [screen_sanctions_compensate] sanctions flag cleared");
-                        return CapabilityResult.success(Map.of("cleared", true));
-                    })
+                        cap("update_ledger", CapabilityContract.none(), req -> {
+                            sleep(30);
+                            System.out.println("  [update_ledger] ledger updated for " + req.inputs().get("paymentId"));
+                            return CapabilityResult.success(Map.of("ledgerEntry", "recorded"));
+                        }),
+
+                        cap("flag_for_review", CapabilityContract.none(), req -> {
+                            sleep(20);
+                            double risk = ((Number) req.inputs().getOrDefault("risk", 0)).doubleValue();
+                            System.out.printf("  [flag_for_review] risk=%.2f -> queued for manual review%n", risk);
+                            return CapabilityResult.success(Map.of("flagged", true, "queue", "fraud-review"));
+                        }),
+
+                        // Compensate capabilities (saga rollback)
+
+                        cap("validate_request_compensate", CapabilityContract.none(), req -> {
+                            sleep(10);
+                            System.out.println("  [validate_request_compensate] request record voided");
+                            return CapabilityResult.success(Map.of("voided", true));
+                        }),
+
+                        cap("enrich_user_data_compensate", CapabilityContract.none(), req -> {
+                            sleep(10);
+                            System.out.println("  [enrich_user_data_compensate] cached profile invalidated");
+                            return CapabilityResult.success(Map.of("invalidated", true));
+                        }),
+
+                        cap("check_velocity_compensate", CapabilityContract.none(), req -> {
+                            sleep(10);
+                            System.out.println("  [check_velocity_compensate] velocity counter decremented");
+                            return CapabilityResult.success(Map.of("decremented", true));
+                        }),
+
+                        cap("run_fraud_check_compensate", CapabilityContract.none(), req -> {
+                            sleep(10);
+                            System.out.println("  [run_fraud_check_compensate] fraud record retracted");
+                            return CapabilityResult.success(Map.of("retracted", true));
+                        }),
+
+                        cap("screen_sanctions_compensate", CapabilityContract.none(), req -> {
+                            sleep(10);
+                            System.out.println("  [screen_sanctions_compensate] sanctions flag cleared");
+                            return CapabilityResult.success(Map.of("cleared", true));
+                        })
                 );
             }
         };
@@ -804,8 +873,11 @@ public class PaymentPipelineApp {
         ex.getResponseHeaders().set("Content-Type", contentType);
         ex.getResponseHeaders().set("Cache-Control", "no-store");
         ex.sendResponseHeaders(status, payload.length);
-        try (var os = ex.getResponseBody()) { os.write(payload); }
-        finally { ex.close(); }
+        try (var os = ex.getResponseBody()) {
+            os.write(payload);
+        } finally {
+            ex.close();
+        }
     }
 
     static byte[] loadHtml() {
@@ -844,19 +916,29 @@ public class PaymentPipelineApp {
     }
 
     static void sleep(long ms) {
-        try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     static CapabilityProvider cap(String id, CapabilityContract contract, Capability impl) {
         return new CapabilityProvider() {
-            @Override public CapabilityDescriptor descriptor() {
+            @Override
+            public CapabilityDescriptor descriptor() {
                 return new CapabilityDescriptor(id, id, List.of(), List.of(), true, false, contract);
             }
-            @Override public Capability create(PluginContext ctx) { return impl; }
+
+            @Override
+            public Capability create(PluginContext ctx) {
+                return impl;
+            }
         };
     }
 
-    record ExecuteRequest(String goal, Map<String, Object> context) {}
+    record ExecuteRequest(String goal, Map<String, Object> context) {
+    }
 
     // WebSocket broadcaster
 
@@ -865,16 +947,33 @@ public class PaymentPipelineApp {
             super(new InetSocketAddress("0.0.0.0", port));
             setReuseAddr(true);
         }
-        @Override public void onOpen(WebSocket conn, ClientHandshake h) {}
-        @Override public void onClose(WebSocket conn, int code, String reason, boolean remote) {}
-        @Override public void onMessage(WebSocket conn, String message) {}
-        @Override public void onError(WebSocket conn, Exception ex) {}
-        @Override public void onStart() {}
+
+        @Override
+        public void onOpen(WebSocket conn, ClientHandshake h) {
+        }
+
+        @Override
+        public void onClose(WebSocket conn, int code, String reason, boolean remote) {
+        }
+
+        @Override
+        public void onMessage(WebSocket conn, String message) {
+        }
+
+        @Override
+        public void onError(WebSocket conn, Exception ex) {
+        }
+
+        @Override
+        public void onStart() {
+        }
 
         void broadcastSnapshot(String json) {
             Collection<WebSocket> conns = getConnections();
             if (conns.isEmpty()) return;
-            for (WebSocket ws : conns) { if (ws.isOpen()) ws.send(json); }
+            for (WebSocket ws : conns) {
+                if (ws.isOpen()) ws.send(json);
+            }
         }
     }
 }
