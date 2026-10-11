@@ -37,14 +37,20 @@ public final class InProcessEventBus implements ExecutionEventBus {
 
         for (SubscriptionEntry<?> entry : entries) {
             if (!entry.active) continue;
-            dispatchExecutor.execute(() -> {
-                try {
-                    ((EventHandler<E>) entry.handler).onEvent(event);
-                } catch (Exception e) {
-                    log.warn("Event handler threw for event={} handler={}",
-                            event.getClass().getSimpleName(), entry.handler.getClass().getSimpleName(), e);
-                }
-            });
+            if (entry.synchronous) {
+                dispatch((EventHandler<E>) entry.handler, event);
+            } else {
+                dispatchExecutor.execute(() -> dispatch((EventHandler<E>) entry.handler, event));
+            }
+        }
+    }
+
+    private static <E extends ExecutionEvent> void dispatch(EventHandler<E> handler, E event) {
+        try {
+            handler.onEvent(event);
+        } catch (Exception e) {
+            log.warn("Event handler threw for event={} handler={}",
+                    event.getClass().getSimpleName(), handler.getClass().getSimpleName(), e);
         }
     }
 
@@ -53,17 +59,30 @@ public final class InProcessEventBus implements ExecutionEventBus {
         Objects.requireNonNull(eventType, "eventType must not be null");
         Objects.requireNonNull(handler, "handler must not be null");
 
-        SubscriptionEntry<E> entry = new SubscriptionEntry<>(handler);
+        return register(eventType, handler, false);
+    }
+
+    @Override
+    public <E extends ExecutionEvent> Subscription subscribeSync(Class<E> eventType, EventHandler<E> handler) {
+        Objects.requireNonNull(eventType, "eventType must not be null");
+        Objects.requireNonNull(handler, "handler must not be null");
+        return register(eventType, handler, true);
+    }
+
+    private <E extends ExecutionEvent> Subscription register(Class<E> eventType, EventHandler<E> handler, boolean synchronous) {
+        SubscriptionEntry<E> entry = new SubscriptionEntry<>(handler, synchronous);
         handlers.computeIfAbsent(eventType, k -> new CopyOnWriteArrayList<>()).add(entry);
         return () -> entry.active = false;
     }
 
     private static final class SubscriptionEntry<E extends ExecutionEvent> {
         final EventHandler<E> handler;
+        final boolean synchronous;
         volatile boolean active = true;
 
-        SubscriptionEntry(EventHandler<E> handler) {
+        SubscriptionEntry(EventHandler<E> handler, boolean synchronous) {
             this.handler = handler;
+            this.synchronous = synchronous;
         }
     }
 }
