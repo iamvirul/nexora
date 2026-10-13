@@ -155,9 +155,19 @@ By default Nexora looks for `nexora.json` in the working directory. Point to a d
     "initialDelayMs": 200,
     "multiplier": 2.0,
     "maxDelayMs": 10000
+  },
+  "persistence": {
+    "pool": {
+      "maximumPoolSize": 10,
+      "minimumIdle": 2,
+      "connectionTimeoutMs": 30000,
+      "idleTimeoutMs": 600000
+    }
   }
 }
 ```
+
+`persistence.pool` sizes the HikariCP connection pool behind `executionStore`. Every key is optional and the values above are the defaults (`minimumIdle` defaults to 2, or to `maximumPoolSize` if that is smaller). `connectionTimeoutMs` must be at least 250 and `idleTimeoutMs` must be 0 (never retire idle connections) or at least 10000; out-of-range values fail at startup.
 
 A step is included in the plan when its `matchesGoalContains` string appears in the goal. Dependencies between steps are declared in code using `StepDefinition`'s `dependsOn` set.
 
