@@ -14,8 +14,8 @@ import com.nexora.persistence.ScheduleRecord;
 import com.nexora.persistence.ScheduleStatus;
 import com.nexora.persistence.StepRecord;
 import com.nexora.persistence.StepState;
+import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -26,7 +26,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,9 +38,10 @@ import org.slf4j.LoggerFactory;
  *
  * Schema is created automatically on first use (DDL is idempotent).
  *
- * Connection management: a single dedicated connection protected by synchronized blocks.
- * This is intentional for embedded H2; replace with a DataSource/HikariCP when using
- * a remote database.
+ * Connection management: every call borrows a connection from a {@link DataSource} and returns
+ * it before the call ends, so calls run in parallel up to the pool size. A call never holds more
+ * than one connection at a time; nested lookups reuse the caller's connection. Holding two would
+ * let N concurrent callers each take one and then wait forever for a second from a pool of size N.
  */
 public final class JdbcExecutionStore implements ExecutionStore {
 
@@ -48,14 +51,35 @@ public final class JdbcExecutionStore implements ExecutionStore {
     // Kept well under typical k8s probe timeouts so a stalled DB reports DOWN instead of hanging the probe.
     private static final int HEALTH_CHECK_TIMEOUT_SECONDS = 2;
 
-    private final Connection conn;
+    private final DataSource dataSource;
+    /** The pool this store opened itself and must close; null when the caller owns the DataSource. */
+    private final HikariDataSource ownedPool;
 
+    /**
+     * Uses a caller-managed DataSource. {@link #close()} leaves it open, since the caller may
+     * share it with other components.
+     */
+    public JdbcExecutionStore(DataSource dataSource) {
+        this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
+        this.ownedPool = null;
+        initSchema();
+    }
+
+    /** Single-connection store, for embedded H2 and tests. Calls are serialised on that connection. */
     public JdbcExecutionStore(String jdbcUrl) {
+        this(jdbcUrl, PoolConfig.singleConnection());
+    }
+
+    /** Opens and owns a HikariCP pool against {@code jdbcUrl}; {@link #close()} shuts it down. */
+    public JdbcExecutionStore(String jdbcUrl, PoolConfig poolConfig) {
+        HikariDataSource pool = HikariCPDataSourceFactory.create(jdbcUrl, poolConfig);
+        this.dataSource = pool;
+        this.ownedPool = pool;
         try {
-            this.conn = DriverManager.getConnection(jdbcUrl);
             initSchema();
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to connect to persistence store: " + jdbcUrl, e);
+        } catch (RuntimeException e) {
+            pool.close();
+            throw e;
         }
     }
 
@@ -69,8 +93,9 @@ public final class JdbcExecutionStore implements ExecutionStore {
         return new JdbcExecutionStore("jdbc:h2:mem:nexora_" + System.nanoTime() + ";DB_CLOSE_DELAY=-1");
     }
 
-    private void initSchema() throws SQLException {
-        try (var stmt = conn.createStatement()) {
+    private void initSchema() {
+        try (Connection conn = dataSource.getConnection();
+                var stmt = conn.createStatement()) {
             stmt.execute("""
                 CREATE TABLE IF NOT EXISTS nexora_executions (
                     execution_id  VARCHAR(36)  PRIMARY KEY,
@@ -141,18 +166,21 @@ public final class JdbcExecutionStore implements ExecutionStore {
                     active               BOOLEAN       NOT NULL DEFAULT TRUE
                 )
             """);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to initialise persistence schema", e);
         }
     }
 
     @Override
-    public synchronized void createExecution(ExecutionRecord record) {
+    public void createExecution(ExecutionRecord record) {
         String sql = """
             MERGE INTO nexora_executions
                 (execution_id, trace_id, goal, context_json, state, started_at, completed_at)
             KEY (execution_id)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """;
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, record.executionId());
             ps.setString(2, record.traceId());
             ps.setString(3, record.goal());
@@ -167,9 +195,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized void updateExecution(String executionId, ExecutionState state, Instant completedAt) {
+    public void updateExecution(String executionId, ExecutionState state, Instant completedAt) {
         String sql = "UPDATE nexora_executions SET state = ?, completed_at = ? WHERE execution_id = ?";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, state.name());
             ps.setTimestamp(2, completedAt != null ? Timestamp.from(completedAt) : null);
             ps.setString(3, executionId);
@@ -182,12 +211,20 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized void upsertStep(String executionId, StepRecord step) {
-        // Completion and failure updates carry no idempotency key. Replacing the whole row would
-        // erase the key recorded at step start, which replay needs to avoid repeating side effects.
-        if (step.idempotencyKey() == null && updateStepKeepingKey(executionId, step)) {
-            return;
+    public void upsertStep(String executionId, StepRecord step) {
+        try (Connection conn = dataSource.getConnection()) {
+            // Completion and failure updates carry no idempotency key. Replacing the whole row would
+            // erase the key recorded at step start, which replay needs to avoid repeating side effects.
+            if (step.idempotencyKey() == null && updateStepKeepingKey(conn, executionId, step)) {
+                return;
+            }
+            mergeStep(conn, executionId, step);
+        } catch (SQLException e) {
+            log.error("Failed to upsert step executionId={} stepId={}", executionId, step.stepId(), e);
         }
+    }
+
+    private static void mergeStep(Connection conn, String executionId, StepRecord step) throws SQLException {
         String sql = """
             MERGE INTO nexora_steps
                 (execution_id, step_id, capability_id, idempotency_key, state,
@@ -207,13 +244,11 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.setTimestamp(9, step.completedAt() != null ? Timestamp.from(step.completedAt()) : null);
             ps.setLong(10, step.durationMs());
             ps.executeUpdate();
-        } catch (SQLException e) {
-            log.error("Failed to upsert step executionId={} stepId={}", executionId, step.stepId(), e);
         }
     }
 
     /** Updates an existing step row without touching its idempotency key; false if no row exists yet. */
-    private boolean updateStepKeepingKey(String executionId, StepRecord step) {
+    private static boolean updateStepKeepingKey(Connection conn, String executionId, StepRecord step) {
         String sql = """
             UPDATE nexora_steps
                SET capability_id = ?, state = ?, failure_code = ?, failure_message = ?,
@@ -238,7 +273,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized void recordWebhookDelivery(com.nexora.persistence.WebhookDeliveryRecord record) {
+    public void recordWebhookDelivery(com.nexora.persistence.WebhookDeliveryRecord record) {
         if (record.deliveryId() == null
                 || record.executionId() == null
                 || record.url() == null
@@ -251,7 +286,8 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 (delivery_id, execution_id, url, status_code, attempt, successful, timestamp, error_message)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """;
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, record.deliveryId());
             ps.setString(2, record.executionId());
             ps.setString(3, record.url());
@@ -267,10 +303,11 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized List<com.nexora.persistence.WebhookDeliveryRecord> getWebhookDeliveries(String executionId) {
+    public List<com.nexora.persistence.WebhookDeliveryRecord> getWebhookDeliveries(String executionId) {
         String sql = "SELECT * FROM nexora_webhook_deliveries WHERE execution_id = ? ORDER BY timestamp ASC";
         List<com.nexora.persistence.WebhookDeliveryRecord> results = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, executionId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -292,14 +329,15 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized Optional<ExecutionRecord> findById(String executionId) {
+    public Optional<ExecutionRecord> findById(String executionId) {
         String sql = "SELECT * FROM nexora_executions WHERE execution_id = ?";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, executionId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) return Optional.empty();
                 ExecutionRecord exec = mapExecution(rs);
-                return Optional.of(withSteps(exec));
+                return Optional.of(withSteps(conn, exec));
             }
         } catch (Exception e) {
             // Never report a failed lookup as "not found": callers would answer 404 for an outage.
@@ -308,14 +346,15 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized List<ExecutionRecord> findRecent(int limit) {
+    public List<ExecutionRecord> findRecent(int limit) {
         String sql = "SELECT * FROM nexora_executions ORDER BY started_at DESC LIMIT ?";
         List<ExecutionRecord> results = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, limit);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    results.add(withSteps(mapExecution(rs)));
+                    results.add(withSteps(conn, mapExecution(rs)));
                 }
             }
         } catch (Exception e) {
@@ -325,13 +364,14 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized void createDeadLetter(DeadLetterRecord record) {
+    public void createDeadLetter(DeadLetterRecord record) {
         String sql = """
             INSERT INTO nexora_dead_letters
                 (id, execution_id, goal, context_json, failure_code, failure_message, failed_at, review_state, resolve_reason)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, record.id());
             ps.setString(2, record.executionId());
             ps.setString(3, record.goal());
@@ -348,9 +388,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized Optional<DeadLetterRecord> findDeadLetterById(String id) {
+    public Optional<DeadLetterRecord> findDeadLetterById(String id) {
         String sql = "SELECT * FROM nexora_dead_letters WHERE id = ?";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) return Optional.empty();
@@ -363,12 +404,13 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized List<DeadLetterRecord> findDeadLetters(DeadLetterReviewState state, int offset, int limit) {
+    public List<DeadLetterRecord> findDeadLetters(DeadLetterReviewState state, int offset, int limit) {
         String sql = state != null
                 ? "SELECT * FROM nexora_dead_letters WHERE review_state = ? ORDER BY failed_at DESC LIMIT ? OFFSET ?"
                 : "SELECT * FROM nexora_dead_letters ORDER BY failed_at DESC LIMIT ? OFFSET ?";
         List<DeadLetterRecord> results = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             if (state != null) {
                 ps.setString(1, state.name());
                 ps.setInt(2, limit);
@@ -389,9 +431,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized void updateDeadLetterState(String id, DeadLetterReviewState state, String resolveReason) {
+    public void updateDeadLetterState(String id, DeadLetterReviewState state, String resolveReason) {
         String sql = "UPDATE nexora_dead_letters SET review_state = ?, resolve_reason = ? WHERE id = ?";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, state.name());
             ps.setString(2, resolveReason);
             ps.setString(3, id);
@@ -429,14 +472,15 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized void createSchedule(ScheduleRecord record) {
+    public void createSchedule(ScheduleRecord record) {
         String sql = """
             INSERT INTO nexora_schedules
                 (id, cron_expression, goal, context_json, missed_fire_policy,
                  created_at, last_fired_at, next_fire_at, last_status, active)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, record.id());
             ps.setString(2, record.cronExpression());
             ps.setString(3, record.goal());
@@ -455,9 +499,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized Optional<ScheduleRecord> findScheduleById(String id) {
+    public Optional<ScheduleRecord> findScheduleById(String id) {
         String sql = "SELECT * FROM nexora_schedules WHERE id = ?";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) return Optional.empty();
@@ -470,10 +515,11 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized List<ScheduleRecord> findActiveSchedules() {
+    public List<ScheduleRecord> findActiveSchedules() {
         String sql = "SELECT * FROM nexora_schedules WHERE active = TRUE ORDER BY next_fire_at ASC";
         List<ScheduleRecord> results = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(sql);
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql);
                 ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 try {
@@ -490,10 +536,11 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized List<ScheduleRecord> findAllSchedules() {
+    public List<ScheduleRecord> findAllSchedules() {
         String sql = "SELECT * FROM nexora_schedules ORDER BY created_at DESC";
         List<ScheduleRecord> results = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(sql);
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql);
                 ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 try {
@@ -510,9 +557,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized void updateScheduleLastFired(String id, Instant lastFiredAt, Instant nextFireAt) {
+    public void updateScheduleLastFired(String id, Instant lastFiredAt, Instant nextFireAt) {
         String sql = "UPDATE nexora_schedules SET last_fired_at = ?, next_fire_at = ? WHERE id = ?";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setTimestamp(1, Timestamp.from(lastFiredAt));
             ps.setTimestamp(2, Timestamp.from(nextFireAt));
             ps.setString(3, id);
@@ -524,9 +572,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized void updateScheduleNextFire(String id, Instant nextFireAt) {
+    public void updateScheduleNextFire(String id, Instant nextFireAt) {
         String sql = "UPDATE nexora_schedules SET next_fire_at = ? WHERE id = ?";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setTimestamp(1, Timestamp.from(nextFireAt));
             ps.setString(2, id);
             ps.executeUpdate();
@@ -537,9 +586,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized void deactivateSchedule(String id) {
+    public void deactivateSchedule(String id) {
         String sql = "UPDATE nexora_schedules SET active = FALSE, last_status = 'CANCELED' WHERE id = ?";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, id);
             ps.executeUpdate();
         } catch (SQLException e) {
@@ -549,9 +599,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized void updateScheduleStatus(String id, ScheduleStatus status) {
+    public void updateScheduleStatus(String id, ScheduleStatus status) {
         String sql = "UPDATE nexora_schedules SET last_status = ? WHERE id = ? AND active = TRUE";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, status.name());
             ps.setString(2, id);
             ps.executeUpdate();
@@ -598,20 +649,28 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     public static JdbcExecutionStore h2AutoServer(String filePath) {
-        return new JdbcExecutionStore("jdbc:h2:" + filePath + ";AUTO_SERVER=TRUE");
+        return h2AutoServer(filePath, PoolConfig.singleConnection());
+    }
+
+    /** File-backed H2 that other processes can open concurrently, behind a pool sized by {@code poolConfig}. */
+    public static JdbcExecutionStore h2AutoServer(String filePath, PoolConfig poolConfig) {
+        return new JdbcExecutionStore("jdbc:h2:" + filePath + ";AUTO_SERVER=TRUE", poolConfig);
     }
 
     @Override
-    public synchronized void close() {
-        try {
-            conn.close();
-        } catch (SQLException ignored) {
+    public void close() {
+        if (ownedPool != null) {
+            ownedPool.close();
         }
     }
 
+    /**
+     * Borrows a connection and validates it. When every pooled connection is busy this waits up to
+     * the pool's connection timeout, then reports DOWN: a saturated pool cannot take new work.
+     */
     @Override
-    public synchronized boolean isHealthy() {
-        try {
+    public boolean isHealthy() {
+        try (Connection conn = dataSource.getConnection()) {
             return conn.isValid(HEALTH_CHECK_TIMEOUT_SECONDS);
         } catch (SQLException e) {
             log.warn("Persistence health check failed sqlState={}", e.getSQLState(), e);
@@ -623,12 +682,13 @@ public final class JdbcExecutionStore implements ExecutionStore {
             "execution_id, trace_id, goal, context_json, state, started_at, completed_at";
 
     @Override
-    public synchronized List<ExecutionRecord> findByFilter(ExecutionFilter filter) {
+    public List<ExecutionRecord> findByFilter(ExecutionFilter filter) {
         HistoryQuery where = HistoryQuery.from(filter, true);
         String sql = "SELECT " + HISTORY_COLUMNS + " FROM nexora_executions" + where.clause()
                 + " ORDER BY started_at DESC, execution_id DESC LIMIT ?";
         List<ExecutionRecord> results = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             int next = where.bind(ps);
             ps.setInt(next, filter.limit());
             try (ResultSet rs = ps.executeQuery()) {
@@ -643,10 +703,11 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
-    public synchronized long count(ExecutionFilter filter) {
+    public long count(ExecutionFilter filter) {
         HistoryQuery where = HistoryQuery.from(filter, false);
         String sql = "SELECT COUNT(*) FROM nexora_executions" + where.clause();
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
             where.bind(ps);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
@@ -735,7 +796,8 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 List.of());
     }
 
-    private ExecutionRecord withSteps(ExecutionRecord exec) throws SQLException {
+    /** Runs on the caller's connection so a lookup never needs a second one from the pool. */
+    private static ExecutionRecord withSteps(Connection conn, ExecutionRecord exec) throws SQLException {
         String sql = "SELECT * FROM nexora_steps WHERE execution_id = ? ORDER BY started_at";
         List<StepRecord> steps = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
