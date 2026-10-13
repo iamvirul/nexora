@@ -19,7 +19,7 @@ final class EngineFactory {
         NexoraEngine.Builder builder = NexoraEngine.builder().withWebhookSecret(secret);
 
         if (config.executionStore != null && !config.executionStore.isBlank()) {
-            builder.withExecutionStore(JdbcExecutionStore.h2AutoServer(config.executionStore));
+            builder.withExecutionStore(JdbcExecutionStore.h2AutoServer(config.executionStore, config.poolConfig()));
         }
 
         String otlpEndpoint = config.otel.endpoint != null && !config.otel.endpoint.isBlank()
