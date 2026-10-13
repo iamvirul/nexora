@@ -9,6 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 ### Added
 
+#### Persistence
+- **Connection pooling for `JdbcExecutionStore`** - The store now borrows a connection per call from a `DataSource` instead of serialising every call on one `synchronized` connection, so persistence calls run in parallel up to the pool size. New `JdbcExecutionStore(DataSource)` constructor for caller-managed pools (left open on `close()`), `JdbcExecutionStore(String, PoolConfig)` and `h2AutoServer(String, PoolConfig)` for a store-owned HikariCP pool, and `HikariCPDataSourceFactory`. The CLI reads `persistence.pool.maximumPoolSize`, `minimumIdle`, `connectionTimeoutMs` and `idleTimeoutMs` from `nexora.json` ([#28](https://github.com/iamvirul/nexora/issues/28))
+
+### Changed
+- **`JdbcExecutionStore(String jdbcUrl)` is backed by a single-connection HikariCP pool** - Same one-at-a-time behaviour as before for embedded H2 and tests. The CLI store now uses a pool of 10 by default; set `persistence.pool.maximumPoolSize` to change it. A named in-memory H2 URL without `DB_CLOSE_DELAY` gets `DB_CLOSE_DELAY=-1` so the database survives connection turnover, and an unnamed one (`jdbc:h2:mem:`) is rejected because every pooled connection would see its own empty database ([#28](https://github.com/iamvirul/nexora/issues/28))
+
+---
+
+## [0.3.0] - 2026-10-11
+### Added
+
 #### Core Engine
 - **Execution cancellation** - `NexoraEngine.cancel(executionId)` returns `CompletableFuture<Boolean>` (`true` if cancelled, `false` if already finished; fails with `ExecutionNotFoundException` for unknown ids). Pending steps are never started, running steps are interrupted, the execution is persisted as `CANCELLED`, and `PlanCancelledEvent` fires. Saga compensation runs for completed steps when enabled. Cancelled executions are not dead-lettered. New `ExecutionStatus.CANCELLED` and `ExecutionState.CANCELLED` ([#33](https://github.com/iamvirul/nexora/issues/33))
 
@@ -24,7 +35,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Code formatting enforced** - All Java code is formatted with palantir-java-format via the Spotless Maven plugin. `mvn verify` fails on unformatted code; run `mvn spotless:apply` to fix
 - **`/health/ready` semantics** - Readiness now reflects the engine's own dependencies instead of capability circuit state. An OPEN circuit no longer returns `503`; circuit states moved to the `capabilities` field of `GET /health` ([#31](https://github.com/iamvirul/nexora/issues/31))
 - **`PluginManager.loadPlugin(Path)` returns the plugin id** - Previously `void`. Source compatible; code compiled against an older `nexora-plugin-loader` must be recompiled ([#140](https://github.com/iamvirul/nexora/issues/140))
-
 - **`DagStepScheduler.schedule(Plan, ExecutionContext, AtomicBoolean)` replaced by `schedule(Plan, ExecutionContext, HaltSignal)`** - `HaltSignal` carries why the execution stopped (`DEADLINE` or `CANCELLED`) so the scheduler can report `TIMED_OUT` or `CANCELLED`. Deadline behaviour is unchanged ([#33](https://github.com/iamvirul/nexora/issues/33))
 - **Default webhook events include `CANCELLED`** - Intents without explicit `webhookEvents` are now notified when cancelled ([#33](https://github.com/iamvirul/nexora/issues/33))
 
@@ -141,7 +151,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-[Unreleased]: https://github.com/iamvirul/nexora/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/iamvirul/nexora/compare/v0.3.0...HEAD
 [0.1.0]: https://github.com/iamvirul/nexora/releases/tag/v0.1.0
 [0.2.0]: https://github.com/iamvirul/nexora/releases/tag/v0.2.0
-[0.2.1]: https://github.com/iamvirul/nexora/releases/tag/v0.2.1
+[0.2.1]: https://github.com/iamvirul/nexora/releases/tag/0.2.1
+[0.3.0]: https://github.com/iamvirul/nexora/releases/tag/v0.3.0

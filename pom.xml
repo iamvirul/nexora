@@ -66,6 +66,7 @@
         <logback.version>1.6.5</logback.version>
         <prometheus.version>0.16.0</prometheus.version>
         <h2.version>2.5.252</h2.version>
+        <hikaricp.version>7.0.2</hikaricp.version>
         
         <!-- Internal Module Versions -->
         <nexora-core.version>0.4.0-SNAPSHOT</nexora-core.version>
@@ -302,6 +303,11 @@
                 <groupId>com.h2database</groupId>
                 <artifactId>h2</artifactId>
                 <version>${h2.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zaxxer</groupId>
+                <artifactId>HikariCP</artifactId>
+                <version>${hikaricp.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
