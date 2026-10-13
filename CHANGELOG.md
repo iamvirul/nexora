@@ -10,9 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 #### Persistence
+- **Schema migrations with Flyway** - `JdbcExecutionStore` applies versioned migrations from `db/nexora/migration` during construction, before any query, and records them in `nexora_schema_history`. The location and table are namespaced so an application's own Flyway on the same database never picks them up. `V1__initial_schema.sql` holds the previous DDL. A failed or edited migration makes construction throw `IllegalStateException` naming the script. Stores created by earlier releases are baselined at version 0 and adopted in place, keeping their data. Migrations run over separate connections when the store owns its pool; a caller-supplied `DataSource` must allow at least two connections. Naming and authoring rules are in `CONTRIBUTING.md` ([#29](https://github.com/iamvirul/nexora/issues/29))
 - **Connection pooling for `JdbcExecutionStore`** - The store now borrows a connection per call from a `DataSource` instead of serialising every call on one `synchronized` connection, so persistence calls run in parallel up to the pool size. New `JdbcExecutionStore(DataSource)` constructor for caller-managed pools (left open on `close()`), `JdbcExecutionStore(String, PoolConfig)` and `h2AutoServer(String, PoolConfig)` for a store-owned HikariCP pool, and `HikariCPDataSourceFactory`. The CLI reads `persistence.pool.maximumPoolSize`, `minimumIdle`, `connectionTimeoutMs` and `idleTimeoutMs` from `nexora.json` ([#28](https://github.com/iamvirul/nexora/issues/28))
 
+#### Observability
+- **`migrations` readiness check** - `GET /health/ready`, `GET /health` and the `nexora_ready` gauge include a `migrations` check, `DOWN` when a schema migration is recorded as failed or the database schema is older than the one the store migrated to. New `ExecutionStore.isSchemaCurrent()` default method, `true` unless overridden ([#29](https://github.com/iamvirul/nexora/issues/29))
+
 ### Changed
+- **Portable upsert SQL** - `JdbcExecutionStore` replaces H2's `MERGE ... KEY` with standard `MERGE ... USING`, which runs on H2 and PostgreSQL 15+. `upsertStep` is now a single statement that keeps a recorded idempotency key when the update carries none ([#29](https://github.com/iamvirul/nexora/issues/29))
+- **Readiness reports four checks** - `checks` in `/health/ready` and `/health` now has `migrations` between `persistence` and `plugins`; clients that expect exactly three keys need updating ([#29](https://github.com/iamvirul/nexora/issues/29))
 - **`JdbcExecutionStore(String jdbcUrl)` is backed by a single-connection HikariCP pool** - Same one-at-a-time behaviour as before for embedded H2 and tests. The CLI store now uses a pool of 10 by default; set `persistence.pool.maximumPoolSize` to change it. A named in-memory H2 URL without `DB_CLOSE_DELAY` gets `DB_CLOSE_DELAY=-1` so the database survives connection turnover, and an unnamed one (`jdbc:h2:mem:`) is rejected because every pooled connection would see its own empty database ([#28](https://github.com/iamvirul/nexora/issues/28))
 
 ---

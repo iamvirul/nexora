@@ -33,8 +33,8 @@ groups:
           description: "Active executions have stayed above 0 for 10 minutes and may be stuck."
 
       - alert: NexoraNotReady
-        # Mirrors GET /health/ready — 1 when persistence, plugins, and the shared
-        # executor are all healthy, 0 otherwise. See nexora issue #31.
+        # Mirrors GET /health/ready — 1 when persistence, schema migrations, plugins, and
+        # the shared executor are all healthy, 0 otherwise. See nexora issues #31 and #29.
         expr: nexora_ready == 0
         for: 2m
         labels:
@@ -42,4 +42,4 @@ groups:
           service: nexora
         annotations:
           summary: "Nexora is not ready"
-          description: "GET /health/ready has been reporting DOWN for at least 2 minutes. Check persistence, plugin, and executor health."
+          description: "GET /health/ready has been reporting DOWN for at least 2 minutes. Check persistence, schema migration, plugin, and executor health."

@@ -60,13 +60,14 @@ The three health endpoints need no authentication, so kubelet probes and load ba
 
 ```bash
 curl http://localhost:9464/health/ready
-# 200 {"status":"UP","checks":{"persistence":"UP","plugins":"UP","executor":"UP"}}
-# 503 {"status":"DOWN","checks":{"persistence":"DOWN","plugins":"UP","executor":"UP"}}
+# 200 {"status":"UP","checks":{"persistence":"UP","migrations":"UP","plugins":"UP","executor":"UP"}}
+# 503 {"status":"DOWN","checks":{"persistence":"DOWN","migrations":"DOWN","plugins":"UP","executor":"UP"}}
 ```
 
 | Check | DOWN when |
 |-------|-----------|
 | `persistence` | The execution store connection fails validation (2s timeout). Reported UP when persistence is disabled. |
+| `migrations` | A schema migration is recorded as failed in `nexora_schema_history`, or the database schema is older than this release expects (for example after restoring an old backup). Reported UP when persistence is disabled. |
 | `plugins` | Any registered plugin is not `ACTIVE` (never activated, stuck initializing, or failed). |
 | `executor` | The engine's executor has been shut down. |
 
