@@ -78,6 +78,7 @@ class HealthEndpointsTest {
         JsonNode body = json(response);
         assertEquals("UP", body.get("status").asText());
         assertEquals("UP", body.at("/checks/persistence").asText());
+        assertEquals("UP", body.at("/checks/migrations").asText());
         assertEquals("UP", body.at("/checks/plugins").asText());
         assertEquals("UP", body.at("/checks/executor").asText());
     }

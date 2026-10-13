@@ -627,8 +627,10 @@ paths:
       operationId: readiness
       summary: Readiness probe
       description: |
-        `200` when persistence, plugins and the executor are all `UP`; `503` with the per-check
-        breakdown otherwise. Capability circuit state does not affect readiness.
+        `200` when persistence, schema migrations, plugins and the executor are all `UP`; `503`
+        with the per-check breakdown otherwise. `migrations` is `DOWN` when a schema migration is
+        recorded as failed or the database schema is older than this release expects. Capability
+        circuit state does not affect readiness.
       responses:
         '200':
           description: Ready.
@@ -638,7 +640,7 @@ paths:
                 $ref: '#/components/schemas/Readiness'
               examples:
                 ready:
-                  value: { status: UP, checks: { persistence: UP, plugins: UP, executor: UP } }
+                  value: { status: UP, checks: { persistence: UP, migrations: UP, plugins: UP, executor: UP } }
         '405':
           $ref: '#/components/responses/MethodNotAllowedText'
         '503':
@@ -649,7 +651,9 @@ paths:
                 $ref: '#/components/schemas/Readiness'
               examples:
                 dbDown:
-                  value: { status: DOWN, checks: { persistence: DOWN, plugins: UP, executor: UP } }
+                  value: { status: DOWN, checks: { persistence: DOWN, migrations: DOWN, plugins: UP, executor: UP } }
+                migrationFailed:
+                  value: { status: DOWN, checks: { persistence: UP, migrations: DOWN, plugins: UP, executor: UP } }
 
   /health:
     get:
@@ -669,7 +673,7 @@ paths:
                   value:
                     status: UP
                     version: 0.3.0
-                    checks: { persistence: UP, plugins: UP, executor: UP }
+                    checks: { persistence: UP, migrations: UP, plugins: UP, executor: UP }
                     capabilities:
                       - capabilityId: charge_card
                         state: CLOSED
@@ -689,7 +693,7 @@ paths:
                   value:
                     status: DOWN
                     version: 0.3.0
-                    checks: { persistence: DOWN, plugins: UP, executor: UP }
+                    checks: { persistence: DOWN, migrations: DOWN, plugins: UP, executor: UP }
                     capabilities: []
 
   /metrics:
@@ -1313,9 +1317,11 @@ components:
           const: UP
     ReadinessChecks:
       type: object
-      required: [persistence, plugins, executor]
+      required: [persistence, migrations, plugins, executor]
       properties:
         persistence:
+          $ref: '#/components/schemas/HealthStatus'
+        migrations:
           $ref: '#/components/schemas/HealthStatus'
         plugins:
           $ref: '#/components/schemas/HealthStatus'
