@@ -53,6 +53,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
     // Kept well under typical k8s probe timeouts so a stalled DB reports DOWN instead of hanging the probe.
     private static final int HEALTH_CHECK_TIMEOUT_SECONDS = 2;
+    // SQLSTATE for a unique or primary key violation; H2 and PostgreSQL both report it.
+    private static final String UNIQUE_VIOLATION = "23505";
+    // Once the racing insert has committed the row exists, so one retry always reaches WHEN MATCHED.
+    private static final int MERGE_ATTEMPTS = 2;
 
     private final DataSource dataSource;
     /** The pool this store opened itself and must close; null when the caller owns the DataSource. */
@@ -128,16 +132,17 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 (execution_id, trace_id, goal, context_json, state, started_at, completed_at)
                 VALUES (s.execution_id, s.trace_id, s.goal, s.context_json, s.state, s.started_at, s.completed_at)
         """;
-        try (Connection conn = dataSource.getConnection();
-                PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, record.executionId());
-            ps.setString(2, record.traceId());
-            ps.setString(3, record.goal());
-            ps.setString(4, JSON.writeValueAsString(record.context()));
-            ps.setString(5, record.state().name());
-            ps.setTimestamp(6, Timestamp.from(record.startedAt()));
-            ps.setTimestamp(7, record.completedAt() != null ? Timestamp.from(record.completedAt()) : null);
-            ps.executeUpdate();
+        try (Connection conn = dataSource.getConnection()) {
+            String contextJson = JSON.writeValueAsString(record.context());
+            executeMerge(conn, sql, ps -> {
+                ps.setString(1, record.executionId());
+                ps.setString(2, record.traceId());
+                ps.setString(3, record.goal());
+                ps.setString(4, contextJson);
+                ps.setString(5, record.state().name());
+                ps.setTimestamp(6, Timestamp.from(record.startedAt()));
+                ps.setTimestamp(7, record.completedAt() != null ? Timestamp.from(record.completedAt()) : null);
+            });
         } catch (Exception e) {
             log.error("Failed to create execution record executionId={}", record.executionId(), e);
         }
@@ -182,22 +187,47 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 VALUES (s.execution_id, s.step_id, s.capability_id, s.idempotency_key, s.state,
                         s.failure_code, s.failure_message, s.started_at, s.completed_at, s.duration_ms)
         """;
-        try (Connection conn = dataSource.getConnection();
-                PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, executionId);
-            ps.setString(2, step.stepId());
-            ps.setString(3, step.capabilityId());
-            ps.setString(4, step.idempotencyKey());
-            ps.setString(5, step.state().name());
-            ps.setString(6, step.failureCode());
-            ps.setString(7, step.failureMessage());
-            ps.setTimestamp(8, step.startedAt() != null ? Timestamp.from(step.startedAt()) : null);
-            ps.setTimestamp(9, step.completedAt() != null ? Timestamp.from(step.completedAt()) : null);
-            ps.setLong(10, step.durationMs());
-            ps.executeUpdate();
+        try (Connection conn = dataSource.getConnection()) {
+            executeMerge(conn, sql, ps -> {
+                ps.setString(1, executionId);
+                ps.setString(2, step.stepId());
+                ps.setString(3, step.capabilityId());
+                ps.setString(4, step.idempotencyKey());
+                ps.setString(5, step.state().name());
+                ps.setString(6, step.failureCode());
+                ps.setString(7, step.failureMessage());
+                ps.setTimestamp(8, step.startedAt() != null ? Timestamp.from(step.startedAt()) : null);
+                ps.setTimestamp(9, step.completedAt() != null ? Timestamp.from(step.completedAt()) : null);
+                ps.setLong(10, step.durationMs());
+            });
         } catch (SQLException e) {
             log.error("Failed to upsert step executionId={} stepId={}", executionId, step.stepId(), e);
         }
+    }
+
+    /**
+     * Runs an upsert MERGE, retrying when it loses an insert race. Two concurrent MERGEs on a key
+     * that does not exist yet can both take WHEN NOT MATCHED, and the later INSERT then fails on the
+     * primary key (H2 and PostgreSQL alike). The retry finds the row and takes WHEN MATCHED instead.
+     */
+    private static void executeMerge(Connection conn, String sql, StatementBinder binder) throws SQLException {
+        for (int attempt = 1; ; attempt++) {
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                binder.bind(ps);
+                ps.executeUpdate();
+                return;
+            } catch (SQLException e) {
+                if (!UNIQUE_VIOLATION.equals(e.getSQLState()) || attempt == MERGE_ATTEMPTS) {
+                    throw e;
+                }
+                log.debug("Upsert lost an insert race, retrying as an update attempt={}", attempt);
+            }
+        }
+    }
+
+    @FunctionalInterface
+    private interface StatementBinder {
+        void bind(PreparedStatement ps) throws SQLException;
     }
 
     @Override

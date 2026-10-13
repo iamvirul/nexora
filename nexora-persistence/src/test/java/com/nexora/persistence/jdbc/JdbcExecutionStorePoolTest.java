@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -71,6 +72,52 @@ class JdbcExecutionStorePoolTest {
             assertEquals(CONCURRENT_EXECUTIONS, store.count(ExecutionFilter.all()));
         } finally {
             workers.shutdownNow();
+        }
+    }
+
+    @Test
+    void concurrentWritesToANewStepAreNeverLost() throws Exception {
+        int writers = 8;
+        int rounds = 200;
+        try (HikariDataSource wide = HikariCPDataSourceFactory.create(
+                "jdbc:h2:mem:race_" + System.nanoTime() + ";DB_CLOSE_DELAY=-1",
+                new PoolConfig(writers, writers, 5_000, 0))) {
+            JdbcExecutionStore store = new JdbcExecutionStore(wide);
+            ExecutorService workers = Executors.newFixedThreadPool(writers);
+            try {
+                List<String> lostKeys = new ArrayList<>();
+                for (int round = 0; round < rounds; round++) {
+                    String executionId = "race-" + round;
+                    store.createExecution(new ExecutionRecord(
+                            executionId, "trace", "goal", Map.of(), ExecutionState.RUNNING, T0, null, List.of()));
+                    raceOnNewStep(store, workers, executionId, writers);
+                    // Serially the keyed write's key always survives (COALESCE keeps it); null means it was dropped.
+                    if (store.findById(executionId).orElseThrow().steps().get(0).idempotencyKey() == null) {
+                        lostKeys.add(executionId);
+                    }
+                }
+                assertEquals(List.of(), lostKeys);
+            } finally {
+                workers.shutdownNow();
+            }
+        }
+    }
+
+    /** One writer records the step start with a key, the rest write keyless updates, all released at once. */
+    private static void raceOnNewStep(
+            JdbcExecutionStore store, ExecutorService workers, String executionId, int writers) throws Exception {
+        CyclicBarrier barrier = new CyclicBarrier(writers);
+        List<Future<?>> writes = new ArrayList<>();
+        for (int i = 0; i < writers; i++) {
+            String key = i == 0 ? executionId + "-key" : null;
+            writes.add(workers.submit(() -> {
+                barrier.await();
+                store.upsertStep(executionId, StepRecord.started("step", "cap", key, T0));
+                return null;
+            }));
+        }
+        for (Future<?> write : writes) {
+            write.get(DEADLOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         }
     }
 
