@@ -58,6 +58,15 @@ public interface ExecutionStore extends AutoCloseable {
         return true;
     }
 
+    /**
+     * Readiness check for the backing schema: false when a migration failed or the schema is older
+     * than the one this store migrated to at startup. Must not throw. Stores without a managed
+     * schema report true.
+     */
+    default boolean isSchemaCurrent() {
+        return true;
+    }
+
     // --- Dead Letter Queue ---
 
     /** Persists a new dead letter record in PENDING state. */

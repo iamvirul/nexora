@@ -67,6 +67,7 @@
         <prometheus.version>0.16.0</prometheus.version>
         <h2.version>2.5.252</h2.version>
         <hikaricp.version>7.0.2</hikaricp.version>
+        <flyway.version>13.8.1</flyway.version>
         
         <!-- Internal Module Versions -->
         <nexora-core.version>0.4.0-SNAPSHOT</nexora-core.version>
@@ -308,6 +309,16 @@
                 <groupId>com.zaxxer</groupId>
                 <artifactId>HikariCP</artifactId>
                 <version>${hikaricp.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-core</artifactId>
+                <version>${flyway.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-database-postgresql</artifactId>
+                <version>${flyway.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

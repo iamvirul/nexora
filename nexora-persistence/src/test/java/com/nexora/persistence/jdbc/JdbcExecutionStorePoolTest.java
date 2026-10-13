@@ -106,14 +106,16 @@ class JdbcExecutionStorePoolTest {
     }
 
     @Test
-    void inMemoryH2SurvivesThePoolRetiringItsLastConnection() {
-        try (HikariDataSource singleConnection = HikariCPDataSourceFactory.create(
-                "jdbc:h2:mem:retire_" + System.nanoTime(), PoolConfig.singleConnection())) {
-            JdbcExecutionStore store = new JdbcExecutionStore(singleConnection);
+    void inMemoryH2SurvivesThePoolRetiringItsLastConnection() throws Exception {
+        // minimumIdle 0 so the pool does not refill: a refill racing the close would keep the database alive.
+        try (HikariDataSource idlePool = HikariCPDataSourceFactory.create(
+                "jdbc:h2:mem:retire_" + System.nanoTime(), new PoolConfig(POOL_SIZE, 0, 5_000, 0))) {
+            JdbcExecutionStore store = new JdbcExecutionStore(idlePool);
             runExecutionLifecycle(store, "before-retire");
 
-            // What maxLifetime and idleTimeout do in production: the only open connection is closed.
-            singleConnection.getHikariPoolMXBean().softEvictConnections();
+            // What maxLifetime and idleTimeout do in production: every open connection, all idle, is closed.
+            idlePool.getHikariPoolMXBean().softEvictConnections();
+            awaitNoOpenConnections(idlePool);
 
             assertTrue(store.findById("before-retire").isPresent());
         }
@@ -127,6 +129,17 @@ class JdbcExecutionStorePoolTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> HikariCPDataSourceFactory.create("jdbc:h2:mem:;MODE=PostgreSQL", PoolConfig.singleConnection()));
+    }
+
+    /** Eviction closes connections asynchronously; wait until none is open so H2 really sees the last one go. */
+    private static void awaitNoOpenConnections(HikariDataSource pool) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (pool.getHikariPoolMXBean().getTotalConnections() > 0) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("Pool still holds connections after eviction");
+            }
+            Thread.sleep(10);
+        }
     }
 
     /** Mirrors the engine's write pattern: create, step start, step completion (no key), finish, read back. */
