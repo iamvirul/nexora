@@ -96,13 +96,37 @@ class JdbcExecutionStorePoolTest {
     }
 
     @Test
-    void constructorFailsFastWithoutLeakingUrlParameters() {
+    void constructorFailsFastWithoutLeakingTheUrl() {
         IllegalStateException error = assertThrows(
                 IllegalStateException.class,
                 () -> new JdbcExecutionStore("jdbc:nexora-no-such-driver:db;password=hunter2"));
 
-        assertTrue(error.getMessage().contains("jdbc:nexora-no-such-driver:db"));
+        assertTrue(error.getMessage().contains("jdbc:nexora-no-such-driver"));
         assertFalse(error.getMessage().contains("hunter2"));
+    }
+
+    @Test
+    void inMemoryH2SurvivesThePoolRetiringItsLastConnection() {
+        try (HikariDataSource singleConnection = HikariCPDataSourceFactory.create(
+                "jdbc:h2:mem:retire_" + System.nanoTime(), PoolConfig.singleConnection())) {
+            JdbcExecutionStore store = new JdbcExecutionStore(singleConnection);
+            runExecutionLifecycle(store, "before-retire");
+
+            // What maxLifetime and idleTimeout do in production: the only open connection is closed.
+            singleConnection.getHikariPoolMXBean().softEvictConnections();
+
+            assertTrue(store.findById("before-retire").isPresent());
+        }
+    }
+
+    @Test
+    void unnamedInMemoryH2IsRejectedBecauseEachConnectionGetsItsOwnDatabase() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> HikariCPDataSourceFactory.create("jdbc:h2:mem:", PoolConfig.singleConnection()));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> HikariCPDataSourceFactory.create("jdbc:h2:mem:;MODE=PostgreSQL", PoolConfig.singleConnection()));
     }
 
     /** Mirrors the engine's write pattern: create, step start, step completion (no key), finish, read back. */

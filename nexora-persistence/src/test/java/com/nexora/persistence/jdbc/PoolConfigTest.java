@@ -2,6 +2,7 @@ package com.nexora.persistence.jdbc;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.zaxxer.hikari.HikariDataSource;
@@ -61,11 +62,32 @@ class PoolConfigTest {
     }
 
     @Test
-    void redactDropsUrlParameters() {
-        assertEquals("jdbc:h2:./data", HikariCPDataSourceFactory.redact("jdbc:h2:./data;PASSWORD=x;AUTO_SERVER=TRUE"));
+    void redactKeepsOnlyTheSubprotocol() {
+        assertEquals("jdbc:h2", HikariCPDataSourceFactory.redact("jdbc:h2:./data;PASSWORD=x;AUTO_SERVER=TRUE"));
+        assertEquals("jdbc:postgresql", HikariCPDataSourceFactory.redact("jdbc:postgresql://db/nexora?password=x"));
+        assertEquals("jdbc:oracle", HikariCPDataSourceFactory.redact("jdbc:oracle:thin:scott/tiger@//db:1521/svc"));
+        assertEquals("jdbc:mysql", HikariCPDataSourceFactory.redact("jdbc:mysql://scott:tiger@db:3306/nexora"));
+        assertEquals("jdbc", HikariCPDataSourceFactory.redact("not-a-jdbc-url:scott:tiger"));
+    }
+
+    @Test
+    void connectionErrorNeverContainsCredentialsBeforeTheHost() {
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class,
+                () -> HikariCPDataSourceFactory.create(
+                        "jdbc:nexora-no-such-driver:thin:scott/tiger@//db:1521/svc", PoolConfig.singleConnection()));
+
+        assertFalse(error.getMessage().contains("tiger"));
+    }
+
+    @Test
+    void namedInMemoryH2GetsAnUnboundedLifetime() {
         assertEquals(
-                "jdbc:postgresql://db/nexora",
-                HikariCPDataSourceFactory.redact("jdbc:postgresql://db/nexora?password=x"));
-        assertEquals("jdbc:h2:mem:plain", HikariCPDataSourceFactory.redact("jdbc:h2:mem:plain"));
+                "jdbc:h2:mem:nexora;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
+                HikariCPDataSourceFactory.withInMemoryLifetime("jdbc:h2:mem:nexora;MODE=PostgreSQL"));
+        assertEquals(
+                "jdbc:h2:mem:nexora;db_close_delay=5",
+                HikariCPDataSourceFactory.withInMemoryLifetime("jdbc:h2:mem:nexora;db_close_delay=5"));
+        assertEquals("jdbc:h2:./data", HikariCPDataSourceFactory.withInMemoryLifetime("jdbc:h2:./data"));
     }
 }
