@@ -77,6 +77,8 @@ The embedded HTTP server in `nexora-cli` serves execution history from the store
 
 ## PostgreSQL
 
+Requires PostgreSQL 15 or later, the first version with standard `MERGE`. The store refuses older servers at construction, before migrating anything. Verified against 15.19 and 18.6.
+
 Add the PostgreSQL JDBC driver (`org.postgresql:postgresql`) to your application, then either let the store own a pool:
 
 ```java
