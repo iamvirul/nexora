@@ -34,9 +34,12 @@ import org.slf4j.LoggerFactory;
 
 /**
  * JDBC-backed ExecutionStore. Ships with H2 as the default embedded database.
- * For production, supply a DataSource URL pointing at PostgreSQL, MySQL, etc.
+ * SQL is standard (MERGE ... USING for upserts), so it also runs on PostgreSQL 15+; older
+ * PostgreSQL servers are rejected at construction, before anything is migrated.
  *
- * Schema is created automatically on first use (DDL is idempotent).
+ * Schema: Flyway applies the migrations under {@code db/nexora/migration} during construction,
+ * before any query; a failed migration fails construction. Migrations are versioned in
+ * {@code nexora_schema_history}, separate from any history table the host application keeps.
  *
  * Connection management: every call borrows a connection from a {@link DataSource} and returns
  * it before the call ends, so calls run in parallel up to the pool size. A call never holds more
@@ -50,19 +53,34 @@ public final class JdbcExecutionStore implements ExecutionStore {
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
     // Kept well under typical k8s probe timeouts so a stalled DB reports DOWN instead of hanging the probe.
     private static final int HEALTH_CHECK_TIMEOUT_SECONDS = 2;
+    // SQLSTATE for a unique or primary key violation; H2 and PostgreSQL both report it.
+    private static final String UNIQUE_VIOLATION = "23505";
+    // Once the racing insert has committed the row exists, so one retry always reaches WHEN MATCHED.
+    private static final int MERGE_ATTEMPTS = 2;
 
     private final DataSource dataSource;
     /** The pool this store opened itself and must close; null when the caller owns the DataSource. */
     private final HikariDataSource ownedPool;
 
+    private final SchemaMigrator schema;
+
     /**
      * Uses a caller-managed DataSource. {@link #close()} leaves it open, since the caller may
-     * share it with other components.
+     * share it with other components. Migrations borrow two of its connections at once.
+     *
+     * @throws IllegalArgumentException if the DataSource is a HikariCP pool of fewer than 2 connections
+     * @throws IllegalStateException if the database is unsupported or a schema migration fails
      */
     public JdbcExecutionStore(DataSource dataSource) {
+        this(dataSource, SchemaMigrator.DEFAULT_LOCATION);
+    }
+
+    /** Migrates from {@code migrationLocation} instead of the shipped migrations; lets tests supply broken ones. */
+    JdbcExecutionStore(DataSource dataSource, String migrationLocation) {
         this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
         this.ownedPool = null;
-        initSchema();
+        DatabaseCompatibility.require(dataSource);
+        this.schema = SchemaMigrator.migrate(dataSource, migrationLocation);
     }
 
     /** Single-connection store, for embedded H2 and tests. Calls are serialised on that connection. */
@@ -70,13 +88,19 @@ public final class JdbcExecutionStore implements ExecutionStore {
         this(jdbcUrl, PoolConfig.singleConnection());
     }
 
-    /** Opens and owns a HikariCP pool against {@code jdbcUrl}; {@link #close()} shuts it down. */
+    /**
+     * Opens and owns a HikariCP pool against {@code jdbcUrl}; {@link #close()} shuts it down.
+     *
+     * @throws IllegalStateException if the database is unreachable or unsupported, or a schema migration fails
+     */
     public JdbcExecutionStore(String jdbcUrl, PoolConfig poolConfig) {
         HikariDataSource pool = HikariCPDataSourceFactory.create(jdbcUrl, poolConfig);
         this.dataSource = pool;
         this.ownedPool = pool;
         try {
-            initSchema();
+            DatabaseCompatibility.require(pool);
+            // Migrate over separate connections: Flyway needs two at once, more than a single-connection pool has.
+            this.schema = SchemaMigrator.migrate(pool.getJdbcUrl(), SchemaMigrator.DEFAULT_LOCATION);
         } catch (RuntimeException e) {
             pool.close();
             throw e;
@@ -93,102 +117,32 @@ public final class JdbcExecutionStore implements ExecutionStore {
         return new JdbcExecutionStore("jdbc:h2:mem:nexora_" + System.nanoTime() + ";DB_CLOSE_DELAY=-1");
     }
 
-    private void initSchema() {
-        try (Connection conn = dataSource.getConnection();
-                var stmt = conn.createStatement()) {
-            stmt.execute("""
-                CREATE TABLE IF NOT EXISTS nexora_executions (
-                    execution_id  VARCHAR(36)  PRIMARY KEY,
-                    trace_id      VARCHAR(64),
-                    goal          TEXT,
-                    context_json  TEXT,
-                    state         VARCHAR(30)  NOT NULL,
-                    started_at    TIMESTAMP    NOT NULL,
-                    completed_at  TIMESTAMP
-                )
-            """);
-            // Backs the history API's keyset pagination (ORDER BY started_at DESC, execution_id DESC).
-            stmt.execute("CREATE INDEX IF NOT EXISTS idx_nexora_executions_started "
-                    + "ON nexora_executions (started_at, execution_id)");
-            stmt.execute("""
-                CREATE TABLE IF NOT EXISTS nexora_steps (
-                    execution_id     VARCHAR(36)  NOT NULL,
-                    step_id          VARCHAR(200) NOT NULL,
-                    capability_id    VARCHAR(200) NOT NULL,
-                    idempotency_key  VARCHAR(36),
-                    state            VARCHAR(30)  NOT NULL,
-                    failure_code     VARCHAR(100),
-                    failure_message  TEXT,
-                    started_at       TIMESTAMP,
-                    completed_at     TIMESTAMP,
-                    duration_ms      BIGINT,
-                    PRIMARY KEY (execution_id, step_id),
-                    FOREIGN KEY (execution_id) REFERENCES nexora_executions(execution_id)
-                )
-            """);
-            stmt.execute("""
-                CREATE TABLE IF NOT EXISTS nexora_webhook_deliveries (
-                    delivery_id      VARCHAR(36)  PRIMARY KEY,
-                    execution_id     VARCHAR(36)  NOT NULL,
-                    url              TEXT         NOT NULL,
-                    status_code      INT          NOT NULL,
-                    attempt          INT          NOT NULL,
-                    successful       BOOLEAN      NOT NULL,
-                    timestamp        TIMESTAMP    NOT NULL,
-                    error_message    TEXT,
-                    FOREIGN KEY (execution_id) REFERENCES nexora_executions(execution_id)
-                )
-            """);
-            stmt.execute("""
-                CREATE TABLE IF NOT EXISTS nexora_dead_letters (
-                    id               VARCHAR(36)  PRIMARY KEY,
-                    execution_id     VARCHAR(36)  NOT NULL,
-                    goal             TEXT,
-                    context_json     TEXT,
-                    failure_code     VARCHAR(100),
-                    failure_message  TEXT,
-                    failed_at        TIMESTAMP    NOT NULL,
-                    review_state     VARCHAR(30)  NOT NULL DEFAULT 'PENDING',
-                    resolve_reason   TEXT
-                )
-            """);
-            stmt.execute("""
-                CREATE TABLE IF NOT EXISTS nexora_schedules (
-                    id                   VARCHAR(36)   PRIMARY KEY,
-                    cron_expression      VARCHAR(120)  NOT NULL,
-                    goal                 TEXT          NOT NULL,
-                    context_json         TEXT,
-                    missed_fire_policy   VARCHAR(20)   NOT NULL DEFAULT 'FIRE_ONCE',
-                    created_at           TIMESTAMP     NOT NULL,
-                    last_fired_at        TIMESTAMP,
-                    next_fire_at         TIMESTAMP     NOT NULL,
-                    last_status          VARCHAR(20)   NOT NULL DEFAULT 'NEVER_RUN',
-                    active               BOOLEAN       NOT NULL DEFAULT TRUE
-                )
-            """);
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to initialise persistence schema", e);
-        }
-    }
-
     @Override
     public void createExecution(ExecutionRecord record) {
         String sql = """
-            MERGE INTO nexora_executions
+            MERGE INTO nexora_executions AS t
+            USING (VALUES (CAST(? AS VARCHAR(36)), CAST(? AS VARCHAR(64)), CAST(? AS TEXT), CAST(? AS TEXT),
+                           CAST(? AS VARCHAR(30)), CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP)))
+                AS s (execution_id, trace_id, goal, context_json, state, started_at, completed_at)
+            ON t.execution_id = s.execution_id
+            WHEN MATCHED THEN UPDATE SET
+                trace_id = s.trace_id, goal = s.goal, context_json = s.context_json, state = s.state,
+                started_at = s.started_at, completed_at = s.completed_at
+            WHEN NOT MATCHED THEN INSERT
                 (execution_id, trace_id, goal, context_json, state, started_at, completed_at)
-            KEY (execution_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (s.execution_id, s.trace_id, s.goal, s.context_json, s.state, s.started_at, s.completed_at)
         """;
-        try (Connection conn = dataSource.getConnection();
-                PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, record.executionId());
-            ps.setString(2, record.traceId());
-            ps.setString(3, record.goal());
-            ps.setString(4, JSON.writeValueAsString(record.context()));
-            ps.setString(5, record.state().name());
-            ps.setTimestamp(6, Timestamp.from(record.startedAt()));
-            ps.setTimestamp(7, record.completedAt() != null ? Timestamp.from(record.completedAt()) : null);
-            ps.executeUpdate();
+        try (Connection conn = dataSource.getConnection()) {
+            String contextJson = JSON.writeValueAsString(record.context());
+            executeMerge(conn, sql, ps -> {
+                ps.setString(1, record.executionId());
+                ps.setString(2, record.traceId());
+                ps.setString(3, record.goal());
+                ps.setString(4, contextJson);
+                ps.setString(5, record.state().name());
+                ps.setTimestamp(6, Timestamp.from(record.startedAt()));
+                ps.setTimestamp(7, record.completedAt() != null ? Timestamp.from(record.completedAt()) : null);
+            });
         } catch (Exception e) {
             log.error("Failed to create execution record executionId={}", record.executionId(), e);
         }
@@ -212,64 +166,68 @@ public final class JdbcExecutionStore implements ExecutionStore {
 
     @Override
     public void upsertStep(String executionId, StepRecord step) {
+        // Completion and failure updates carry no idempotency key. COALESCE keeps the key recorded at
+        // step start, which replay needs to avoid repeating side effects.
+        String sql = """
+            MERGE INTO nexora_steps AS t
+            USING (VALUES (CAST(? AS VARCHAR(36)), CAST(? AS VARCHAR(200)), CAST(? AS VARCHAR(200)),
+                           CAST(? AS VARCHAR(36)), CAST(? AS VARCHAR(30)), CAST(? AS VARCHAR(100)), CAST(? AS TEXT),
+                           CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), CAST(? AS BIGINT)))
+                AS s (execution_id, step_id, capability_id, idempotency_key, state,
+                      failure_code, failure_message, started_at, completed_at, duration_ms)
+            ON t.execution_id = s.execution_id AND t.step_id = s.step_id
+            WHEN MATCHED THEN UPDATE SET
+                capability_id = s.capability_id,
+                idempotency_key = COALESCE(s.idempotency_key, t.idempotency_key),
+                state = s.state, failure_code = s.failure_code, failure_message = s.failure_message,
+                started_at = s.started_at, completed_at = s.completed_at, duration_ms = s.duration_ms
+            WHEN NOT MATCHED THEN INSERT
+                (execution_id, step_id, capability_id, idempotency_key, state,
+                 failure_code, failure_message, started_at, completed_at, duration_ms)
+                VALUES (s.execution_id, s.step_id, s.capability_id, s.idempotency_key, s.state,
+                        s.failure_code, s.failure_message, s.started_at, s.completed_at, s.duration_ms)
+        """;
         try (Connection conn = dataSource.getConnection()) {
-            // Completion and failure updates carry no idempotency key. Replacing the whole row would
-            // erase the key recorded at step start, which replay needs to avoid repeating side effects.
-            if (step.idempotencyKey() == null && updateStepKeepingKey(conn, executionId, step)) {
-                return;
-            }
-            mergeStep(conn, executionId, step);
+            executeMerge(conn, sql, ps -> {
+                ps.setString(1, executionId);
+                ps.setString(2, step.stepId());
+                ps.setString(3, step.capabilityId());
+                ps.setString(4, step.idempotencyKey());
+                ps.setString(5, step.state().name());
+                ps.setString(6, step.failureCode());
+                ps.setString(7, step.failureMessage());
+                ps.setTimestamp(8, step.startedAt() != null ? Timestamp.from(step.startedAt()) : null);
+                ps.setTimestamp(9, step.completedAt() != null ? Timestamp.from(step.completedAt()) : null);
+                ps.setLong(10, step.durationMs());
+            });
         } catch (SQLException e) {
             log.error("Failed to upsert step executionId={} stepId={}", executionId, step.stepId(), e);
         }
     }
 
-    private static void mergeStep(Connection conn, String executionId, StepRecord step) throws SQLException {
-        String sql = """
-            MERGE INTO nexora_steps
-                (execution_id, step_id, capability_id, idempotency_key, state,
-                 failure_code, failure_message, started_at, completed_at, duration_ms)
-            KEY (execution_id, step_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """;
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, executionId);
-            ps.setString(2, step.stepId());
-            ps.setString(3, step.capabilityId());
-            ps.setString(4, step.idempotencyKey());
-            ps.setString(5, step.state().name());
-            ps.setString(6, step.failureCode());
-            ps.setString(7, step.failureMessage());
-            ps.setTimestamp(8, step.startedAt() != null ? Timestamp.from(step.startedAt()) : null);
-            ps.setTimestamp(9, step.completedAt() != null ? Timestamp.from(step.completedAt()) : null);
-            ps.setLong(10, step.durationMs());
-            ps.executeUpdate();
+    /**
+     * Runs an upsert MERGE, retrying when it loses an insert race. Two concurrent MERGEs on a key
+     * that does not exist yet can both take WHEN NOT MATCHED, and the later INSERT then fails on the
+     * primary key (H2 and PostgreSQL alike). The retry finds the row and takes WHEN MATCHED instead.
+     */
+    private static void executeMerge(Connection conn, String sql, StatementBinder binder) throws SQLException {
+        for (int attempt = 1; ; attempt++) {
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                binder.bind(ps);
+                ps.executeUpdate();
+                return;
+            } catch (SQLException e) {
+                if (!UNIQUE_VIOLATION.equals(e.getSQLState()) || attempt == MERGE_ATTEMPTS) {
+                    throw e;
+                }
+                log.debug("Upsert lost an insert race, retrying as an update attempt={}", attempt);
+            }
         }
     }
 
-    /** Updates an existing step row without touching its idempotency key; false if no row exists yet. */
-    private static boolean updateStepKeepingKey(Connection conn, String executionId, StepRecord step) {
-        String sql = """
-            UPDATE nexora_steps
-               SET capability_id = ?, state = ?, failure_code = ?, failure_message = ?,
-                   started_at = ?, completed_at = ?, duration_ms = ?
-             WHERE execution_id = ? AND step_id = ?
-        """;
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, step.capabilityId());
-            ps.setString(2, step.state().name());
-            ps.setString(3, step.failureCode());
-            ps.setString(4, step.failureMessage());
-            ps.setTimestamp(5, step.startedAt() != null ? Timestamp.from(step.startedAt()) : null);
-            ps.setTimestamp(6, step.completedAt() != null ? Timestamp.from(step.completedAt()) : null);
-            ps.setLong(7, step.durationMs());
-            ps.setString(8, executionId);
-            ps.setString(9, step.stepId());
-            return ps.executeUpdate() > 0;
-        } catch (SQLException e) {
-            log.error("Failed to update step executionId={} stepId={}", executionId, step.stepId(), e);
-            return true; // already logged; don't retry the same failing write as a MERGE
-        }
+    @FunctionalInterface
+    private interface StatementBinder {
+        void bind(PreparedStatement ps) throws SQLException;
     }
 
     @Override
@@ -674,6 +632,16 @@ public final class JdbcExecutionStore implements ExecutionStore {
             return conn.isValid(HEALTH_CHECK_TIMEOUT_SECONDS);
         } catch (SQLException e) {
             log.warn("Persistence health check failed sqlState={}", e.getSQLState(), e);
+            return false;
+        }
+    }
+
+    @Override
+    public boolean isSchemaCurrent() {
+        try (Connection conn = dataSource.getConnection()) {
+            return schema.isCurrent(conn);
+        } catch (SQLException e) {
+            log.warn("Persistence schema check failed sqlState={}", e.getSQLState(), e);
             return false;
         }
     }

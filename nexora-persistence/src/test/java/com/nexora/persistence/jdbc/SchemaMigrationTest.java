@@ -1,0 +1,210 @@
+package com.nexora.persistence.jdbc;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.nexora.persistence.ExecutionRecord;
+import com.nexora.persistence.ExecutionState;
+import com.nexora.persistence.MissedFirePolicy;
+import com.nexora.persistence.ScheduleRecord;
+import com.nexora.persistence.ScheduleStatus;
+import com.zaxxer.hikari.HikariDataSource;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import org.h2.jdbcx.JdbcDataSource;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+class SchemaMigrationTest {
+
+    private static final Instant T0 = Instant.parse("2026-10-01T10:00:00Z");
+    private static final String BROKEN_LOCATION = "classpath:db/nexora-test/broken";
+    private static final String EDITED_LOCATION = "classpath:db/nexora-test/edited";
+
+    private JdbcDataSource database;
+
+    @BeforeEach
+    void setUp() {
+        database = new JdbcDataSource();
+        database.setURL("jdbc:h2:mem:migration_" + System.nanoTime() + ";DB_CLOSE_DELAY=-1");
+    }
+
+    @Test
+    void freshDatabaseIsMigratedToV1OnConstruction() throws SQLException {
+        JdbcExecutionStore store = new JdbcExecutionStore(database);
+
+        assertEquals(List.of("1:true"), history());
+        assertTrue(store.isSchemaCurrent());
+    }
+
+    @Test
+    void constructingTwiceOnTheSameDatabaseAppliesNothingNew() throws SQLException {
+        new JdbcExecutionStore(database);
+        JdbcExecutionStore second = new JdbcExecutionStore(database);
+
+        assertEquals(List.of("1:true"), history());
+        assertTrue(second.isSchemaCurrent());
+    }
+
+    @Test
+    void failingMigrationAbortsConstructionNamingTheScript() {
+        IllegalStateException error =
+                assertThrows(IllegalStateException.class, () -> new JdbcExecutionStore(database, BROKEN_LOCATION));
+
+        assertTrue(error.getMessage().startsWith("Persistence schema migration failed"), error.getMessage());
+        assertTrue(error.getMessage().contains("V1__broken.sql"), error.getMessage());
+    }
+
+    @Test
+    void editedAppliedMigrationAbortsConstruction() {
+        new JdbcExecutionStore(database);
+
+        IllegalStateException error =
+                assertThrows(IllegalStateException.class, () -> new JdbcExecutionStore(database, EDITED_LOCATION));
+
+        assertTrue(error.getMessage().contains("checksum mismatch"), error.getMessage());
+    }
+
+    @Test
+    void missingMigrationLocationAbortsConstruction() {
+        assertThrows(
+                IllegalStateException.class,
+                () -> new JdbcExecutionStore(database, "classpath:db/nexora-test/does-not-exist"));
+    }
+
+    @Test
+    void locationWithoutMigrationsAbortsConstruction() {
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class, () -> new JdbcExecutionStore(database, "classpath:db/nexora-test/empty"));
+
+        assertTrue(error.getMessage().contains("No persistence schema migrations found"), error.getMessage());
+    }
+
+    @Test
+    void preFlywayStoreIsAdoptedKeepingItsDataAndGainingMissingTables() throws SQLException {
+        // An early release's store: executions only, no schedules table, no Flyway history.
+        execute("CREATE TABLE nexora_executions (execution_id VARCHAR(36) PRIMARY KEY, trace_id VARCHAR(64),"
+                + " goal TEXT, context_json TEXT, state VARCHAR(30) NOT NULL, started_at TIMESTAMP NOT NULL,"
+                + " completed_at TIMESTAMP)");
+        execute("INSERT INTO nexora_executions (execution_id, context_json, state, started_at)"
+                + " VALUES ('legacy', '{}', 'COMPLETED', TIMESTAMP '2026-01-01 00:00:00')");
+
+        JdbcExecutionStore store = new JdbcExecutionStore(database);
+        store.createSchedule(schedule("nightly"));
+
+        assertEquals(List.of("0:true", "1:true"), history());
+        assertEquals(
+                ExecutionState.COMPLETED, store.findById("legacy").orElseThrow().state());
+        assertTrue(store.findScheduleById("nightly").isPresent());
+    }
+
+    @Test
+    void schemaSharedWithAnotherApplicationStillGetsV1() throws SQLException {
+        execute("CREATE TABLE host_app_orders (id INT PRIMARY KEY)");
+
+        JdbcExecutionStore store = new JdbcExecutionStore(database);
+        store.createExecution(
+                new ExecutionRecord("e1", "trace", "goal", Map.of(), ExecutionState.RUNNING, T0, null, List.of()));
+
+        assertTrue(store.findById("e1").isPresent());
+    }
+
+    @Test
+    void schemaIsNotCurrentOnceAMigrationIsRecordedAsFailed() throws SQLException {
+        JdbcExecutionStore store = new JdbcExecutionStore(database);
+
+        execute("UPDATE \"nexora_schema_history\" SET \"success\" = FALSE WHERE \"version\" = '1'");
+
+        assertFalse(store.isSchemaCurrent());
+    }
+
+    @Test
+    void schemaIsNotCurrentWhenTheDatabaseIsOlderThanThisRelease() throws SQLException {
+        JdbcExecutionStore store = new JdbcExecutionStore(database);
+
+        // As after restoring a backup taken before V1 was applied.
+        execute("DELETE FROM \"nexora_schema_history\" WHERE \"version\" = '1'");
+
+        assertFalse(store.isSchemaCurrent());
+    }
+
+    @Test
+    void schemaIsNotCurrentWhenTheDatabaseIsUnreachable() {
+        JdbcExecutionStore store = JdbcExecutionStore.h2InMemory();
+        store.close();
+
+        assertFalse(store.isSchemaCurrent());
+    }
+
+    @Test
+    void callerPoolTooSmallToMigrateIsRejectedImmediately() {
+        try (HikariDataSource onePooled = HikariCPDataSourceFactory.create(
+                "jdbc:h2:mem:tiny_" + System.nanoTime(), PoolConfig.singleConnection())) {
+            IllegalArgumentException error =
+                    assertThrows(IllegalArgumentException.class, () -> new JdbcExecutionStore(onePooled));
+
+            assertTrue(error.getMessage().contains("at least " + SchemaMigrator.MIGRATION_CONNECTIONS));
+        }
+    }
+
+    @Test
+    void urlMigrationErrorKeepsCredentialsMasked() {
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class,
+                () -> SchemaMigrator.migrate(
+                        "jdbc:h2:mem:missing_" + System.nanoTime() + ";IFEXISTS=TRUE;PASSWORD=hunter2",
+                        SchemaMigrator.DEFAULT_LOCATION));
+
+        assertFalse(error.getMessage().contains("hunter2"), error.getMessage());
+    }
+
+    @Test
+    void storeOwnedSingleConnectionPoolStillMigrates() {
+        try (JdbcExecutionStore store = JdbcExecutionStore.h2InMemory()) {
+            assertTrue(store.isSchemaCurrent());
+        }
+    }
+
+    /** Versioned history rows as "version:success", in install order; skips Flyway's table-created marker. */
+    private List<String> history() throws SQLException {
+        List<String> rows = new ArrayList<>();
+        try (Connection conn = database.getConnection();
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery("SELECT \"version\", \"success\" FROM \"nexora_schema_history\""
+                        + " WHERE \"version\" IS NOT NULL ORDER BY \"installed_rank\"")) {
+            while (rs.next()) {
+                rows.add(rs.getString(1) + ":" + rs.getBoolean(2));
+            }
+        }
+        return rows;
+    }
+
+    private void execute(String sql) throws SQLException {
+        try (Connection conn = database.getConnection();
+                Statement stmt = conn.createStatement()) {
+            stmt.execute(sql);
+        }
+    }
+
+    private static ScheduleRecord schedule(String id) {
+        return new ScheduleRecord(
+                id,
+                "0 0 * * *",
+                "nightly cleanup",
+                Map.of(),
+                MissedFirePolicy.FIRE_ONCE,
+                T0,
+                null,
+                T0.plusSeconds(3600),
+                ScheduleStatus.NEVER_RUN,
+                true);
+    }
+}

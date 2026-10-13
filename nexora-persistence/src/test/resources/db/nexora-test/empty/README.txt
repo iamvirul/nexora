@@ -1,0 +1,1 @@
+-- Holds no migration on purpose: an existing but empty location must still fail startup.

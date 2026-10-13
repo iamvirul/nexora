@@ -134,7 +134,7 @@ public final class NexoraObservability implements AutoCloseable {
         this.readyGauge = Gauge.build()
                 .name("nexora_ready")
                 .help(
-                        "1 if the engine's dependencies (persistence, plugins, executor) are all healthy per /health/ready, 0 otherwise.")
+                        "1 if the engine's dependencies (persistence, migrations, plugins, executor) are all healthy per /health/ready, 0 otherwise.")
                 .register(registry);
 
         subscriptions.add(engine.subscribe(PlanStartedEvent.class, this::onPlanStarted));

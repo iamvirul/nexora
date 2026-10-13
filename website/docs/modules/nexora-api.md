@@ -34,7 +34,7 @@ NexoraEngine engine = NexoraEngine.builder()
     .withTracer(new OtelTracer(GlobalOpenTelemetry.get()))
 
     // Execution persistence
-    .withExecutionStore(new PostgresExecutionStore(dataSource))
+    .withExecutionStore(new JdbcExecutionStore(dataSource))
 
     // Saga rollback
     .withSagaEnabled(true)

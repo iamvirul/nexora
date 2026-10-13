@@ -133,7 +133,7 @@ engine.subscribe(ScheduledExecutionMissedEvent.class, e ->
 
 ## Persistence
 
-Schedules are stored in the `nexora_schedules` table, created automatically on first use alongside the existing `nexora_executions` schema. A persistence store is required:
+Schedules are stored in the `nexora_schedules` table, which the store's schema migrations create alongside `nexora_executions`. A persistence store is required:
 
 ```java
 NexoraEngine.builder()

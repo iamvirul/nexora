@@ -564,7 +564,7 @@ It exposes these endpoints with no external dependencies:
 | `GET /api/process` | Raw process snapshot as JSON |
 | `POST /api/execute` | Trigger an execution remotely; returns `202` with the new `executionId` |
 | `GET /health/live` | Liveness probe. Returns `200` while the process is serving HTTP |
-| `GET /health/ready` | Readiness probe. Returns `200` when persistence, plugins, and the executor are all UP, `503` with a per-check breakdown otherwise |
+| `GET /health/ready` | Readiness probe. Returns `200` when persistence, schema migrations, plugins, and the executor are all UP, `503` with a per-check breakdown otherwise |
 | `GET /health` | Summary: overall status, Nexora version, readiness checks, and capability circuit states (informational) |
 | `GET /api/webhook-deliveries/{id}` | Audit log of webhook delivery attempts for an execution |
 | `GET /api/dead-letters` | List dead letter queue entries (paginated, filterable by `?state=PENDING\|RESOLVED\|REPLAYED\|ALL`) |
