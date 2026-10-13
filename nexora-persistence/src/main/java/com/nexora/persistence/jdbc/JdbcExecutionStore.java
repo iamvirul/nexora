@@ -34,7 +34,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * JDBC-backed ExecutionStore. Ships with H2 as the default embedded database.
- * SQL is standard (MERGE ... USING for upserts), so it also runs on PostgreSQL 15+.
+ * SQL is standard (MERGE ... USING for upserts), so it also runs on PostgreSQL 15+; older
+ * PostgreSQL servers are rejected at construction, before anything is migrated.
  *
  * Schema: Flyway applies the migrations under {@code db/nexora/migration} during construction,
  * before any query; a failed migration fails construction. Migrations are versioned in
@@ -64,7 +65,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
      * share it with other components. Migrations borrow two of its connections at once.
      *
      * @throws IllegalArgumentException if the DataSource is a HikariCP pool of fewer than 2 connections
-     * @throws IllegalStateException if a schema migration fails
+     * @throws IllegalStateException if the database is unsupported or a schema migration fails
      */
     public JdbcExecutionStore(DataSource dataSource) {
         this(dataSource, SchemaMigrator.DEFAULT_LOCATION);
@@ -74,6 +75,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
     JdbcExecutionStore(DataSource dataSource, String migrationLocation) {
         this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
         this.ownedPool = null;
+        DatabaseCompatibility.require(dataSource);
         this.schema = SchemaMigrator.migrate(dataSource, migrationLocation);
     }
 
@@ -85,13 +87,14 @@ public final class JdbcExecutionStore implements ExecutionStore {
     /**
      * Opens and owns a HikariCP pool against {@code jdbcUrl}; {@link #close()} shuts it down.
      *
-     * @throws IllegalStateException if the database is unreachable or a schema migration fails
+     * @throws IllegalStateException if the database is unreachable or unsupported, or a schema migration fails
      */
     public JdbcExecutionStore(String jdbcUrl, PoolConfig poolConfig) {
         HikariDataSource pool = HikariCPDataSourceFactory.create(jdbcUrl, poolConfig);
         this.dataSource = pool;
         this.ownedPool = pool;
         try {
+            DatabaseCompatibility.require(pool);
             // Migrate over separate connections: Flyway needs two at once, more than a single-connection pool has.
             this.schema = SchemaMigrator.migrate(pool.getJdbcUrl(), SchemaMigrator.DEFAULT_LOCATION);
         } catch (RuntimeException e) {
