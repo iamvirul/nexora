@@ -297,9 +297,9 @@ public final class NexoraEngine implements AutoCloseable {
     }
 
     /**
-     * Reports readiness of the engine's own dependencies: persistence, plugins, and the
-     * shared executor. A {@code null} persistence store (persistence disabled) is reported
-     * UP — there is nothing to check, not a degraded dependency.
+     * Reports readiness of the engine's own dependencies: persistence, its schema migrations,
+     * plugins, and the shared executor. A {@code null} persistence store (persistence disabled)
+     * reports both persistence checks UP — there is nothing to check, not a degraded dependency.
      *
      * <p>Capability circuit breaker state is deliberately not part of readiness: an OPEN
      * circuit means a downstream is failing, and pulling every instance out of rotation
@@ -310,6 +310,7 @@ public final class NexoraEngine implements AutoCloseable {
 
         ExecutionStore store = engine.getStore();
         checks.put(ReadinessReport.CHECK_PERSISTENCE, HealthStatus.of(store == null || store.isHealthy()));
+        checks.put(ReadinessReport.CHECK_MIGRATIONS, HealthStatus.of(store == null || store.isSchemaCurrent()));
 
         checks.put(
                 ReadinessReport.CHECK_PLUGINS,
@@ -333,6 +334,7 @@ public final class NexoraEngine implements AutoCloseable {
     /** Per-dependency readiness, in a stable check order. Ready only when every check is UP. */
     public record ReadinessReport(Map<String, HealthStatus> checks) {
         public static final String CHECK_PERSISTENCE = "persistence";
+        public static final String CHECK_MIGRATIONS = "migrations";
         public static final String CHECK_PLUGINS = "plugins";
         public static final String CHECK_EXECUTOR = "executor";
 
