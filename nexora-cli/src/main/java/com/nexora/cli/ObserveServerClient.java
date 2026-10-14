@@ -2,6 +2,7 @@ package com.nexora.cli;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nexora.api.auth.ApiKeyStore;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URI;
@@ -10,6 +11,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Optional;
@@ -38,6 +40,48 @@ final class ObserveServerClient {
         int report(HttpResponse<String> response, PrintWriter out, PrintWriter err);
     }
 
+    private static final int STATUS_UNAUTHORIZED = 401;
+
+    /**
+     * Where to send the request and the key to send with it: {@code --api-key}, else
+     * {@value ApiKeyStore#ENV_VAR}, else the user API key {@code nexora login} saved for this server.
+     * Null sends none.
+     */
+    record Server(URI url, String apiKey, boolean allowInsecureHttp) {
+
+        static Server of(URI url, String flagKey, Path credentialsFile, boolean allowInsecureHttp) {
+            String key = flagKey != null ? flagKey : System.getenv(ApiKeyStore.ENV_VAR);
+            if ((key == null || key.isBlank()) && isHttpUrl(url)) {
+                key = new CliCredentials(credentialsFile).keyFor(url).orElse(null);
+            }
+            return new Server(url, key == null || key.isBlank() ? null : key.strip(), allowInsecureHttp);
+        }
+    }
+
+    static final String ALLOW_INSECURE_HTTP = "--allow-insecure-http";
+
+    /**
+     * Refuses to send {@code secret} (an API key or a password) over plain HTTP to another machine,
+     * where anyone on the path can read it, unless the caller explicitly opted in. A warning is not
+     * enough: once sent, a password stays exposed until it is changed.
+     *
+     * @return the error to print, or empty when sending is fine
+     */
+    static Optional<String> refuseCleartext(URI server, String secret, boolean allowInsecureHttp) {
+        if (!sendsKeyInClear(server) || allowInsecureHttp) {
+            return Optional.empty();
+        }
+        return Optional.of("Error: refusing to send the " + secret + " over plain HTTP to " + server.getHost()
+                + ", where anyone on the network path can read it. Use an https:// URL (for example behind a"
+                + " TLS proxy), or pass " + ALLOW_INSECURE_HTTP + " to accept the risk.");
+    }
+
+    static boolean isHttpUrl(URI server) {
+        return server.getScheme() != null
+                && ALLOWED_SCHEMES.contains(server.getScheme().toLowerCase(Locale.ROOT))
+                && server.getHost() != null;
+    }
+
     private ObserveServerClient() {}
 
     /**
@@ -48,32 +92,43 @@ final class ObserveServerClient {
      */
     static int call(
             CommandSpec spec,
-            URI server,
+            Server target,
             String executionId,
             String method,
             String pathSuffix,
             ResponseReporter reporter) {
         PrintWriter out = spec.commandLine().getOut();
         PrintWriter err = spec.commandLine().getErr();
+        URI server = target.url();
 
         if (executionId.isBlank()) {
             err.println("Error: EXECUTION_ID must not be blank.");
             return EXIT_USAGE;
         }
-        if (server.getScheme() == null
-                || !ALLOWED_SCHEMES.contains(server.getScheme().toLowerCase(Locale.ROOT))
-                || server.getHost() == null) {
+        if (!isHttpUrl(server)) {
             err.printf("Error: --server must be an http(s) URL such as http://localhost:9464, got: %s%n", server);
             return EXIT_USAGE;
         }
 
-        URI target = URI.create(stripTrailingSlash(server.toString())
+        URI uri = URI.create(stripTrailingSlash(server.toString())
                 + ExecutionEndpoints.PATH_PREFIX
                 + encodePathSegment(executionId)
                 + pathSuffix);
+        if (target.apiKey() != null) {
+            Optional<String> refusal = refuseCleartext(server, "API key", target.allowInsecureHttp());
+            if (refusal.isPresent()) {
+                err.println(refusal.get());
+                return EXIT_USAGE;
+            }
+            if (sendsKeyInClear(server)) {
+                err.printf(
+                        "Warning: sending the API key over plain HTTP to %s (%s).%n",
+                        server.getHost(), ALLOW_INSECURE_HTTP);
+            }
+        }
         HttpResponse<String> response;
         try {
-            response = send(target, method);
+            response = send(uri, method, target.apiKey());
         } catch (IOException e) {
             err.printf(
                     "Error: could not reach the observe server at %s (%s). Is `nexora observe` running?%n",
@@ -84,7 +139,26 @@ final class ObserveServerClient {
             err.println("Error: interrupted while waiting for the observe server.");
             return EXIT_FAILED;
         }
+        if (response.statusCode() == STATUS_UNAUTHORIZED) {
+            err.println(
+                    target.apiKey() == null
+                            ? "Error: the observe server requires an API key. Run `nexora login`, set "
+                                    + ApiKeyStore.ENV_VAR + ", or pass --api-key."
+                            : "Error: the observe server rejected the API key. A login key may have expired or been"
+                                    + " revoked: run `nexora login` again, or check " + ApiKeyStore.ENV_VAR
+                                    + " / --api-key.");
+            return EXIT_FAILED;
+        }
         return reporter.report(response, out, err);
+    }
+
+    /** Plain HTTP to anything but this machine exposes the Bearer key on the network. */
+    static boolean sendsKeyInClear(URI server) {
+        if (!"http".equalsIgnoreCase(server.getScheme())) {
+            return false;
+        }
+        String host = server.getHost();
+        return !("localhost".equalsIgnoreCase(host) || host.startsWith("127.") || "[::1]".equals(host));
     }
 
     /** Pulls the "error" field out of a JSON error body, falling back to the raw body. */
@@ -102,14 +176,17 @@ final class ObserveServerClient {
         }
     }
 
-    private static HttpResponse<String> send(URI target, String method) throws IOException, InterruptedException {
+    private static HttpResponse<String> send(URI target, String method, String apiKey)
+            throws IOException, InterruptedException {
         HttpClient client =
                 HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
-        HttpRequest request = HttpRequest.newBuilder(target)
+        HttpRequest.Builder request = HttpRequest.newBuilder(target)
                 .timeout(REQUEST_TIMEOUT)
-                .method(method, HttpRequest.BodyPublishers.noBody())
-                .build();
-        return client.send(request, HttpResponse.BodyHandlers.ofString());
+                .method(method, HttpRequest.BodyPublishers.noBody());
+        if (apiKey != null) {
+            request.header("Authorization", "Bearer " + apiKey);
+        }
+        return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     /** ConnectException and friends often carry no message; fall back to the exception type. */
@@ -117,7 +194,7 @@ final class ObserveServerClient {
         return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
     }
 
-    private static String stripTrailingSlash(String url) {
+    static String stripTrailingSlash(String url) {
         return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
 

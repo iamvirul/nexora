@@ -57,6 +57,11 @@
             <groupId>com.nexora</groupId>
             <artifactId>nexora-saga</artifactId>
             </dependency>
+        <!-- Parses dashboard login bodies in com.nexora.api.auth. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>

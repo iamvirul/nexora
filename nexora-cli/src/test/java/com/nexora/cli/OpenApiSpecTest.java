@@ -121,7 +121,7 @@ class OpenApiSpecTest {
                         .build();
                 NexoraObservability liveObservability = NexoraObservability.attach(withStore)) {
             HttpServer server = HttpServer.create(new InetSocketAddress(LOOPBACK, 0), 0);
-            ObserveCommand.registerRoutes(server, withStore, liveObservability, new byte[0]);
+            ObserveCommand.registerRoutes(server, withStore, liveObservability, new byte[0], TestAuth.auth());
             server.start();
             try {
                 List<String> mismatches = new ArrayList<>();
@@ -150,7 +150,7 @@ class OpenApiSpecTest {
 
     private int probe(HttpServer server, String path, String method) throws Exception {
         URI uri = URI.create("http://" + LOOPBACK + ":" + server.getAddress().getPort() + path);
-        HttpRequest request = HttpRequest.newBuilder(uri)
+        HttpRequest request = TestAuth.authorized(uri)
                 .method(method, HttpRequest.BodyPublishers.noBody())
                 .build();
         return client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
@@ -202,7 +202,7 @@ class OpenApiSpecTest {
 
     private List<String> registeredRoutes() {
         RecordingHttpServer server = new RecordingHttpServer();
-        ObserveCommand.registerRoutes(server, engine, observability, new byte[0]);
+        ObserveCommand.registerRoutes(server, engine, observability, new byte[0], TestAuth.auth());
         return server.contexts;
     }
 

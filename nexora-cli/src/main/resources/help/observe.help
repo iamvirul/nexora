@@ -9,6 +9,28 @@ Start a local observability server for Nexora.
     /health/ready        Readiness health check
     /                    Browser UI for live process view
 
+  Authentication
+  ──────────────
+  Every /api/* route and the WebSocket stream require an API key, sent as
+  "Authorization: Bearer <key>". /metrics, /health/*, /, /openapi.yaml and
+  /docs stay public for scrapers and probes.
+
+  First start generates a key, prints it once, and saves only its SHA-256
+  digest to ~/.nexora/observe-api-key.sha256 (see --api-key-file).
+  For CI and containers set NEXORA_API_KEY instead: nothing is printed.
+
+  People sign in with a username and password instead: add accounts with
+  `nexora user add <name>`. A correct password mints a user API key, valid
+  12 hours and logged under that user's name. The browser UI keeps it in an
+  HttpOnly cookie; `nexora login` saves it for the CLI. Accounts live in
+  ~/.nexora/observe-users (see --users-file) and changes apply without a restart.
+
+  Key rotation
+  ────────────
+  Restart with --rotate-api-key: a new key is printed, the stored digest is
+  replaced, and the old key stops working. With NEXORA_API_KEY, change the
+  variable and restart. Lost the key? Rotate.
+
   Examples
   ────────
   Start observability server on default port 9464:
@@ -20,15 +42,21 @@ Start a local observability server for Nexora.
   Retain more history for UI:
     nexora observe --max-executions 300 --max-events 500
 
+  Run headless with a key from the environment:
+    NEXORA_API_KEY=... nexora observe
+
+  Rotate the API key:
+    nexora observe --rotate-api-key
+
   Trigger an execution from another terminal:
-    curl -X POST http://localhost:9464/api/execute \
+    curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/execute \
       -H "content-type: application/json" \
       -d '{"goal":"process order payment notification","context":{"orderId":"ORD-99"}}'
 
   Register a nightly cron schedule (requires executionStore in nexora.json):
-    curl -X POST http://localhost:9464/api/schedules \
+    curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/schedules \
       -H "content-type: application/json" \
       -d '{"cronExpression":"0 0 * * *","goal":"nightly cleanup","missedFirePolicy":"FIRE_ONCE"}'
 
   Cancel a schedule:
-    curl -X DELETE http://localhost:9464/api/schedules/<id>
+    curl -H "Authorization: Bearer $NEXORA_API_KEY" -X DELETE http://localhost:9464/api/schedules/<id>

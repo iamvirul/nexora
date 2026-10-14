@@ -49,7 +49,7 @@ Reuse only helps capabilities that honor `idempotencyKey`. A capability that ign
 ## REST API
 
 ```bash
-curl -X POST http://localhost:9464/api/executions/<execution-id>/replay
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/executions/<execution-id>/replay
 # 202 {"accepted":true,"executionId":"<new id>","replayOf":"<execution-id>"}
 ```
 
@@ -62,7 +62,7 @@ curl -X POST http://localhost:9464/api/executions/<execution-id>/replay
 
 The observe UI's **Execution History** panel shows a **Replay** button on replayable rows.
 
-> **Warning**: This endpoint currently has no caller authentication. Do not expose the observe server to untrusted networks. Authentication will be enforced once [#30](https://github.com/iamvirul/nexora/issues/30) lands.
+> **Authentication**: this endpoint requires the observe server's API key. See [Authentication](authentication).
 
 ## CLI
 

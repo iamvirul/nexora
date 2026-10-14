@@ -205,10 +205,10 @@ class ExecutionHistoryEndpointsTest {
 
     @Test
     void rejectsUnsupportedMethodsWithAllowHeader() throws Exception {
-        HttpResponse<String> postList = send(HttpRequest.newBuilder(uri("/api/executions"))
+        HttpResponse<String> postList = send(TestAuth.authorized(uri("/api/executions"))
                 .POST(HttpRequest.BodyPublishers.noBody())
                 .build());
-        HttpResponse<String> putDetail = send(HttpRequest.newBuilder(uri("/api/executions/e1"))
+        HttpResponse<String> putDetail = send(TestAuth.authorized(uri("/api/executions/e1"))
                 .PUT(HttpRequest.BodyPublishers.noBody())
                 .build());
 
@@ -225,7 +225,7 @@ class ExecutionHistoryEndpointsTest {
 
     private static HttpServer startServer(NexoraEngine engine) throws IOException {
         HttpServer http = HttpServer.create(new InetSocketAddress(LOOPBACK, 0), 0);
-        new ExecutionEndpoints(engine).register(http);
+        new ExecutionEndpoints(engine).register(http, TestAuth.auth());
         http.start();
         return http;
     }
@@ -242,7 +242,7 @@ class ExecutionHistoryEndpointsTest {
     }
 
     private HttpResponse<String> get(URI target) throws Exception {
-        return send(HttpRequest.newBuilder(target).GET().build());
+        return send(TestAuth.authorized(target).GET().build());
     }
 
     private HttpResponse<String> send(HttpRequest request) throws Exception {

@@ -7,8 +7,12 @@ info:
     Endpoints served by `nexora observe`: execution control and history, the dead letter queue,
     cron schedules, health probes, Prometheus metrics, and the live process snapshot.
 
-    Authentication is not enforced yet ([#30](https://github.com/iamvirul/nexora/issues/30)).
-    Do not expose the observe server to untrusted networks.
+    Every `/api` route requires `Authorization: Bearer <key>`: the server's own key, or a user API
+    key from `POST /api/keys` (username and password). The dashboard gets a user key as a session
+    cookie from `POST /api/session` instead. A cookie-authenticated request that changes state must
+    also send an `Origin` matching this server. Health probes, metrics, the dashboard page and the
+    API docs stay public, since probes and scrapers cannot carry credentials. The key travels in
+    clear over plain HTTP until TLS lands ([#40](https://github.com/iamvirul/nexora/issues/40)).
 
     This document is maintained by hand. Every route registered by the server must appear here;
     `OpenApiSpecTest` fails the build when a route is added without updating this file.
@@ -19,6 +23,11 @@ servers:
   - url: /
     description: The observe server this document was loaded from
 
+# Secure by default; public routes opt out with `security: []`.
+security:
+  - bearerAuth: []
+  - sessionCookie: []
+
 tags:
   - name: Executions
     description: Start, inspect, cancel and replay executions.
@@ -28,6 +37,8 @@ tags:
     description: Recurring cron-based executions. Requires a persistence store.
   - name: Webhooks
     description: Audit log of webhook delivery attempts.
+  - name: Session
+    description: Login. A username and password mint a user API key; the dashboard gets it as an HttpOnly cookie.
   - name: Health
     description: Liveness and readiness probes. Unauthenticated by design.
   - name: Observability
@@ -66,6 +77,8 @@ paths:
                   webhookUrl: https://your-api.example.com/webhooks/nexora
                   webhookEvents: [COMPLETED, FAILED]
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '202':
           description: Execution accepted and started.
           content:
@@ -139,6 +152,8 @@ paths:
           schema:
             type: string
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: One page of executions.
           content:
@@ -183,6 +198,8 @@ paths:
       summary: Get one execution with its steps
       description: Step outputs are not persisted yet ([#32](https://github.com/iamvirul/nexora/issues/32)).
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: The execution, its context and step records.
           content:
@@ -231,6 +248,8 @@ paths:
         execution finishes as `CANCELLED`. Safe to repeat: a second cancel while it is stopping also
         returns `200`.
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Cancellation requested.
           content:
@@ -284,6 +303,8 @@ paths:
         context under a new execution id. The replay's context carries the original id as `_replayOf`.
         Completed steps reuse their idempotency keys unless the original was compensated.
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '202':
           description: Replay started.
           content:
@@ -332,6 +353,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ExecutionId'
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Every delivery attempt, possibly empty.
           content:
@@ -394,6 +417,8 @@ paths:
             maximum: 100
             default: 20
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: One page of dead letters.
           content:
@@ -441,6 +466,8 @@ paths:
         the dead letter `REPLAYED`. Falls back to the dead letter's own goal and context when the
         original execution record no longer exists.
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '202':
           description: Replay started.
           content:
@@ -488,6 +515,8 @@ paths:
               withReason:
                 value: { reason: 'False positive, investigated' }
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Dead letter marked `RESOLVED`.
           content:
@@ -510,6 +539,8 @@ paths:
       operationId: listSchedules
       summary: List all cron schedules
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Active and inactive schedules.
           content:
@@ -548,6 +579,8 @@ paths:
               nightly:
                 value: { cronExpression: 0 0 * * *, goal: nightly cleanup, missedFirePolicy: SKIP }
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '201':
           description: Schedule registered.
           content:
@@ -586,6 +619,8 @@ paths:
           schema:
             type: string
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Schedule cancelled.
           content:
@@ -602,8 +637,167 @@ paths:
         '503':
           $ref: '#/components/responses/SchedulingUnavailable'
 
+  /api/keys:
+    post:
+      tags: [Session]
+      operationId: issueUserApiKey
+      summary: Log in with a username and password and get a user API key
+      description: |
+        Returns a user API key (`nxu_...`) in the body, for the CLI (`nexora login`) and scripts to
+        send as `Authorization: Bearer`. It works on every route the server's own key does, except
+        that it cannot open a dashboard session at `POST /api/session` (sign in there with the
+        username and password). It is recorded
+        under the user's name in the audit log, and is valid for 12 hours. Removing the user,
+        changing their password, `DELETE /api/session` or a server restart revoke it. Five failed
+        attempts lock a username for 15 minutes, and each client is limited to 20 attempts a minute.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordLogin'
+            example: { username: alice, password: 'correct horse battery' }
+      responses:
+        '201':
+          description: Key issued. Not set as a cookie.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [apiKey, user, expiresAt]
+                properties:
+                  apiKey:
+                    type: string
+                    pattern: '^nxu_[A-Za-z0-9_-]{43}$'
+                  user:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+              examples:
+                issued:
+                  value: { apiKey: nxu_x8Q2r1kV0bLm7dQe9sTzA4hJcN6wPfY3uGiK5oR0aEw, user: alice, expiresAt: '2026-10-14T22:00:00Z' }
+        '400':
+          $ref: '#/components/responses/InvalidLoginBody'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+        '415':
+          $ref: '#/components/responses/LoginNotJson'
+        '429':
+          $ref: '#/components/responses/TooManyLoginAttempts'
+
+  /api/session:
+    get:
+      tags: [Session]
+      operationId: describeSession
+      summary: Who is signed in
+      description: Reports the user behind the session cookie or Bearer user key.
+      responses:
+        '200':
+          description: The caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [credential, passwordLogin]
+                properties:
+                  user:
+                    type: [string, 'null']
+                    description: Null when signed in with the server's own key.
+                  credential:
+                    type: string
+                    enum: [API_KEY, USER_KEY, SESSION]
+                  expiresAt:
+                    type: [string, 'null']
+                    format: date-time
+                  passwordLogin:
+                    type: boolean
+                    description: Whether this server has dashboard users.
+              examples:
+                user:
+                  value: { user: alice, credential: SESSION, expiresAt: '2026-10-14T22:00:00Z', passwordLogin: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Session]
+      operationId: openSession
+      summary: Sign in to the dashboard
+      description: |
+        Mints a user API key from a username and password, or a session from the server's own key
+        (`Authorization: Bearer`), and sets it as the cookie (`HttpOnly; SameSite=Strict`, 12 hours)
+        so page script never sees it. A user key or cookie cannot mint another. Password sign-in
+        must be `application/json` and, when the browser sends an `Origin`, come from this server.
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordLogin'
+            example: { username: alice, password: 'correct horse battery' }
+      responses:
+        '200':
+          description: Signed in. The key is in `Set-Cookie`, not the body.
+          headers:
+            Set-Cookie:
+              description: '`nexora_session=nxu_...; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200`'
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [expiresAt]
+                properties:
+                  user:
+                    type: [string, 'null']
+                  expiresAt:
+                    type: string
+                    format: date-time
+              examples:
+                opened:
+                  value: { user: alice, expiresAt: '2026-10-14T22:00:00Z' }
+        '400':
+          $ref: '#/components/responses/InvalidLoginBody'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+        '415':
+          $ref: '#/components/responses/LoginNotJson'
+        '429':
+          $ref: '#/components/responses/TooManyLoginAttempts'
+    delete:
+      tags: [Session]
+      operationId: closeSession
+      summary: Sign out
+      description: Revokes the session cookie or the Bearer user key and clears the cookie. The server's own key cannot be revoked.
+      responses:
+        '200':
+          description: Signed out. `Set-Cookie` clears the cookie.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: LOGGED_OUT
+              examples:
+                closed:
+                  value: { status: LOGGED_OUT }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /health/live:
     get:
+      security: []
       tags: [Health]
       operationId: liveness
       summary: Liveness probe
@@ -623,6 +817,7 @@ paths:
 
   /health/ready:
     get:
+      security: []
       tags: [Health]
       operationId: readiness
       summary: Readiness probe
@@ -657,6 +852,7 @@ paths:
 
   /health:
     get:
+      security: []
       tags: [Health]
       operationId: healthSummary
       summary: Health summary
@@ -698,6 +894,7 @@ paths:
 
   /metrics:
     get:
+      security: []
       tags: [Observability]
       operationId: prometheusMetrics
       summary: Prometheus metrics
@@ -727,6 +924,8 @@ paths:
         In-memory view of recent executions with per-step timelines, as streamed to the dashboard
         over WebSocket. Not persisted; use `/api/executions` for history.
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Current snapshot.
           content:
@@ -767,6 +966,7 @@ paths:
 
   /:
     get:
+      security: []
       tags: [UI and docs]
       operationId: dashboard
       summary: Process observer dashboard
@@ -788,6 +988,7 @@ paths:
 
   /openapi.yaml:
     get:
+      security: []
       tags: [UI and docs]
       operationId: openApiDocument
       summary: This OpenAPI document
@@ -806,6 +1007,7 @@ paths:
 
   /docs:
     get:
+      security: []
       tags: [UI and docs]
       operationId: swaggerUi
       summary: Swagger UI for this document
@@ -825,6 +1027,7 @@ paths:
 
   /docs/{asset}:
     get:
+      security: []
       tags: [UI and docs]
       operationId: swaggerUiAsset
       summary: Swagger UI static asset
@@ -857,6 +1060,18 @@ paths:
           $ref: '#/components/responses/NotFoundText'
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        The observe server's API key. `nexora observe` prints a generated key once on first start
+        and keeps only its SHA-256 digest; `NEXORA_API_KEY` or `--api-key` supplies one instead.
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: nexora_session
+      description: Set by `POST /api/session` for the dashboard.
   parameters:
     ExecutionId:
       name: executionId
@@ -876,6 +1091,55 @@ components:
       example: 6d5c4b3a-2f1e-4d0c-9b8a-7f6e5d4c3b2a
 
   responses:
+    InvalidLoginBody:
+      description: 'The body is not `{"username": "...", "password": "..."}`, or is over 4 KB.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          examples:
+            badBody:
+              value: { error: { code: INVALID_CREDENTIALS_FORMAT, message: 'Body must be {"username":"...","password":"..."}' } }
+    LoginNotJson:
+      description: Credentials must be sent as `application/json`, which a cross-site page cannot send without a preflight.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          examples:
+            notJson:
+              value: { error: { code: UNSUPPORTED_MEDIA_TYPE, message: Send credentials as application/json } }
+    TooManyLoginAttempts:
+      description: The username is locked (5 failures, 15 minutes) or this client made over 20 attempts this minute. Unknown usernames are throttled the same way.
+      headers:
+        Retry-After:
+          description: Seconds until another attempt is allowed.
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          examples:
+            throttled:
+              value: { error: { code: TOO_MANY_ATTEMPTS, message: 'Too many login attempts; try again later' } }
+    Unauthorized:
+      description: Missing or invalid API key or session. Sent before any other check, so it does not reveal whether the route exists.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            const: Bearer realm="nexora"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          examples:
+            unauthorized:
+              value:
+                error:
+                  code: UNAUTHORIZED
+                  message: 'A valid API key is required: send Authorization: Bearer <key>'
     MethodNotAllowedText:
       description: HTTP method not supported on this path.
       headers:
@@ -964,6 +1228,31 @@ components:
               value: { error: Failed to persist schedule }
 
   schemas:
+    PasswordLogin:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+    AuthError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [UNAUTHORIZED, INVALID_CREDENTIALS_FORMAT, UNSUPPORTED_MEDIA_TYPE, TOO_MANY_ATTEMPTS]
+            message:
+              type: string
     Error:
       type: object
       required: [error]

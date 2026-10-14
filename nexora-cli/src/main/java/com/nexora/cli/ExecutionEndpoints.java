@@ -4,6 +4,7 @@ import com.nexora.api.ExecutionNotFoundException;
 import com.nexora.api.ExecutionNotOwnedException;
 import com.nexora.api.ExecutionNotReplayableException;
 import com.nexora.api.NexoraEngine;
+import com.nexora.api.auth.ApiAuth;
 import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.execution.ExecutionStatus;
 import com.nexora.core.intent.Intent;
@@ -81,10 +82,11 @@ final class ExecutionEndpoints {
         this.engine = Objects.requireNonNull(engine, "engine must not be null");
     }
 
-    void register(HttpServer server) {
-        server.createContext(EXECUTE_PATH, this::execute);
-        server.createContext(LIST_PATH, this::list);
-        server.createContext(PATH_PREFIX, this::handle);
+    /** Every route requires an authenticated caller; {@code auth} answers 401 before any handler runs. */
+    void register(HttpServer server, ApiAuth auth) {
+        server.createContext(EXECUTE_PATH, auth.protect(this::execute));
+        server.createContext(LIST_PATH, auth.protect(this::list));
+        server.createContext(PATH_PREFIX, auth.protect(this::handle));
     }
 
     private void list(HttpExchange exchange) throws IOException {

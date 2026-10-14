@@ -4,6 +4,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.nexora.api.ExecutionNotReplayableException;
 import com.nexora.api.NexoraEngine;
+import com.nexora.api.auth.ApiAuth;
+import com.nexora.api.auth.ApiKeyStore;
+import com.nexora.api.auth.PasswordHasher;
+import com.nexora.api.auth.SessionEndpoints;
+import com.nexora.api.auth.UserStore;
 import com.nexora.api.observability.NexoraObservability;
 import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.intent.Intent;
@@ -13,20 +18,18 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.util.Collection;
+import java.nio.file.Path;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
-import org.java_websocket.WebSocket;
-import org.java_websocket.handshake.ClientHandshake;
-import org.java_websocket.server.WebSocketServer;
+import java.util.function.UnaryOperator;
 import picocli.CommandLine.Command;
+import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
+import picocli.CommandLine.Spec;
 
 @Command(
         name = "observe",
@@ -44,8 +47,17 @@ public class ObserveCommand implements Callable<Integer> {
     private static final String NEXORA_VERSION =
             Objects.requireNonNullElse(ObserveCommand.class.getPackage().getImplementationVersion(), "unknown");
 
+    private static final int EXIT_USAGE = 2;
+    private static final String API_PREFIX = "/api/";
+
     @ParentCommand
     private NexoraCli parent;
+
+    @Spec
+    private CommandSpec spec;
+
+    /** Environment lookup; tests replace it so a developer's own NEXORA_API_KEY cannot leak in. */
+    UnaryOperator<String> environment = System::getenv;
 
     @Option(
             names = {"--host"},
@@ -58,6 +70,30 @@ public class ObserveCommand implements Callable<Integer> {
             defaultValue = "9464",
             description = "Port for UI/API/metrics endpoints. Default: ${DEFAULT-VALUE}")
     private int port;
+
+    @Option(
+            names = {"--api-key"},
+            description = "API key required on /api/* (min 32 chars). Prefer the " + ApiKeyStore.ENV_VAR
+                    + " environment variable: flags are visible to other users in the process list.")
+    private String apiKey;
+
+    @Option(
+            names = {"--api-key-file"},
+            defaultValue = "${sys:user.home}/.nexora/observe-api-key.sha256",
+            description = "Where the SHA-256 digest of a generated key is kept. Default: ${DEFAULT-VALUE}")
+    private Path apiKeyFile;
+
+    @Option(
+            names = {"--users-file"},
+            defaultValue = "${sys:user.home}/.nexora/observe-users",
+            description =
+                    "Dashboard users for username/password login, managed with `nexora user`. Default: ${DEFAULT-VALUE}")
+    private Path usersFile;
+
+    @Option(
+            names = {"--rotate-api-key"},
+            description = "Generate a new API key, replacing the stored digest; the old key stops working.")
+    private boolean rotateApiKey;
 
     @Option(
             names = {"--max-executions"},
@@ -73,44 +109,31 @@ public class ObserveCommand implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        int wsPort = port + 1;
+        ApiKeyStore.Resolution key;
+        UserStore users;
+        try {
+            key = resolveApiKey(environment.apply(ApiKeyStore.ENV_VAR));
+            users = new UserStore(usersFile, new PasswordHasher());
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            spec.commandLine().getErr().println("Error: " + e.getMessage());
+            return EXIT_USAGE;
+        }
+        ApiAuth auth = new ApiAuth(key.digest(), users);
 
         NexoraEngine engine = parent.engine();
-        NexoraObservability observability = NexoraObservability.attach(engine, maxExecutions, maxEvents);
-        byte[] indexHtml = loadUiHtml(wsPort);
-
-        // WebSocket broadcast server
-        SnapshotBroadcaster broadcaster = new SnapshotBroadcaster(host, wsPort);
-        observability.addSnapshotListener(snap -> {
-            try {
-                String json = JSON.writeValueAsString(snap);
-                broadcaster.broadcastSnapshot(json);
-            } catch (Exception ignored) {
-            }
-        });
-        broadcaster.start();
-
-        // HTTP server
-        HttpServer server = HttpServer.create(new InetSocketAddress(host, port), 0);
-        server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
-
-        registerRoutes(server, engine, observability, indexHtml);
+        ObserveServer server = ObserveServer.start(
+                engine, auth, new ObserveServer.Config(host, port, port + 1, maxExecutions, maxEvents));
+        int wsPort = server.webSocketPort();
 
         CountDownLatch shutdownLatch = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
-                server.stop(0);
-                try {
-                    broadcaster.stop(500);
-                } catch (InterruptedException ignored) {
-                }
-                observability.close();
+                server.close();
             } finally {
                 shutdownLatch.countDown();
             }
         }));
 
-        server.start();
         System.out.println("Nexora Observability Server");
         System.out.println("===========================");
         System.out.printf("UI:        http://%s:%d/%n", hostForDisplay(host), port);
@@ -121,6 +144,9 @@ public class ObserveCommand implements Callable<Integer> {
                 hostForDisplay(host), port);
         System.out.printf("API docs:  http://%s:%d/docs (OpenAPI: /openapi.yaml)%n", hostForDisplay(host), port);
         System.out.printf("WebSocket: ws://%s:%d/%n", hostForDisplay(host), wsPort);
+        System.out.println();
+        printApiKeyStatus(key);
+        printUserStatus(users);
         System.out.println();
         System.out.println("Press Ctrl+C to stop.");
 
@@ -133,7 +159,7 @@ public class ObserveCommand implements Callable<Integer> {
      * {@code OpenApiSpecTest} can check that each registered route is documented in openapi.yaml.
      */
     static void registerRoutes(
-            HttpServer server, NexoraEngine engine, NexoraObservability observability, byte[] indexHtml) {
+            HttpServer server, NexoraEngine engine, NexoraObservability observability, byte[] indexHtml, ApiAuth auth) {
         server.createContext("/metrics", exchange -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 sendText(exchange, 405, "Method Not Allowed");
@@ -146,16 +172,16 @@ public class ObserveCommand implements Callable<Integer> {
                     observability.scrapePrometheus().getBytes(StandardCharsets.UTF_8));
         });
 
-        server.createContext("/api/process", exchange -> {
+        server.createContext("/api/process", auth.protect(exchange -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 sendText(exchange, 405, "Method Not Allowed");
                 return;
             }
             byte[] payload = JSON.writeValueAsBytes(observability.processSnapshot());
             send(exchange, 200, "application/json; charset=utf-8", payload);
-        });
+        }));
 
-        server.createContext("/api/webhook-deliveries/", exchange -> {
+        server.createContext("/api/webhook-deliveries/", auth.protect(exchange -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 try {
                     sendText(exchange, 405, "Method Not Allowed");
@@ -194,9 +220,9 @@ public class ObserveCommand implements Callable<Integer> {
                 } catch (Exception ignored) {
                 }
             }
-        });
+        }));
 
-        server.createContext("/api/dead-letters/", exchange -> {
+        server.createContext("/api/dead-letters/", auth.protect(exchange -> {
             com.nexora.persistence.ExecutionStore dlqStore = engine.getStore();
             if (dlqStore == null) {
                 try {
@@ -289,9 +315,9 @@ public class ObserveCommand implements Callable<Integer> {
                 sendJson(exchange, 405, Map.of("error", "Method Not Allowed"));
             } catch (Exception ignored) {
             }
-        });
+        }));
 
-        server.createContext("/api/dead-letters", exchange -> {
+        server.createContext("/api/dead-letters", auth.protect(exchange -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 try {
                     sendText(exchange, 405, "Method Not Allowed");
@@ -360,9 +386,9 @@ public class ObserveCommand implements Callable<Integer> {
                 sendJson(exchange, 200, Map.of("items", items, "page", page, "size", size));
             } catch (Exception ignored) {
             }
-        });
+        }));
 
-        server.createContext("/api/schedules/", exchange -> {
+        server.createContext("/api/schedules/", auth.protect(exchange -> {
             String path = exchange.getRequestURI().getPath();
             String id = path.substring("/api/schedules/".length());
             if (id.isBlank()) {
@@ -393,9 +419,9 @@ public class ObserveCommand implements Callable<Integer> {
                 } catch (Exception ignored) {
                 }
             }
-        });
+        }));
 
-        server.createContext("/api/schedules", exchange -> {
+        server.createContext("/api/schedules", auth.protect(exchange -> {
             String method = exchange.getRequestMethod();
             if ("GET".equalsIgnoreCase(method)) {
                 try {
@@ -495,11 +521,15 @@ public class ObserveCommand implements Callable<Integer> {
                 } catch (Exception ignored) {
                 }
             }
-        });
+        }));
 
         new HealthEndpoints(engine, NEXORA_VERSION).register(server);
-        new ExecutionEndpoints(engine).register(server);
+        new ExecutionEndpoints(engine).register(server, auth);
+        new SessionEndpoints(auth).register(server);
         ApiDocsEndpoints.load().register(server);
+
+        // Unknown /api paths answer 401 before 404, so an unauthenticated caller cannot map the API.
+        server.createContext(API_PREFIX, auth.protect(exchange -> sendText(exchange, 404, "Not Found")));
 
         server.createContext("/", exchange -> {
             String path = exchange.getRequestURI().getPath();
@@ -514,6 +544,55 @@ public class ObserveCommand implements Callable<Integer> {
             }
             send(exchange, 200, "text/html; charset=utf-8", indexHtml);
         });
+    }
+
+    /** --rotate-api-key excludes a supplied key: rotating while another key is in force would be a no-op. */
+    private ApiKeyStore.Resolution resolveApiKey(String envKey) {
+        if (rotateApiKey) {
+            if (apiKey != null || (envKey != null && !envKey.isBlank())) {
+                throw new IllegalArgumentException("--rotate-api-key cannot be combined with --api-key or "
+                        + ApiKeyStore.ENV_VAR + "; rotation replaces the stored key at " + apiKeyFile);
+            }
+            return ApiKeyStore.rotate(apiKeyFile);
+        }
+        return ApiKeyStore.resolve(apiKey, envKey, apiKeyFile);
+    }
+
+    private void printApiKeyStatus(ApiKeyStore.Resolution key) {
+        System.out.println("Auth:      /api/* requires Authorization: Bearer <key>; the UI logs in with a"
+                + " username and password, or the key");
+        switch (key.source()) {
+            case FLAG -> System.out.println("           Key: from --api-key");
+            case ENVIRONMENT -> System.out.println("           Key: from " + ApiKeyStore.ENV_VAR);
+            case FILE ->
+                System.out.println(
+                        "           Key: stored digest at " + apiKeyFile + " (lost it? restart with --rotate-api-key)");
+            case GENERATED, ROTATED -> {
+                String newKey = key.newKey().orElseThrow();
+                String banner = "=".repeat(newKey.length() + 4);
+                System.out.println();
+                System.out.println(
+                        key.source() == ApiKeyStore.Source.ROTATED
+                                ? "New API key (the previous key no longer works):"
+                                : "Generated API key. Copy it now, it will not be shown again:");
+                System.out.println(banner);
+                System.out.println("  " + newKey);
+                System.out.println(banner);
+                System.out.println("Only its SHA-256 digest was saved, to " + apiKeyFile);
+                System.out.println(
+                        "For CI or containers, set " + ApiKeyStore.ENV_VAR + " instead so no key is printed.");
+            }
+        }
+    }
+
+    private static void printUserStatus(UserStore users) {
+        if (users.isEmpty()) {
+            System.out.println("Users:     none yet; add a dashboard login with `nexora user add <username>`"
+                    + " (the API key works meanwhile)");
+        } else {
+            System.out.println("Users:     " + users.usernames().size() + " dashboard user(s) in " + users.file()
+                    + "; manage with `nexora user`");
+        }
     }
 
     private static String hostForDisplay(String host) {
@@ -537,54 +616,6 @@ public class ObserveCommand implements Callable<Integer> {
             os.write(payload);
         } finally {
             exchange.close();
-        }
-    }
-
-    private static byte[] loadUiHtml(int wsPort) {
-        String resource = "observe/index.html";
-        try (InputStream is = ObserveCommand.class.getClassLoader().getResourceAsStream(resource)) {
-            if (is == null) {
-                return "<h1>Missing observe/index.html resource</h1>".getBytes(StandardCharsets.UTF_8);
-            }
-            String html = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            html = html.replace("{{WS_PORT}}", String.valueOf(wsPort));
-            return html.getBytes(StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            return ("<h1>Failed to load UI resource</h1><pre>" + e.getMessage() + "</pre>")
-                    .getBytes(StandardCharsets.UTF_8);
-        }
-    }
-
-    private static final class SnapshotBroadcaster extends WebSocketServer {
-
-        SnapshotBroadcaster(String host, int port) {
-            super(new InetSocketAddress("0.0.0.0".equals(host) ? "0.0.0.0" : host, port));
-            setReuseAddr(true);
-        }
-
-        @Override
-        public void onOpen(WebSocket conn, ClientHandshake handshake) {}
-
-        @Override
-        public void onClose(WebSocket conn, int code, String reason, boolean remote) {}
-
-        @Override
-        public void onMessage(WebSocket conn, String message) {}
-
-        @Override
-        public void onError(WebSocket conn, Exception ex) {}
-
-        @Override
-        public void onStart() {}
-
-        void broadcastSnapshot(String json) {
-            Collection<WebSocket> connections = getConnections();
-            if (connections.isEmpty()) return;
-            for (WebSocket ws : connections) {
-                if (ws.isOpen()) {
-                    ws.send(json);
-                }
-            }
         }
     }
 }

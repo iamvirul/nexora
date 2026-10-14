@@ -6,6 +6,9 @@ import com.nexora.api.ExecutionNotFoundException;
 import com.nexora.api.ExecutionNotOwnedException;
 import com.nexora.api.ExecutionNotReplayableException;
 import com.nexora.api.NexoraEngine;
+import com.nexora.api.auth.ApiAuth;
+import com.nexora.api.auth.ApiKeyStore;
+import com.nexora.api.auth.SessionEndpoints;
 import com.nexora.api.observability.NexoraObservability;
 import com.nexora.core.capability.CapabilityContract;
 import com.nexora.core.capability.CapabilityResult;
@@ -48,7 +51,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import org.java_websocket.WebSocket;
+import org.java_websocket.drafts.Draft;
+import org.java_websocket.exceptions.InvalidDataException;
+import org.java_websocket.framing.CloseFrame;
 import org.java_websocket.handshake.ClientHandshake;
+import org.java_websocket.handshake.ServerHandshakeBuilder;
 import org.java_websocket.server.WebSocketServer;
 
 /**
@@ -91,6 +98,17 @@ public class PaymentPipelineApp {
     static JdbcExecutionStore executionStore;
 
     public static void main(String[] args) throws Exception {
+        // NEXORA_API_KEY when set; otherwise a key for this run only, printed below and never saved.
+        ApiKeyStore.Resolution key;
+        try {
+            key = ApiKeyStore.forThisRun(System.getenv(ApiKeyStore.ENV_VAR));
+        } catch (IllegalArgumentException e) {
+            System.err.println("Error: " + e.getMessage());
+            System.exit(2);
+            return;
+        }
+        ApiAuth auth = new ApiAuth(key.digest());
+
         executionStore = JdbcExecutionStore.h2InMemory();
         NexoraEngine engine = buildEngine();
         NexoraObservability obs = NexoraObservability.attach(engine, 50, 300);
@@ -102,7 +120,7 @@ public class PaymentPipelineApp {
                         e.executionId(), e.failureCode(), e.deadLetterId()));
 
         // WebSocket broadcaster
-        SnapshotBroadcaster broadcaster = new SnapshotBroadcaster(WS_PORT);
+        SnapshotBroadcaster broadcaster = new SnapshotBroadcaster(WS_PORT, auth, HTTP_PORT);
         obs.addSnapshotListener(snap -> {
             try {
                 broadcaster.broadcastSnapshot(JSON.writeValueAsString(snap));
@@ -134,15 +152,15 @@ public class PaymentPipelineApp {
             send(exchange, 200, obs.metricsContentType(), obs.scrapePrometheus().getBytes(StandardCharsets.UTF_8));
         });
 
-        http.createContext("/api/process", exchange -> {
+        http.createContext("/api/process", auth.protect(exchange -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 sendText(exchange, 405, "Method Not Allowed");
                 return;
             }
             send(exchange, 200, "application/json; charset=utf-8", JSON.writeValueAsBytes(obs.processSnapshot()));
-        });
+        }));
 
-        http.createContext("/api/execute", exchange -> {
+        http.createContext("/api/execute", auth.protect(exchange -> {
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 sendText(exchange, 405, "Method Not Allowed");
                 return;
@@ -164,10 +182,10 @@ public class PaymentPipelineApp {
                 if (ex != null) System.err.println("Execution error: " + ex.getMessage());
             });
             sendJson(exchange, 202, Map.of("accepted", true, "goal", req.goal(), "executionId", handle.executionId()));
-        });
+        }));
 
         // Execution history for the UI's history panel: newest first, cursor-paginated
-        http.createContext("/api/executions", exchange -> {
+        http.createContext("/api/executions", auth.protect(exchange -> {
             if (!"/api/executions".equals(exchange.getRequestURI().getPath())) {
                 sendText(exchange, 404, "Not Found");
                 return;
@@ -224,11 +242,11 @@ public class PaymentPipelineApp {
                 System.err.println("Execution history query failed: " + e.getMessage());
                 sendJson(exchange, 500, Map.of("error", "Execution history query failed"));
             }
-        });
+        }));
 
         // GET one execution with its steps; DELETE cancels it (200 cancelled, 404 unknown, 409 already finished);
         // POST {id}/replay re-runs a failed, timed-out, cancelled or compensated execution
-        http.createContext("/api/executions/", exchange -> {
+        http.createContext("/api/executions/", auth.protect(exchange -> {
             String id = exchange.getRequestURI().getPath().substring("/api/executions/".length());
             if (id.endsWith("/replay")) {
                 replayExecution(engine, exchange, id.substring(0, id.length() - "/replay".length()));
@@ -283,9 +301,9 @@ public class PaymentPipelineApp {
                 Thread.currentThread().interrupt();
                 sendJson(exchange, 503, Map.of("error", "Cancel request interrupted", "executionId", id));
             }
-        });
+        }));
 
-        http.createContext("/api/dead-letters/", exchange -> {
+        http.createContext("/api/dead-letters/", auth.protect(exchange -> {
             String path = exchange.getRequestURI().getPath();
             String prefix = "/api/dead-letters/";
             String remainder = path.length() > prefix.length() ? path.substring(prefix.length()) : "";
@@ -341,9 +359,9 @@ public class PaymentPipelineApp {
                 return;
             }
             sendJson(exchange, 405, Map.of("error", "Method Not Allowed"));
-        });
+        }));
 
-        http.createContext("/api/dead-letters", exchange -> {
+        http.createContext("/api/dead-letters", auth.protect(exchange -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 sendText(exchange, 405, "Method Not Allowed");
                 return;
@@ -381,9 +399,9 @@ public class PaymentPipelineApp {
             }
             var items = executionStore.findDeadLetters(stateFilter, page * size, size);
             sendJson(exchange, 200, Map.of("items", items, "page", page, "size", size));
-        });
+        }));
 
-        http.createContext("/api/schedules", exchange -> {
+        http.createContext("/api/schedules", auth.protect(exchange -> {
             String method = exchange.getRequestMethod();
             if ("GET".equalsIgnoreCase(method)) {
                 var schedules = engine.listSchedules().stream()
@@ -441,9 +459,9 @@ public class PaymentPipelineApp {
             } else {
                 sendText(exchange, 405, "Method Not Allowed");
             }
-        });
+        }));
 
-        http.createContext("/api/schedules/", exchange -> {
+        http.createContext("/api/schedules/", auth.protect(exchange -> {
             String path = exchange.getRequestURI().getPath();
             String id = path.substring("/api/schedules/".length());
             if ("DELETE".equalsIgnoreCase(exchange.getRequestMethod())) {
@@ -452,8 +470,14 @@ public class PaymentPipelineApp {
             } else {
                 sendText(exchange, 405, "Method Not Allowed");
             }
-        });
+        }));
 
+        new SessionEndpoints(auth).register(http);
+        // Unknown /api paths answer 401 before 404, so an unauthenticated caller cannot map the API.
+        http.createContext("/api/", auth.protect(exchange -> sendText(exchange, 404, "Not Found")));
+
+        // Left open on purpose: this is the demo's webhook *receiver*. Nexora's webhook delivery calls
+        // it with an HMAC signature (nexora-signature), not the API key, as it would call any receiver.
         http.createContext("/api/mock-webhook", exchange -> {
             System.out.println();
             System.out.println("  >>> WEBHOOK CALLBACK RECEIVED!");
@@ -484,6 +508,7 @@ public class PaymentPipelineApp {
         System.out.printf("UI:        http://localhost:%d/%n", HTTP_PORT);
         System.out.printf("Metrics:   http://localhost:%d/metrics%n", HTTP_PORT);
         System.out.printf("WebSocket: ws://localhost:%d/%n", WS_PORT);
+        printApiKey(key);
         System.out.println();
         System.out.println("DAG (8 steps):");
         System.out.println("  validate_request ──────────────────────────────────────────────┐");
@@ -657,8 +682,10 @@ public class PaymentPipelineApp {
         System.out.printf(
                 "  Schedule registered id=%s cron='* * * * *' nextFire=%s%n",
                 scheduleHandle.id(), scheduleHandle.nextFireTime());
-        System.out.printf("  GET  http://localhost:8090/api/schedules         — list all schedules%n");
-        System.out.printf("  DELETE http://localhost:8090/api/schedules/%s  — cancel it%n", scheduleHandle.id());
+        System.out.printf("  GET    http://localhost:%d/api/schedules       — list all schedules%n", HTTP_PORT);
+        System.out.printf(
+                "  DELETE http://localhost:%d/api/schedules/%s  — cancel it%n", HTTP_PORT, scheduleHandle.id());
+        System.out.println("  (send Authorization: Bearer <api key> with each request)");
         System.out.printf("  (Scheduled executions will appear in the UI as they fire)%n");
 
         // Scenario 10 — cancellation: the profile lookup hangs, the run is cancelled after 1s.
@@ -1015,7 +1042,8 @@ public class PaymentPipelineApp {
         try (InputStream is = PaymentPipelineApp.class.getClassLoader().getResourceAsStream("observe/index.html")) {
             if (is == null) return "<h1>Missing observe/index.html</h1>".getBytes(StandardCharsets.UTF_8);
             String html = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            html = html.replace("{{WS_PORT}}", String.valueOf(WS_PORT));
+            // No user store in the demo: it keeps no state, so the dashboard offers only the API key.
+            html = html.replace("{{WS_PORT}}", String.valueOf(WS_PORT)).replace("{{PASSWORD_LOGIN}}", "false");
             return html.getBytes(StandardCharsets.UTF_8);
         } catch (IOException e) {
             return ("<h1>Failed to load UI: " + e.getMessage() + "</h1>").getBytes(StandardCharsets.UTF_8);
@@ -1130,12 +1158,46 @@ public class PaymentPipelineApp {
 
     record ExecuteRequest(String goal, Map<String, Object> context) {}
 
+    private static void printApiKey(ApiKeyStore.Resolution key) {
+        System.out.println();
+        System.out.println("Auth:      /api/* and the WebSocket require the API key; the UI asks for it once.");
+        if (key.newKey().isEmpty()) {
+            System.out.println("           Key: from " + ApiKeyStore.ENV_VAR);
+            return;
+        }
+        System.out.println(
+                "           Key for this run (not saved; set " + ApiKeyStore.ENV_VAR + " to choose your own):");
+        System.out.println("           " + key.newKey().get());
+    }
+
     // WebSocket broadcaster
 
     static final class SnapshotBroadcaster extends WebSocketServer {
-        SnapshotBroadcaster(int port) {
+        private final ApiAuth auth;
+        private final int dashboardPort;
+
+        SnapshotBroadcaster(int port, ApiAuth auth, int dashboardPort) {
             super(new InetSocketAddress("0.0.0.0", port));
+            this.auth = auth;
+            this.dashboardPort = dashboardPort;
             setReuseAddr(true);
+        }
+
+        /** Snapshots carry goals and contexts, so the stream needs the same credentials as /api. */
+        @Override
+        public ServerHandshakeBuilder onWebsocketHandshakeReceivedAsServer(
+                WebSocket conn, Draft draft, ClientHandshake request) throws InvalidDataException {
+            ServerHandshakeBuilder response = super.onWebsocketHandshakeReceivedAsServer(conn, draft, request);
+            boolean allowed = auth.allowsWebSocket(
+                    request.getFieldValue("Authorization"),
+                    request.getFieldValue("Cookie"),
+                    request.getFieldValue("Origin"),
+                    request.getFieldValue("Host"),
+                    dashboardPort);
+            if (!allowed) {
+                throw new InvalidDataException(CloseFrame.POLICY_VALIDATION, "Unauthorized");
+            }
+            return response;
         }
 
         @Override

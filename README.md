@@ -128,6 +128,9 @@ nexora [--config <file>] <command>
 | `nexora schedule remove <id>` | Cancel a schedule immediately |
 | `nexora cancel <executionId>` | Cancel an execution running in the observe server |
 | `nexora replay <executionId>` | Replay a failed, timed-out, cancelled or compensated execution through the observe server |
+| `nexora user add <username>` | Create a dashboard user (also `passwd`, `remove`, `list`) |
+| `nexora login` | Sign in with a username and password; saves a user API key for `cancel` / `replay` |
+| `nexora logout` | Revoke and delete the saved user API key |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 
@@ -406,7 +409,7 @@ To use webhooks securely, configure an HMAC-SHA256 signature secret in your `nex
 When invoking an execution, supply the `webhookUrl` and optionally filter which terminal `webhookEvents` trigger a callback:
 
 ```bash
-curl -X POST http://localhost:9464/api/execute \
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/execute \
   -H "content-type: application/json" \
   -d '{
         "goal": "process order payment",
@@ -458,21 +461,21 @@ Or via the observability REST API:
 
 ```bash
 # list PENDING (default)
-curl http://localhost:9464/api/dead-letters
+curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/dead-letters
 
 # filter by state, paginate
-curl "http://localhost:9464/api/dead-letters?state=RESOLVED&page=0&size=10"
+curl -H "Authorization: Bearer $NEXORA_API_KEY" "http://localhost:9464/api/dead-letters?state=RESOLVED&page=0&size=10"
 
 # replay
-curl -X POST http://localhost:9464/api/dead-letters/<id>/replay
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/dead-letters/<id>/replay
 
 # resolve
-curl -X POST http://localhost:9464/api/dead-letters/<id>/resolve \
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/dead-letters/<id>/resolve \
   -H "content-type: application/json" \
   -d '{"reason":"investigated and closed"}'
 ```
 
-> **Authentication**: DLQ endpoints will require a Bearer token once [#30](https://github.com/iamvirul/nexora/issues/30) lands.
+> **Authentication**: these endpoints require the API key. See [Authentication](#authentication).
 
 ## Cron Scheduling
 
@@ -534,13 +537,13 @@ nexora schedule remove <schedule-id>
 Or via the observability REST API (also exposed in the dashboard Cron Schedules panel):
 
 ```bash
-curl http://localhost:9464/api/schedules
+curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/schedules
 
-curl -X POST http://localhost:9464/api/schedules \
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/schedules \
   -H "content-type: application/json" \
   -d '{"cronExpression":"0 0 * * *","goal":"nightly cleanup","missedFirePolicy":"FIRE_ONCE"}'
 
-curl -X DELETE http://localhost:9464/api/schedules/<id>
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X DELETE http://localhost:9464/api/schedules/<id>
 ```
 
 ## Observability UI + Prometheus + Grafana
@@ -577,10 +580,27 @@ It exposes these endpoints with no external dependencies:
 
 > **Note**: `/health/live` and `/health` were added in v0.3.0. In v0.3.0 `/health/ready` changed from reporting capability circuit state to reporting dependency readiness; circuit states are now under `capabilities` in `GET /health`.
 
+### Authentication
+
+Every `/api/*` route and the live WebSocket require a key, sent as `Authorization: Bearer <key>`. `/metrics`, `/health/*`, the dashboard page, `/openapi.yaml` and `/docs` stay public for scrapers and probes.
+
+- **Server key** (`nxk_...`): printed once on first start (only its hash is saved), or set with `NEXORA_API_KEY` for CI and containers. Rotate with `--rotate-api-key`.
+- **User key** (`nxu_...`): minted when someone signs in with a username and password. The dashboard gets it as an HttpOnly cookie; `nexora login` saves it for `nexora cancel` / `nexora replay`. Valid 12 hours, logged under the user's name. Manage users with `nexora user add/passwd/remove/list`.
+
+```bash
+export NEXORA_API_KEY="$(openssl rand -base64 32)"
+nexora observe
+curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/process
+```
+
+The payment pipeline demo prints a fresh server key in its console on every start and has no user accounts, so paste that key into its sign-in card. To try username and password sign-in, run the login demo: `java -jar tests/login-demo/target/login-demo.jar` (users `alice` / `bob`, guided tour on its console).
+
+See the [Authentication guide](website/docs/concepts/authentication.md) for how each sign-in flow works, user management, the demo, and what `401` and `429` mean.
+
 Example execute request:
 
 ```bash
-curl -X POST http://localhost:9464/api/execute \
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/execute \
   -H "content-type: application/json" \
   -d '{"goal":"process order payment notification","context":{"orderId":"ORD-99"}}'
 ```

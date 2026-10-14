@@ -26,6 +26,7 @@ const sidebars = {
         'concepts/execution-replay',
         'concepts/dead-letter-queue',
         'concepts/cron-scheduling',
+        'concepts/authentication',
       ],
     },
     {

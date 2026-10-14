@@ -44,7 +44,7 @@ It exposes these endpoints with no external dependencies:
 Example execute request with webhook callback:
 
 ```bash
-curl -X POST http://localhost:9464/api/execute \
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/execute \
   -H "content-type: application/json" \
   -d '{
         "goal": "process order payment notification",
@@ -53,6 +53,23 @@ curl -X POST http://localhost:9464/api/execute \
         "webhookEvents": ["COMPLETED", "FAILED", "TIMED_OUT"]
       }'
 ```
+
+## Authentication
+
+Every `/api/*` route and the live WebSocket require a key, sent as `Authorization: Bearer <key>`. `/metrics`, `/health/*`, the dashboard page, `/openapi.yaml` and `/docs` stay public for scrapers and probes.
+
+- **Server key** (`nxk_...`): printed once on first start (only its hash is saved), or set with `NEXORA_API_KEY` for CI and containers. Rotate with `--rotate-api-key`.
+- **User key** (`nxu_...`): minted when someone signs in with a username and password. The dashboard gets it as an HttpOnly cookie; `nexora login` saves it for `nexora cancel` / `nexora replay`. Valid 12 hours, logged under the user's name. Manage users with `nexora user add/passwd/remove/list`.
+
+```bash
+export NEXORA_API_KEY="$(openssl rand -base64 32)"
+nexora observe
+curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/process
+```
+
+The payment pipeline demo prints a fresh server key in its console on every start and has no user accounts, so paste that key into its sign-in card. To try username and password sign-in, run the [login demo](concepts/authentication#try-it-the-login-demo).
+
+See [Authentication](concepts/authentication) for how each sign-in flow works, user management, the demo, and what `401` and `429` mean.
 
 ## Health Checks
 
@@ -97,12 +114,12 @@ The `nexora_ready` gauge mirrors `/health/ready` (1 = ready, 0 = not ready) and 
 
 Read-only access to past and running executions, backed by the persistence store (`executionStore` in `nexora.json`). Without a store these routes return `503`.
 
-> **Warning**: These endpoints currently have no caller authentication and return execution goals and context. Do not expose the observe server to untrusted networks. Authentication will be enforced once [#30](https://github.com/iamvirul/nexora/issues/30) lands.
+> **Authentication**: these endpoints return execution goals and context, so they require the API key. See [Authentication](#authentication).
 
 ### List executions
 
 ```bash
-curl "http://localhost:9464/api/executions?status=FAILED,CANCELLED&limit=20"
+curl -H "Authorization: Bearer $NEXORA_API_KEY" "http://localhost:9464/api/executions?status=FAILED,CANCELLED&limit=20"
 ```
 
 ```json
@@ -143,7 +160,7 @@ The observe UI has an **Execution History** panel built on these routes: filter 
 ### Get one execution
 
 ```bash
-curl http://localhost:9464/api/executions/4f3a1c2d-...
+curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/executions/4f3a1c2d-...
 ```
 
 Returns the execution with its `context` and `steps` (state, timings, failure code and message for each step). Unknown ids return `404`; if the store cannot be queried the response is `500`, never a misleading `404`. Step outputs are not persisted yet ([#32](https://github.com/iamvirul/nexora/issues/32)).
@@ -171,15 +188,15 @@ Requires `executionStore` to be configured (see [CLI Reference](cli)). The dashb
 
 ```bash
 # list all schedules
-curl http://localhost:9464/api/schedules
+curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/schedules
 
 # register a nightly schedule
-curl -X POST http://localhost:9464/api/schedules \
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/schedules \
   -H "content-type: application/json" \
   -d '{"cronExpression":"0 0 * * *","goal":"nightly cleanup","missedFirePolicy":"FIRE_ONCE"}'
 
 # cancel a schedule
-curl -X DELETE http://localhost:9464/api/schedules/<id>
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X DELETE http://localhost:9464/api/schedules/<id>
 ```
 
 See [Cron Scheduling](concepts/cron-scheduling) for the full reference including missed-fire policies and events.
@@ -192,24 +209,24 @@ Permanently failed executions are captured in the dead letter queue. See [Dead L
 
 ```bash
 # list PENDING (default)
-curl http://localhost:9464/api/dead-letters
+curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/dead-letters
 
 # list all states with pagination
-curl "http://localhost:9464/api/dead-letters?state=ALL&page=0&size=10"
+curl -H "Authorization: Bearer $NEXORA_API_KEY" "http://localhost:9464/api/dead-letters?state=ALL&page=0&size=10"
 
 # filter by state
-curl "http://localhost:9464/api/dead-letters?state=RESOLVED&page=0&size=20"
+curl -H "Authorization: Bearer $NEXORA_API_KEY" "http://localhost:9464/api/dead-letters?state=RESOLVED&page=0&size=20"
 
 # replay a dead letter (creates a new execution from the original goal + context)
-curl -X POST http://localhost:9464/api/dead-letters/<id>/replay
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/dead-letters/<id>/replay
 
 # resolve with a reason
-curl -X POST http://localhost:9464/api/dead-letters/<id>/resolve \
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/dead-letters/<id>/resolve \
   -H "content-type: application/json" \
   -d '{"reason":"investigated and closed"}'
 
 # resolve without a reason (reason field is optional)
-curl -X POST http://localhost:9464/api/dead-letters/<id>/resolve
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/dead-letters/<id>/resolve
 ```
 
 ### Metrics exposed include

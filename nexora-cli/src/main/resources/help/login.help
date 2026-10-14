@@ -1,0 +1,29 @@
+Log in to an observe server with a dashboard username and password.
+
+  The server checks the password and returns a user API key (nxu_...), saved to
+  ~/.nexora/credentials, one per server, readable only by you. `nexora cancel`
+  and `nexora replay` then send it automatically. The key lasts 12 hours, and
+  ends on `nexora logout`, a password change, user removal or a server restart.
+
+  Key order for cancel and replay: --api-key, then NEXORA_API_KEY, then the key
+  saved by this command.
+
+  Five wrong passwords lock the username for 15 minutes.
+
+
+  Over plain http:// to another machine the key or password could be read on
+  the way, so the command refuses unless you pass --allow-insecure-http. Use an
+  https:// URL (for example behind a TLS proxy) instead. Localhost is fine.
+  Exit codes
+  ──────────
+  0  Logged in and the key was saved
+  1  Wrong username or password, throttled, or the server could not be reached
+  2  Invalid arguments
+
+  Examples
+  ────────
+  Log in to the local observe server (prompts for username and password):
+    nexora login
+
+  Log in to a remote server non-interactively:
+    printf '%s\n' "$PASSWORD" | nexora login --server https://nexora.internal:9464 -u alice --password-stdin

@@ -21,14 +21,15 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Order-processing demo capabilities shared by DemoCommand and the default observe engine.
- * Wires validate_order, fetch_inventory, charge_card (+fallback), send_receipt, audit_log.
+ * Order-processing demo capabilities shared by {@code nexora demo} and the login demo sample.
+ * Wires validate_order, fetch_inventory, charge_card (+fallback), send_receipt, audit_log, matched
+ * by goals that mention "order".
  */
-final class DemoCapabilities {
+public final class DemoCapabilities {
 
     private DemoCapabilities() {}
 
-    static void wire(NexoraEngine.Builder builder) {
+    public static void wire(NexoraEngine.Builder builder) {
         builder.withPlugin(buildPlugin())
                 .withStepDefinition(new StepDefinition(
                         "validate_order",
