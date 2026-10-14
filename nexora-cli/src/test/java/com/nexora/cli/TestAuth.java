@@ -1,5 +1,7 @@
 package com.nexora.cli;
 
+import com.nexora.api.auth.ApiAuth;
+import com.nexora.api.auth.ApiKeyStore;
 import java.net.URI;
 import java.net.http.HttpRequest;
 

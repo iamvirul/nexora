@@ -1,4 +1,4 @@
-package com.nexora.cli;
+package com.nexora.api.auth;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -30,11 +30,11 @@ import java.util.regex.Pattern;
  * entropy, so a slow hash adds nothing, and supplied keys must be at least
  * {@value #MIN_SUPPLIED_KEY_LENGTH} characters for the same reason.
  */
-final class ApiKeyStore {
+public final class ApiKeyStore {
 
-    static final String ENV_VAR = "NEXORA_API_KEY";
-    static final String KEY_PREFIX = "nxk_";
-    static final int MIN_SUPPLIED_KEY_LENGTH = 32;
+    public static final String ENV_VAR = "NEXORA_API_KEY";
+    public static final String KEY_PREFIX = "nxk_";
+    public static final int MIN_SUPPLIED_KEY_LENGTH = 32;
 
     private static final int KEY_BYTES = 32;
     private static final String DIGEST_ALGORITHM = "SHA-256";
@@ -43,7 +43,7 @@ final class ApiKeyStore {
     private static final HexFormat HEX = HexFormat.of();
 
     /** Where the key in use came from. */
-    enum Source {
+    public enum Source {
         FLAG,
         ENVIRONMENT,
         FILE,
@@ -55,8 +55,8 @@ final class ApiKeyStore {
      * The digest to verify requests against, plus the plain key when this call created it. A key
      * read from the digest file cannot be shown again; only its digest is known.
      */
-    record Resolution(byte[] digest, Source source, Optional<String> newKey) {
-        Resolution {
+    public record Resolution(byte[] digest, Source source, Optional<String> newKey) {
+        public Resolution {
             digest = digest.clone();
         }
 
@@ -75,7 +75,7 @@ final class ApiKeyStore {
      * @throws IllegalArgumentException if a supplied key is too short
      * @throws IllegalStateException if the digest file is unreadable, corrupt, or cannot be written
      */
-    static Resolution resolve(String flagKey, String envKey, Path digestFile) {
+    public static Resolution resolve(String flagKey, String envKey, Path digestFile) {
         Objects.requireNonNull(digestFile, "digestFile");
         if (flagKey != null) {
             return new Resolution(digest(requireStrong(flagKey, "--api-key")), Source.FLAG, Optional.empty());
@@ -90,12 +90,12 @@ final class ApiKeyStore {
     }
 
     /** Replaces the stored digest with a new key's. The old key stops working on the next start. */
-    static Resolution rotate(Path digestFile) {
+    public static Resolution rotate(Path digestFile) {
         Objects.requireNonNull(digestFile, "digestFile");
         return generate(digestFile, Source.ROTATED);
     }
 
-    static byte[] digest(String key) {
+    public static byte[] digest(String key) {
         try {
             return MessageDigest.getInstance(DIGEST_ALGORITHM).digest(key.getBytes(StandardCharsets.UTF_8));
         } catch (NoSuchAlgorithmException e) {
@@ -104,13 +104,31 @@ final class ApiKeyStore {
         }
     }
 
+    /**
+     * {@value #ENV_VAR} when set, otherwise a fresh key that lives only for this process and is
+     * returned so it can be shown. For samples and demos, which should not leave files behind.
+     *
+     * @throws IllegalArgumentException if the environment key is too short
+     */
+    public static Resolution forThisRun(String envKey) {
+        if (envKey != null && !envKey.isBlank()) {
+            return new Resolution(digest(requireStrong(envKey, ENV_VAR)), Source.ENVIRONMENT, Optional.empty());
+        }
+        String key = newKey();
+        return new Resolution(digest(key), Source.GENERATED, Optional.of(key));
+    }
+
     private static Resolution generate(Path digestFile, Source source) {
-        byte[] random = new byte[KEY_BYTES];
-        RANDOM.nextBytes(random);
-        String key = KEY_PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(random);
+        String key = newKey();
         byte[] digest = digest(key);
         writeDigest(digestFile, digest);
         return new Resolution(digest, source, Optional.of(key));
+    }
+
+    private static String newKey() {
+        byte[] random = new byte[KEY_BYTES];
+        RANDOM.nextBytes(random);
+        return KEY_PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(random);
     }
 
     private static String requireStrong(String key, String origin) {

@@ -1,5 +1,6 @@
 package com.nexora.cli;
 
+import com.nexora.api.auth.ApiKeyStore;
 import java.io.PrintWriter;
 import java.net.URI;
 import java.net.http.HttpResponse;

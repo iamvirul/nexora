@@ -4,6 +4,7 @@ import com.nexora.api.ExecutionNotFoundException;
 import com.nexora.api.ExecutionNotOwnedException;
 import com.nexora.api.ExecutionNotReplayableException;
 import com.nexora.api.NexoraEngine;
+import com.nexora.api.auth.ApiAuth;
 import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.execution.ExecutionStatus;
 import com.nexora.core.intent.Intent;

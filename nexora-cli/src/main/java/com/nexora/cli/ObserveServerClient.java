@@ -2,6 +2,7 @@ package com.nexora.cli;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nexora.api.auth.ApiKeyStore;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URI;

@@ -1,4 +1,4 @@
-package com.nexora.cli;
+package com.nexora.api.auth;
 
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
@@ -36,11 +36,11 @@ import org.slf4j.LoggerFactory;
  * change state, and WebSocket handshakes, must therefore also carry an {@code Origin} on this
  * server's own host and port.
  */
-final class ApiAuth {
+public final class ApiAuth {
 
-    static final String SESSION_COOKIE = "nexora_session";
-    static final Duration SESSION_TTL = Duration.ofHours(12);
-    static final int MAX_SESSIONS = 1_000;
+    public static final String SESSION_COOKIE = "nexora_session";
+    public static final Duration SESSION_TTL = Duration.ofHours(12);
+    public static final int MAX_SESSIONS = 1_000;
 
     private static final Logger log = LoggerFactory.getLogger(ApiAuth.class);
     private static final String BEARER_SCHEME = "bearer";
@@ -49,11 +49,13 @@ final class ApiAuth {
     private static final Pattern SESSION_TOKEN = Pattern.compile("[A-Za-z0-9_-]{43}");
     private static final Set<String> SAFE_METHODS = Set.of("GET", "HEAD", "OPTIONS");
     private static final int STATUS_UNAUTHORIZED = 401;
+    private static final String UNAUTHORIZED_BODY = "{\"error\":{\"code\":\"UNAUTHORIZED\","
+            + "\"message\":\"A valid API key is required: send Authorization: Bearer <key>\"}}";
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final HexFormat HEX = HexFormat.of();
 
     /** How a request proved who it is. */
-    enum Credential {
+    public enum Credential {
         API_KEY,
         SESSION,
         NONE
@@ -63,9 +65,9 @@ final class ApiAuth {
      * The parts of a request that carry credentials. {@code host} is the authority the client
      * addressed (Host header); {@code origin} is the page that sent it, when a browser says so.
      */
-    record Request(String method, String authorization, String cookie, String origin, String host) {
+    public record Request(String method, String authorization, String cookie, String origin, String host) {
 
-        static Request of(HttpExchange exchange) {
+        public static Request of(HttpExchange exchange) {
             Headers headers = exchange.getRequestHeaders();
             return new Request(
                     exchange.getRequestMethod(),
@@ -81,17 +83,17 @@ final class ApiAuth {
     /** SHA-256 hex of each live session token, mapped to its expiry. Tokens themselves are never kept. */
     private final Map<String, Instant> sessions = new ConcurrentHashMap<>();
 
-    ApiAuth(byte[] keyDigest, Clock clock) {
+    public ApiAuth(byte[] keyDigest, Clock clock) {
         this.keyDigest = Objects.requireNonNull(keyDigest, "keyDigest").clone();
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
-    ApiAuth(byte[] keyDigest) {
+    public ApiAuth(byte[] keyDigest) {
         this(keyDigest, Clock.systemUTC());
     }
 
     /** Wraps {@code handler} so it only runs for an authenticated request; others get 401 first. */
-    HttpHandler protect(HttpHandler handler) {
+    public HttpHandler protect(HttpHandler handler) {
         Objects.requireNonNull(handler, "handler");
         return exchange -> {
             Credential credential = authenticate(Request.of(exchange));
@@ -118,7 +120,7 @@ final class ApiAuth {
     }
 
     /** Bearer key first; a session cookie only counts when the Origin rule above is met. */
-    Credential authenticate(Request request) {
+    public Credential authenticate(Request request) {
         if (bearerToken(request.authorization()).filter(this::isApiKey).isPresent()) {
             return Credential.API_KEY;
         }
@@ -133,7 +135,7 @@ final class ApiAuth {
      * Admits a WebSocket handshake on {@code bearer} or on a session cookie sent from the dashboard,
      * which lives on {@code dashboardPort} of the host the socket was opened on.
      */
-    boolean allowsWebSocket(String authorization, String cookie, String origin, String host, int dashboardPort) {
+    public boolean allowsWebSocket(String authorization, String cookie, String origin, String host, int dashboardPort) {
         if (bearerToken(authorization).filter(this::isApiKey).isPresent()) {
             return true;
         }
@@ -141,15 +143,15 @@ final class ApiAuth {
     }
 
     /** Compares digests, not keys: equal-length inputs to {@link MessageDigest#isEqual}, so timing reveals nothing. */
-    boolean isApiKey(String presented) {
+    public boolean isApiKey(String presented) {
         return MessageDigest.isEqual(ApiKeyStore.digest(presented), keyDigest);
     }
 
     /** A newly issued session: the token to set as the cookie, and when it stops being accepted. */
-    record Session(String token, Instant expiresAt) {}
+    public record Session(String token, Instant expiresAt) {}
 
     /** Issues a session; the caller sets {@link Session#token()} as the cookie. */
-    Session createSession() {
+    public Session createSession() {
         Instant now = clock.instant();
         sessions.values().removeIf(expiry -> !expiry.isAfter(now));
         while (sessions.size() >= MAX_SESSIONS) {
@@ -167,28 +169,21 @@ final class ApiAuth {
     }
 
     /** Ends the session named by the request's cookie, if any. */
-    void revokeSession(String cookieHeader) {
+    public void revokeSession(String cookieHeader) {
         sessionToken(cookieHeader).ifPresent(token -> sessions.remove(tokenDigest(token)));
     }
 
-    static String sessionCookie(String token) {
+    public static String sessionCookie(String token) {
         return SESSION_COOKIE + "=" + token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" + SESSION_TTL.toSeconds();
     }
 
-    static String clearedSessionCookie() {
+    public static String clearedSessionCookie() {
         return SESSION_COOKIE + "=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0";
     }
 
-    static void rejectUnauthorized(HttpExchange exchange) throws IOException {
+    public static void rejectUnauthorized(HttpExchange exchange) throws IOException {
         exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer realm=\"nexora\"");
-        ObserveCommand.sendJson(
-                exchange,
-                STATUS_UNAUTHORIZED,
-                Map.of(
-                        "error",
-                        Map.of(
-                                "code", "UNAUTHORIZED",
-                                "message", "A valid API key is required: send Authorization: Bearer <key>")));
+        Responses.send(exchange, STATUS_UNAUTHORIZED, Responses.JSON, UNAUTHORIZED_BODY);
     }
 
     private boolean hasLiveSession(String cookieHeader) {

@@ -1,4 +1,4 @@
-package com.nexora.cli;
+package com.nexora.api.auth;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -120,6 +120,32 @@ class ApiKeyStoreTest {
                 assertThrows(IllegalStateException.class, () -> ApiKeyStore.resolve(null, null, digestFile()));
 
         assertTrue(error.getMessage().contains("--rotate-api-key"), error.getMessage());
+    }
+
+    @Test
+    void forThisRunUsesTheEnvironmentKey() {
+        ApiKeyStore.Resolution resolution = ApiKeyStore.forThisRun(STRONG_KEY);
+
+        assertEquals(ApiKeyStore.Source.ENVIRONMENT, resolution.source());
+        assertArrayEquals(ApiKeyStore.digest(STRONG_KEY), resolution.digest());
+        assertTrue(resolution.newKey().isEmpty());
+    }
+
+    @Test
+    void forThisRunGeneratesAKeyWithoutWritingAnything() throws Exception {
+        ApiKeyStore.Resolution resolution = ApiKeyStore.forThisRun(null);
+
+        String key = resolution.newKey().orElseThrow();
+        assertEquals(ApiKeyStore.Source.GENERATED, resolution.source());
+        assertArrayEquals(ApiKeyStore.digest(key), resolution.digest());
+        try (var files = Files.list(home)) {
+            assertEquals(0, files.count());
+        }
+    }
+
+    @Test
+    void forThisRunRejectsAShortEnvironmentKey() {
+        assertThrows(IllegalArgumentException.class, () -> ApiKeyStore.forThisRun("short"));
     }
 
     @Test

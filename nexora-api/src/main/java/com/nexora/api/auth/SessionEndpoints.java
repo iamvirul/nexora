@@ -1,10 +1,9 @@
-package com.nexora.cli;
+package com.nexora.api.auth;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,9 +15,9 @@ import org.slf4j.LoggerFactory;
  * <p>Only the API key can open a session. Letting a session cookie open another would let one
  * stolen cookie renew itself indefinitely.
  */
-final class SessionEndpoints {
+public final class SessionEndpoints {
 
-    static final String PATH = "/api/session";
+    public static final String PATH = "/api/session";
 
     private static final Logger log = LoggerFactory.getLogger(SessionEndpoints.class);
     private static final int STATUS_OK = 200;
@@ -27,18 +26,18 @@ final class SessionEndpoints {
 
     private final ApiAuth auth;
 
-    SessionEndpoints(ApiAuth auth) {
+    public SessionEndpoints(ApiAuth auth) {
         this.auth = Objects.requireNonNull(auth, "auth");
     }
 
-    void register(HttpServer server) {
+    public void register(HttpServer server) {
         server.createContext(PATH, this::handle);
     }
 
     private void handle(HttpExchange exchange) throws IOException {
         if (!PATH.equals(exchange.getRequestURI().getPath())) {
             // HttpServer contexts match by prefix; "/api/sessionX" must not log anyone in.
-            auth.protect(notFound -> ObserveCommand.sendText(notFound, STATUS_NOT_FOUND, "Not Found"))
+            auth.protect(notFound -> Responses.send(notFound, STATUS_NOT_FOUND, Responses.TEXT, "Not Found"))
                     .handle(exchange);
             return;
         }
@@ -52,7 +51,7 @@ final class SessionEndpoints {
                     return;
                 }
                 exchange.getResponseHeaders().set("Allow", "POST, DELETE");
-                ObserveCommand.sendText(exchange, STATUS_METHOD_NOT_ALLOWED, "Method Not Allowed");
+                Responses.send(exchange, STATUS_METHOD_NOT_ALLOWED, Responses.TEXT, "Method Not Allowed");
             }
         }
     }
@@ -66,8 +65,7 @@ final class SessionEndpoints {
         ApiAuth.Session session = auth.createSession();
         log.info("Dashboard session opened remote={} expiresAt={}", exchange.getRemoteAddress(), session.expiresAt());
         exchange.getResponseHeaders().add("Set-Cookie", ApiAuth.sessionCookie(session.token()));
-        ObserveCommand.sendJson(
-                exchange, STATUS_OK, Map.of("expiresAt", session.expiresAt().toString()));
+        Responses.send(exchange, STATUS_OK, Responses.JSON, "{\"expiresAt\":\"" + session.expiresAt() + "\"}");
     }
 
     private void logout(HttpExchange exchange, ApiAuth.Credential credential) throws IOException {
@@ -78,6 +76,6 @@ final class SessionEndpoints {
         auth.revokeSession(exchange.getRequestHeaders().getFirst("Cookie"));
         log.info("Dashboard session closed remote={}", exchange.getRemoteAddress());
         exchange.getResponseHeaders().add("Set-Cookie", ApiAuth.clearedSessionCookie());
-        ObserveCommand.sendJson(exchange, STATUS_OK, Map.of("status", "LOGGED_OUT"));
+        Responses.send(exchange, STATUS_OK, Responses.JSON, "{\"status\":\"LOGGED_OUT\"}");
     }
 }

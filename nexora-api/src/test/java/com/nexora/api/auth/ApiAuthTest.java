@@ -1,4 +1,4 @@
-package com.nexora.cli;
+package com.nexora.api.auth;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -13,30 +13,32 @@ import org.junit.jupiter.api.Test;
 
 class ApiAuthTest {
 
+    private static final String KEY = "nxk_test-key-0123456789abcdefghijklmnopq";
+
     private static final String HOST = "127.0.0.1:9464";
     private static final String DASHBOARD_ORIGIN = "http://127.0.0.1:9464";
     private static final int DASHBOARD_PORT = 9464;
 
     private final MutableClock clock = new MutableClock(Instant.parse("2026-10-13T10:00:00Z"));
-    private final ApiAuth auth = new ApiAuth(ApiKeyStore.digest(TestAuth.KEY), clock);
+    private final ApiAuth auth = new ApiAuth(ApiKeyStore.digest(KEY), clock);
 
     @Test
     void validBearerKeyAuthenticates() {
-        assertEquals(ApiAuth.Credential.API_KEY, auth.authenticate(bearer("POST", "Bearer " + TestAuth.KEY)));
+        assertEquals(ApiAuth.Credential.API_KEY, auth.authenticate(bearer("POST", "Bearer " + KEY)));
     }
 
     @Test
     void bearerSchemeIsCaseInsensitive() {
-        assertEquals(ApiAuth.Credential.API_KEY, auth.authenticate(bearer("GET", "bEaReR " + TestAuth.KEY)));
+        assertEquals(ApiAuth.Credential.API_KEY, auth.authenticate(bearer("GET", "bEaReR " + KEY)));
     }
 
     @Test
     void wrongMissingOrMalformedCredentialsAreRejected() {
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(bearer("GET", "Bearer " + TestAuth.KEY + "x")));
+        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(bearer("GET", "Bearer " + KEY + "x")));
         assertEquals(ApiAuth.Credential.NONE, auth.authenticate(bearer("GET", null)));
         assertEquals(ApiAuth.Credential.NONE, auth.authenticate(bearer("GET", "Bearer ")));
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(bearer("GET", "Basic " + TestAuth.KEY)));
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(bearer("GET", TestAuth.KEY)));
+        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(bearer("GET", "Basic " + KEY)));
+        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(bearer("GET", KEY)));
     }
 
     @Test
@@ -107,7 +109,7 @@ class ApiAuthTest {
 
     @Test
     void webSocketAcceptsBearerFromAnyClient() {
-        assertTrue(auth.allowsWebSocket("Bearer " + TestAuth.KEY, null, null, "127.0.0.1:9465", DASHBOARD_PORT));
+        assertTrue(auth.allowsWebSocket("Bearer " + KEY, null, null, "127.0.0.1:9465", DASHBOARD_PORT));
     }
 
     @Test

@@ -9,6 +9,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.nexora.api.NexoraEngine;
+import com.nexora.api.auth.ApiAuth;
+import com.nexora.api.auth.SessionEndpoints;
 import com.nexora.api.observability.NexoraObservability;
 import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import com.sun.net.httpserver.HttpServer;
