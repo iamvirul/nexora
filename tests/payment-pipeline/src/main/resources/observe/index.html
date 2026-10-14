@@ -76,6 +76,12 @@
     .auth-card button { padding: 9px 12px; border-radius: 6px; border: 0; background: var(--blue); color: var(--bg);
                         font: inherit; font-weight: 600; cursor: pointer; }
     .auth-error { min-height: 1em; font-size: 12px; color: var(--red); }
+    .auth-switch { background: none !important; color: var(--muted) !important; font-weight: 400 !important;
+                   padding: 2px 0 !important; text-decoration: underline; }
+    .auth-switch:hover { color: var(--text) !important; }
+    .auth-fields { display: flex; flex-direction: column; gap: 10px; }
+    .auth-fields[hidden] { display: none; }
+    .nav-user { font-size: 12px; color: var(--muted); }
     .conn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
     .conn.live .conn-dot    { background: var(--green); }
     .conn.live .conn-label  { color: var(--green); }
@@ -637,19 +643,29 @@
       <div class="conn-dot"></div>
       <span class="conn-label" id="conn-label">Connecting</span>
     </div>
+    <span class="nav-user" id="nav-user"></span>
     <button class="nav-logout" id="logout" type="button" hidden>Log out</button>
   </div>
 </nav>
 
 <div class="auth-overlay" id="auth" hidden>
   <form class="auth-card" id="auth-form">
-    <h2>API key required</h2>
-    <p>Paste the key printed when <code>nexora observe</code> first started, or the value of
-       <code>NEXORA_API_KEY</code>. It is exchanged for a session cookie and not stored in this browser.</p>
-    <input type="password" id="auth-key" autocomplete="off" spellcheck="false" placeholder="nxk_..." required
-           aria-label="API key">
+    <h2>Sign in</h2>
+    <div class="auth-fields" id="auth-password-fields">
+      <input type="text" id="auth-user" autocomplete="username" spellcheck="false" placeholder="Username"
+             aria-label="Username">
+      <input type="password" id="auth-pass" autocomplete="current-password" placeholder="Password"
+             aria-label="Password">
+    </div>
+    <div class="auth-fields" id="auth-key-fields" hidden>
+      <p>Paste the key printed when <code>nexora observe</code> first started, or the value of
+         <code>NEXORA_API_KEY</code>. It is exchanged for a session cookie and not stored in this browser.</p>
+      <input type="password" id="auth-key" autocomplete="off" spellcheck="false" placeholder="nxk_..."
+             aria-label="API key">
+    </div>
     <div class="auth-error" id="auth-error" role="alert"></div>
-    <button type="submit">Unlock</button>
+    <button type="submit">Sign in</button>
+    <button type="button" class="auth-switch" id="auth-switch">Use an API key instead</button>
   </form>
 </div>
 
@@ -1402,14 +1418,36 @@ runForm.addEventListener('submit', async e => {
   }
 });
 // ── Auth ───────────────────────────────────────────────────────────────────────
-// The API key is sent once, to POST /api/session, and the server answers with an HttpOnly
-// cookie. The key is never kept in this page or in browser storage.
+// Sign-in trades a username and password, or the API key, for an HttpOnly session cookie at
+// POST /api/session. Neither the password nor the key is kept in this page or in browser storage.
 
+const PASSWORD_LOGIN = {{PASSWORD_LOGIN}}; // false when the server has no user store (the demo)
 const authEl = document.getElementById('auth');
 const authForm = document.getElementById('auth-form');
+const authUser = document.getElementById('auth-user');
+const authPass = document.getElementById('auth-pass');
 const authKey = document.getElementById('auth-key');
 const authError = document.getElementById('auth-error');
+const authSwitch = document.getElementById('auth-switch');
+const passwordFields = document.getElementById('auth-password-fields');
+const keyFields = document.getElementById('auth-key-fields');
 const logoutBtn = document.getElementById('logout');
+const navUser = document.getElementById('nav-user');
+let keyMode = !PASSWORD_LOGIN;
+
+function showMode() {
+  passwordFields.hidden = keyMode;
+  keyFields.hidden = !keyMode;
+  authSwitch.hidden = !PASSWORD_LOGIN;
+  authSwitch.textContent = keyMode ? 'Use a username and password instead' : 'Use an API key instead';
+  authUser.required = !keyMode;
+  authPass.required = !keyMode;
+  authKey.required = keyMode;
+  authError.textContent = '';
+  (keyMode ? authKey : authUser).focus();
+}
+
+authSwitch.addEventListener('click', () => { keyMode = !keyMode; showMode(); });
 
 async function api(url, opts = {}) {
   const r = await fetch(url, { cache: 'no-store', ...opts });
@@ -1425,12 +1463,13 @@ function requireLogin() {
   authed = false;
   if (ws) { ws.onclose = null; ws.close(); }
   logoutBtn.hidden = true;
+  navUser.textContent = '';
   setConn('error', 'Locked');
   authEl.hidden = false;
-  authKey.focus();
+  showMode();
 }
 
-function unlock() {
+async function unlock() {
   authed = true;
   authEl.hidden = true;
   logoutBtn.hidden = false;
@@ -1438,17 +1477,42 @@ function unlock() {
   loadDlq();
   loadSchedules();
   loadHistory(true);
+  try {
+    const who = await (await api('/api/session')).json();
+    navUser.textContent = who.user ? who.user : 'API key';
+  } catch (_) {}
+}
+
+function signInRequest() {
+  if (keyMode) {
+    return { method: 'POST', headers: { Authorization: 'Bearer ' + authKey.value.trim() } };
+  }
+  return {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: authUser.value.trim(), password: authPass.value }),
+  };
 }
 
 authForm.addEventListener('submit', async e => {
   e.preventDefault();
   authError.textContent = '';
-  const key = authKey.value.trim();
+  const request = signInRequest();
   authKey.value = '';
+  authPass.value = '';
   try {
-    const r = await fetch('/api/session', { method: 'POST', headers: { Authorization: 'Bearer ' + key } });
-    if (r.status === 401) { authError.textContent = 'That key was not accepted.'; authKey.focus(); return; }
-    if (!r.ok) { authError.textContent = `Login failed (HTTP ${r.status}).`; return; }
+    const r = await fetch('/api/session', request);
+    if (r.status === 401) {
+      authError.textContent = keyMode ? 'That key was not accepted.' : 'Wrong username or password.';
+      (keyMode ? authKey : authPass).focus();
+      return;
+    }
+    if (r.status === 429) {
+      const wait = Math.ceil(Number(r.headers.get('Retry-After') || 60) / 60);
+      authError.textContent = `Too many attempts. Try again in ${wait} minute${wait === 1 ? '' : 's'}.`;
+      return;
+    }
+    if (!r.ok) { authError.textContent = `Sign-in failed (HTTP ${r.status}).`; return; }
     unlock();
   } catch (ex) {
     authError.textContent = 'Could not reach the server: ' + ex.message;
@@ -1460,7 +1524,7 @@ logoutBtn.addEventListener('click', async () => {
   requireLogin();
 });
 
-// An existing session cookie skips the login card; a 401 here shows it.
+// An existing session cookie skips the sign-in card; a 401 here shows it.
 api('/api/process').then(() => unlock()).catch(() => {});
 </script>
 </body>

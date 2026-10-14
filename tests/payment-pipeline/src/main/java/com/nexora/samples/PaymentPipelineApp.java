@@ -1042,7 +1042,8 @@ public class PaymentPipelineApp {
         try (InputStream is = PaymentPipelineApp.class.getClassLoader().getResourceAsStream("observe/index.html")) {
             if (is == null) return "<h1>Missing observe/index.html</h1>".getBytes(StandardCharsets.UTF_8);
             String html = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            html = html.replace("{{WS_PORT}}", String.valueOf(WS_PORT));
+            // No user store in the demo: it keeps no state, so the dashboard offers only the API key.
+            html = html.replace("{{WS_PORT}}", String.valueOf(WS_PORT)).replace("{{PASSWORD_LOGIN}}", "false");
             return html.getBytes(StandardCharsets.UTF_8);
         } catch (IOException e) {
             return ("<h1>Failed to load UI: " + e.getMessage() + "</h1>").getBytes(StandardCharsets.UTF_8);
