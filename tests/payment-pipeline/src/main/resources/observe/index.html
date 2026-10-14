@@ -190,16 +190,21 @@
     .flash { font-size: 12px; color: var(--muted); white-space: nowrap; }
 
     /* ── Two-column panels row ── */
+    /* Fixed height: the lists scroll inside their panels instead of stretching the page. The row
+       track is minmax(0, 1fr) so long content cannot grow it past that height. */
     .panels {
-      flex: 1 0 auto;
-      min-height: max(420px, 55vh);
+      flex: 0 0 auto;
+      height: clamp(420px, 60vh, 760px);
       display: grid;
       grid-template-columns: 1fr 1fr;
+      grid-template-rows: minmax(0, 1fr);
       gap: 16px;
     }
 
     @media (max-width: 800px) {
-      .panels { grid-template-columns: 1fr; }
+      /* Stacked: each panel gets its own fixed height and scrolls on its own. */
+      .panels { height: auto; grid-template-columns: 1fr; grid-template-rows: none; }
+      .exec-section, .dlq-section { height: clamp(320px, 55vh, 560px); }
     }
 
     /* ── Panel islands (IntelliJ-style) ── */
