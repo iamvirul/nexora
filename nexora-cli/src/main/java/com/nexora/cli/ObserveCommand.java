@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.function.UnaryOperator;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Option;
@@ -54,6 +55,9 @@ public class ObserveCommand implements Callable<Integer> {
 
     @Spec
     private CommandSpec spec;
+
+    /** Environment lookup; tests replace it so a developer's own NEXORA_API_KEY cannot leak in. */
+    UnaryOperator<String> environment = System::getenv;
 
     @Option(
             names = {"--host"},
@@ -108,7 +112,7 @@ public class ObserveCommand implements Callable<Integer> {
         ApiKeyStore.Resolution key;
         UserStore users;
         try {
-            key = resolveApiKey(System.getenv(ApiKeyStore.ENV_VAR));
+            key = resolveApiKey(environment.apply(ApiKeyStore.ENV_VAR));
             users = new UserStore(usersFile, new PasswordHasher());
         } catch (IllegalArgumentException | IllegalStateException e) {
             spec.commandLine().getErr().println("Error: " + e.getMessage());

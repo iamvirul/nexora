@@ -25,9 +25,22 @@ class LoginDemoAppTest {
     private final HttpClient client = HttpClient.newHttpClient();
     private LoginDemoApp.Running demo;
 
+    private static final int START_ATTEMPTS = 3;
+
+    /** Picks two distinct free ports and retries if another process takes one before the demo binds it. */
     @BeforeEach
     void setUp() throws Exception {
-        demo = LoginDemoApp.start(freePort(), freePort(), null);
+        for (int attempt = 1; ; attempt++) {
+            int[] ports = twoFreePorts();
+            try {
+                demo = LoginDemoApp.start(ports[0], ports[1], null);
+                return;
+            } catch (java.net.BindException e) {
+                if (attempt == START_ATTEMPTS) {
+                    throw e;
+                }
+            }
+        }
     }
 
     @AfterEach
@@ -115,9 +128,11 @@ class LoginDemoAppTest {
         return "http://" + LoginDemoApp.HOST + ":" + demo.server().httpPort();
     }
 
-    private static int freePort() throws Exception {
-        try (ServerSocket socket = new ServerSocket(0)) {
-            return socket.getLocalPort();
+    /** Both sockets are held open together, so the two ports are always different. */
+    private static int[] twoFreePorts() throws Exception {
+        try (ServerSocket http = new ServerSocket(0);
+                ServerSocket webSocket = new ServerSocket(0)) {
+            return new int[] {http.getLocalPort(), webSocket.getLocalPort()};
         }
     }
 }

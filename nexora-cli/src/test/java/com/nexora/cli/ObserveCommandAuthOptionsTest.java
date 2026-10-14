@@ -53,17 +53,32 @@ class ObserveCommandAuthOptionsTest {
     }
 
     private Result observe(String... options) {
-        String[] args = new String[options.length + 3];
+        // Both credential files live in the temp dir, never the developer's real ~/.nexora.
+        String[] args = new String[options.length + 5];
         args[0] = "observe";
         args[1] = "--api-key-file";
         args[2] = digestFile().toString();
-        System.arraycopy(options, 0, args, 3, options.length);
+        args[3] = "--users-file";
+        args[4] = home.resolve("users").toString();
+        System.arraycopy(options, 0, args, 5, options.length);
         StringWriter err = new StringWriter();
-        CommandLine cmd = new CommandLine(new NexoraCli());
+        CommandLine cmd = new CommandLine(new NexoraCli(), new NoEnvironmentFactory());
         cmd.setErr(new PrintWriter(err));
         int exitCode = cmd.execute(args);
         return new Result(exitCode, err.toString());
     }
 
     private record Result(int exitCode, String err) {}
+
+    /** Hands ObserveCommand an empty environment, so NEXORA_API_KEY in the developer's shell cannot change the outcome. */
+    private static final class NoEnvironmentFactory implements CommandLine.IFactory {
+        @Override
+        public <K> K create(Class<K> type) throws Exception {
+            K instance = CommandLine.defaultFactory().create(type);
+            if (instance instanceof ObserveCommand observe) {
+                observe.environment = name -> null;
+            }
+            return instance;
+        }
+    }
 }
