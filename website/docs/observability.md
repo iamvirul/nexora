@@ -163,7 +163,18 @@ The observe UI has an **Execution History** panel built on these routes: filter 
 curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/executions/4f3a1c2d-...
 ```
 
-Returns the execution with its `context` and `steps` (state, timings, failure code and message for each step). Unknown ids return `404`; if the store cannot be queried the response is `500`, never a misleading `404`. Step outputs are not persisted yet ([#32](https://github.com/iamvirul/nexora/issues/32)).
+Returns the execution with its `context` and `steps`: state, timings, failure code and message, and `output` for each step. Unknown ids return `404`; if the store cannot be queried the response is `500`, never a misleading `404`.
+
+`output` is what the step returned, as a JSON object: a map appears as is, and any other value appears under `value`. It is `{}` for steps that returned nothing, have not completed, or failed. Outputs over `persistence.stepOutputMaxBytes` (64 KB by default) have `outputTruncated: true` and keep only a `preview` with the start of the JSON text:
+
+```json
+{ "stepId": "charge", "state": "COMPLETED", "output": { "paymentId": "p-1", "status": "CAPTURED" }, "outputTruncated": false }
+{ "stepId": "export", "state": "COMPLETED", "output": { "preview": "{\"rows\":[{\"id\":1,..." }, "outputTruncated": true }
+```
+
+The live snapshot (`GET /api/process` and the WebSocket stream) carries the same `output` and `outputTruncated` fields, capped at 4 KB per step because the whole snapshot is resent on every event. The dashboard shows each output under its step; the History panel shows the stored one.
+
+Outputs can contain business data, and anyone with an API key or a dashboard session can read them. Set `stepOutputMaxBytes` to `0` to record none.
 
 ---
 
