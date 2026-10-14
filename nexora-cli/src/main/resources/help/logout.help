@@ -1,0 +1,10 @@
+Log out of an observe server.
+
+  Revokes the user API key that `nexora login` saved for the server and deletes
+  it from ~/.nexora/credentials. If the server cannot be reached, the local copy
+  is still deleted and the key expires on its own.
+
+  Examples
+  ────────
+    nexora logout
+    nexora logout --server https://nexora.internal:9464

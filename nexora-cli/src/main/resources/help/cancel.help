@@ -9,8 +9,8 @@ Cancel an execution running inside a `nexora observe` server.
   of the process that started them.
 
 
-  The observe server requires its API key. It is read from NEXORA_API_KEY,
-  or pass --api-key. A rejected or missing key exits with code 1.
+  The observe server requires a key: --api-key, else NEXORA_API_KEY, else the
+  user API key saved by `nexora login`. A rejected or missing key exits with 1.
   Exit codes
   ──────────
   0  Cancellation requested (also when the execution was already being cancelled)

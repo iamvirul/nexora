@@ -18,7 +18,12 @@ Start a local observability server for Nexora.
   First start generates a key, prints it once, and saves only its SHA-256
   digest to ~/.nexora/observe-api-key.sha256 (see --api-key-file).
   For CI and containers set NEXORA_API_KEY instead: nothing is printed.
-  The browser UI asks for the key once and keeps an HttpOnly session cookie.
+
+  People sign in with a username and password instead: add accounts with
+  `nexora user add <name>`. A correct password mints a user API key, valid
+  12 hours and logged under that user's name. The browser UI keeps it in an
+  HttpOnly cookie; `nexora login` saves it for the CLI. Accounts live in
+  ~/.nexora/observe-users (see --users-file) and changes apply without a restart.
 
   Key rotation
   ────────────

@@ -7,8 +7,9 @@ info:
     Endpoints served by `nexora observe`: execution control and history, the dead letter queue,
     cron schedules, health probes, Prometheus metrics, and the live process snapshot.
 
-    Every `/api` route requires `Authorization: Bearer <api key>`, or the session cookie the
-    dashboard gets from `POST /api/session`. A cookie-authenticated request that changes state must
+    Every `/api` route requires `Authorization: Bearer <key>`: the server's own key, or a user API
+    key from `POST /api/keys` (username and password). The dashboard gets a user key as a session
+    cookie from `POST /api/session` instead. A cookie-authenticated request that changes state must
     also send an `Origin` matching this server. Health probes, metrics, the dashboard page and the
     API docs stay public, since probes and scrapers cannot carry credentials. The key travels in
     clear over plain HTTP until TLS lands ([#40](https://github.com/iamvirul/nexora/issues/40)).
@@ -37,7 +38,7 @@ tags:
   - name: Webhooks
     description: Audit log of webhook delivery attempts.
   - name: Session
-    description: Dashboard login. Trades the API key for an HttpOnly session cookie.
+    description: Login. A username and password mint a user API key; the dashboard gets it as an HttpOnly cookie.
   - name: Health
     description: Liveness and readiness probes. Unauthenticated by design.
   - name: Observability
@@ -636,22 +637,113 @@ paths:
         '503':
           $ref: '#/components/responses/SchedulingUnavailable'
 
+  /api/keys:
+    post:
+      tags: [Session]
+      operationId: issueUserApiKey
+      summary: Log in with a username and password and get a user API key
+      description: |
+        Returns a user API key (`nxu_...`) in the body, for the CLI (`nexora login`) and scripts to
+        send as `Authorization: Bearer`. It works everywhere the server's own key does, is recorded
+        under the user's name in the audit log, and is valid for 12 hours. Removing the user,
+        changing their password, `DELETE /api/session` or a server restart revoke it. Five failed
+        attempts lock a username for 15 minutes, and each client is limited to 20 attempts a minute.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordLogin'
+            example: { username: alice, password: 'correct horse battery' }
+      responses:
+        '201':
+          description: Key issued. Not set as a cookie.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [apiKey, user, expiresAt]
+                properties:
+                  apiKey:
+                    type: string
+                    pattern: '^nxu_[A-Za-z0-9_-]{43}$'
+                  user:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+              examples:
+                issued:
+                  value: { apiKey: nxu_x8Q2r1kV0bLm7dQe9sTzA4hJcN6wPfY3uGiK5oR0aEw, user: alice, expiresAt: '2026-10-14T22:00:00Z' }
+        '400':
+          $ref: '#/components/responses/InvalidLoginBody'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+        '415':
+          $ref: '#/components/responses/LoginNotJson'
+        '429':
+          $ref: '#/components/responses/TooManyLoginAttempts'
+
   /api/session:
+    get:
+      tags: [Session]
+      operationId: describeSession
+      summary: Who is signed in
+      description: Reports the user behind the session cookie or Bearer user key.
+      responses:
+        '200':
+          description: The caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [credential, passwordLogin]
+                properties:
+                  user:
+                    type: [string, 'null']
+                    description: Null when signed in with the server's own key.
+                  credential:
+                    type: string
+                    enum: [API_KEY, USER_KEY, SESSION]
+                  expiresAt:
+                    type: [string, 'null']
+                    format: date-time
+                  passwordLogin:
+                    type: boolean
+                    description: Whether this server has dashboard users.
+              examples:
+                user:
+                  value: { user: alice, credential: SESSION, expiresAt: '2026-10-14T22:00:00Z', passwordLogin: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
     post:
       tags: [Session]
       operationId: openSession
-      summary: Log in the dashboard
+      summary: Sign in to the dashboard
       description: |
-        Trades the API key for a session cookie (`HttpOnly; SameSite=Strict`, 12 hours). Only the
-        API key opens a session; an existing session cookie cannot open another.
+        Mints a user API key from a username and password, or a session from the server's own key
+        (`Authorization: Bearer`), and sets it as the cookie (`HttpOnly; SameSite=Strict`, 12 hours)
+        so page script never sees it. A user key or cookie cannot mint another. Password sign-in
+        must be `application/json` and, when the browser sends an `Origin`, come from this server.
       security:
         - bearerAuth: []
+        - {}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordLogin'
+            example: { username: alice, password: 'correct horse battery' }
       responses:
         '200':
-          description: Session opened. The cookie is in `Set-Cookie`.
+          description: Signed in. The key is in `Set-Cookie`, not the body.
           headers:
             Set-Cookie:
-              description: '`nexora_session=<token>; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200`'
+              description: '`nexora_session=nxu_...; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200`'
               schema:
                 type: string
           content:
@@ -660,24 +752,32 @@ paths:
                 type: object
                 required: [expiresAt]
                 properties:
+                  user:
+                    type: [string, 'null']
                   expiresAt:
                     type: string
                     format: date-time
               examples:
                 opened:
-                  value: { expiresAt: '2026-10-14T06:00:00Z' }
+                  value: { user: alice, expiresAt: '2026-10-14T22:00:00Z' }
+        '400':
+          $ref: '#/components/responses/InvalidLoginBody'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '405':
           $ref: '#/components/responses/MethodNotAllowedText'
+        '415':
+          $ref: '#/components/responses/LoginNotJson'
+        '429':
+          $ref: '#/components/responses/TooManyLoginAttempts'
     delete:
       tags: [Session]
       operationId: closeSession
-      summary: Log out the dashboard
-      description: Ends the session named by the cookie and clears it.
+      summary: Sign out
+      description: Revokes the session cookie or the Bearer user key and clears the cookie. The server's own key cannot be revoked.
       responses:
         '200':
-          description: Session closed. `Set-Cookie` clears the cookie.
+          description: Signed out. `Set-Cookie` clears the cookie.
           content:
             application/json:
               schema:
@@ -989,6 +1089,38 @@ components:
       example: 6d5c4b3a-2f1e-4d0c-9b8a-7f6e5d4c3b2a
 
   responses:
+    InvalidLoginBody:
+      description: 'The body is not `{"username": "...", "password": "..."}`, or is over 4 KB.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          examples:
+            badBody:
+              value: { error: { code: INVALID_CREDENTIALS_FORMAT, message: 'Body must be {"username":"...","password":"..."}' } }
+    LoginNotJson:
+      description: Credentials must be sent as `application/json`, which a cross-site page cannot send without a preflight.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          examples:
+            notJson:
+              value: { error: { code: UNSUPPORTED_MEDIA_TYPE, message: Send credentials as application/json } }
+    TooManyLoginAttempts:
+      description: The username is locked (5 failures, 15 minutes) or this client made over 20 attempts this minute. Unknown usernames are throttled the same way.
+      headers:
+        Retry-After:
+          description: Seconds until another attempt is allowed.
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          examples:
+            throttled:
+              value: { error: { code: TOO_MANY_ATTEMPTS, message: 'Too many login attempts; try again later' } }
     Unauthorized:
       description: Missing or invalid API key or session. Sent before any other check, so it does not reveal whether the route exists.
       headers:
@@ -1094,6 +1226,18 @@ components:
               value: { error: Failed to persist schedule }
 
   schemas:
+    PasswordLogin:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
     AuthError:
       type: object
       required: [error]
@@ -1104,7 +1248,7 @@ components:
           properties:
             code:
               type: string
-              const: UNAUTHORIZED
+              enum: [UNAUTHORIZED, INVALID_CREDENTIALS_FORMAT, UNSUPPORTED_MEDIA_TYPE, TOO_MANY_ATTEMPTS]
             message:
               type: string
     Error:

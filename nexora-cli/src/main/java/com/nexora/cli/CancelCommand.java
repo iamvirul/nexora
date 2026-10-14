@@ -4,6 +4,7 @@ import com.nexora.api.auth.ApiKeyStore;
 import java.io.PrintWriter;
 import java.net.URI;
 import java.net.http.HttpResponse;
+import java.nio.file.Path;
 import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Model.CommandSpec;
@@ -42,10 +43,21 @@ public class CancelCommand implements Callable<Integer> {
                     + " environment variable, which keeps the key out of the process list.")
     private String apiKey;
 
+    @Option(
+            names = {"--credentials-file"},
+            defaultValue = CliCredentials.DEFAULT_FILE,
+            description = "Where `nexora login` saved user API keys. Default: ${DEFAULT-VALUE}")
+    private Path credentialsFile;
+
     @Override
     public Integer call() {
         return ObserveServerClient.call(
-                spec, ObserveServerClient.Server.of(server, apiKey), executionId, "DELETE", "", this::report);
+                spec,
+                ObserveServerClient.Server.of(server, apiKey, credentialsFile),
+                executionId,
+                "DELETE",
+                "",
+                this::report);
     }
 
     private int report(HttpResponse<String> response, PrintWriter out, PrintWriter err) {

@@ -1,0 +1,30 @@
+Manage the observe dashboard's user accounts.
+
+  Users sign in to the dashboard, or with `nexora login`, using a username and
+  password. A correct password mints a user API key that is valid for 12 hours
+  and is recorded under the user's name in the audit log.
+
+  Passwords are never stored: each is hashed with PBKDF2-HMAC-SHA256 (600,000
+  iterations, random salt) into ~/.nexora/observe-users, which only you can
+  read. Passwords must be 12 to 128 characters and differ from the username.
+
+  Changes reach a running `nexora observe` immediately; no restart is needed.
+  Removing a user or changing a password ends their sessions and keys.
+
+  Subcommands
+  ───────────
+    add <username>       Create a user (prompts for the password twice)
+    passwd <username>    Change a password
+    remove <username>    Delete a user
+    list                 List users
+
+  Examples
+  ────────
+  Add a user interactively:
+    nexora user add alice
+
+  Add a user from a script (password on the first line of stdin):
+    printf '%s\n' "$ALICE_PASSWORD" | nexora user add alice --password-stdin
+
+  Use a non-default file (must match `nexora observe --users-file`):
+    nexora user list --users-file /etc/nexora/users

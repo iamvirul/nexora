@@ -6,7 +6,9 @@ import com.nexora.api.ExecutionNotReplayableException;
 import com.nexora.api.NexoraEngine;
 import com.nexora.api.auth.ApiAuth;
 import com.nexora.api.auth.ApiKeyStore;
+import com.nexora.api.auth.PasswordHasher;
 import com.nexora.api.auth.SessionEndpoints;
+import com.nexora.api.auth.UserStore;
 import com.nexora.api.observability.NexoraObservability;
 import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.intent.Intent;
@@ -88,6 +90,13 @@ public class ObserveCommand implements Callable<Integer> {
     private Path apiKeyFile;
 
     @Option(
+            names = {"--users-file"},
+            defaultValue = "${sys:user.home}/.nexora/observe-users",
+            description =
+                    "Dashboard users for username/password login, managed with `nexora user`. Default: ${DEFAULT-VALUE}")
+    private Path usersFile;
+
+    @Option(
             names = {"--rotate-api-key"},
             description = "Generate a new API key, replacing the stored digest; the old key stops working.")
     private boolean rotateApiKey;
@@ -109,17 +118,19 @@ public class ObserveCommand implements Callable<Integer> {
         int wsPort = port + 1;
 
         ApiKeyStore.Resolution key;
+        UserStore users;
         try {
             key = resolveApiKey(System.getenv(ApiKeyStore.ENV_VAR));
+            users = new UserStore(usersFile, new PasswordHasher());
         } catch (IllegalArgumentException | IllegalStateException e) {
             spec.commandLine().getErr().println("Error: " + e.getMessage());
             return EXIT_USAGE;
         }
-        ApiAuth auth = new ApiAuth(key.digest());
+        ApiAuth auth = new ApiAuth(key.digest(), users);
 
         NexoraEngine engine = parent.engine();
         NexoraObservability observability = NexoraObservability.attach(engine, maxExecutions, maxEvents);
-        byte[] indexHtml = loadUiHtml(wsPort);
+        byte[] indexHtml = loadUiHtml(wsPort, auth.passwordLoginEnabled());
 
         // WebSocket broadcast server
         SnapshotBroadcaster broadcaster = new SnapshotBroadcaster(host, wsPort, auth, port);
@@ -165,6 +176,7 @@ public class ObserveCommand implements Callable<Integer> {
         System.out.printf("WebSocket: ws://%s:%d/%n", hostForDisplay(host), wsPort);
         System.out.println();
         printApiKeyStatus(key);
+        printUserStatus(users);
         System.out.println();
         System.out.println("Press Ctrl+C to stop.");
 
@@ -577,7 +589,8 @@ public class ObserveCommand implements Callable<Integer> {
     }
 
     private void printApiKeyStatus(ApiKeyStore.Resolution key) {
-        System.out.println("Auth:      /api/* requires Authorization: Bearer <key>; the UI asks for the key once");
+        System.out.println("Auth:      /api/* requires Authorization: Bearer <key>; the UI logs in with a"
+                + " username and password, or the key");
         switch (key.source()) {
             case FLAG -> System.out.println("           Key: from --api-key");
             case ENVIRONMENT -> System.out.println("           Key: from " + ApiKeyStore.ENV_VAR);
@@ -599,6 +612,16 @@ public class ObserveCommand implements Callable<Integer> {
                 System.out.println(
                         "For CI or containers, set " + ApiKeyStore.ENV_VAR + " instead so no key is printed.");
             }
+        }
+    }
+
+    private static void printUserStatus(UserStore users) {
+        if (users.isEmpty()) {
+            System.out.println("Users:     none yet; add a dashboard login with `nexora user add <username>`"
+                    + " (the API key works meanwhile)");
+        } else {
+            System.out.println("Users:     " + users.usernames().size() + " dashboard user(s) in " + users.file()
+                    + "; manage with `nexora user`");
         }
     }
 
@@ -626,14 +649,15 @@ public class ObserveCommand implements Callable<Integer> {
         }
     }
 
-    private static byte[] loadUiHtml(int wsPort) {
+    private static byte[] loadUiHtml(int wsPort, boolean passwordLogin) {
         String resource = "observe/index.html";
         try (InputStream is = ObserveCommand.class.getClassLoader().getResourceAsStream(resource)) {
             if (is == null) {
                 return "<h1>Missing observe/index.html resource</h1>".getBytes(StandardCharsets.UTF_8);
             }
             String html = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            html = html.replace("{{WS_PORT}}", String.valueOf(wsPort));
+            html = html.replace("{{WS_PORT}}", String.valueOf(wsPort))
+                    .replace("{{PASSWORD_LOGIN}}", String.valueOf(passwordLogin));
             return html.getBytes(StandardCharsets.UTF_8);
         } catch (IOException e) {
             return ("<h1>Failed to load UI resource</h1><pre>" + e.getMessage() + "</pre>")
