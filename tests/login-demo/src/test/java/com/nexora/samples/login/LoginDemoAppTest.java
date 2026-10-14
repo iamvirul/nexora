@@ -77,6 +77,20 @@ class LoginDemoAppTest {
     }
 
     @Test
+    void historyAndDeadLetterPanelsHaveAStoreBehindThem() throws Exception {
+        for (String path : java.util.List.of("/api/executions", "/api/dead-letters", "/api/schedules")) {
+            HttpResponse<String> response = client.send(
+                    HttpRequest.newBuilder(URI.create(base() + path))
+                            .header("Authorization", "Bearer " + demo.serverKey())
+                            .GET()
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString());
+
+            assertEquals(200, response.statusCode(), path);
+        }
+    }
+
+    @Test
     void stoppingTheDemoDeletesItsUsersAndKeys() {
         Path dir = demo.dir();
         assertTrue(Files.exists(demo.usersFile()));

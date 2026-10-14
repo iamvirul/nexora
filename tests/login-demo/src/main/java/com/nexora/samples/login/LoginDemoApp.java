@@ -7,6 +7,7 @@ import com.nexora.api.auth.PasswordHasher;
 import com.nexora.api.auth.UserStore;
 import com.nexora.cli.DemoCapabilities;
 import com.nexora.cli.ObserveServer;
+import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -101,7 +102,8 @@ public final class LoginDemoApp {
             for (DemoUser user : USERS) {
                 users.add(user.username(), user.password().toCharArray());
             }
-            NexoraEngine.Builder builder = NexoraEngine.builder();
+            // In-memory store so the dead letter, schedule and history panels work; gone on exit like the rest.
+            NexoraEngine.Builder builder = NexoraEngine.builder().withExecutionStore(JdbcExecutionStore.h2InMemory());
             DemoCapabilities.wire(builder);
             engine = builder.build();
             ObserveServer server = ObserveServer.start(
