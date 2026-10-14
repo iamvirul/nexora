@@ -193,8 +193,8 @@ class ObserveAuthTest {
     void webSocketRequiresCredentials() throws Exception {
         int wsPort = freePort();
         int dashboardPort = server.getAddress().getPort();
-        ObserveCommand.SnapshotBroadcaster broadcaster =
-                new ObserveCommand.SnapshotBroadcaster(LOOPBACK, wsPort, auth, dashboardPort);
+        ObserveServer.SnapshotBroadcaster broadcaster =
+                new ObserveServer.SnapshotBroadcaster(LOOPBACK, wsPort, auth, dashboardPort);
         broadcaster.start();
         try {
             URI uri = URI.create("ws://" + LOOPBACK + ":" + wsPort + "/");

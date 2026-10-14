@@ -18,22 +18,12 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
-import org.java_websocket.WebSocket;
-import org.java_websocket.drafts.Draft;
-import org.java_websocket.exceptions.InvalidDataException;
-import org.java_websocket.framing.CloseFrame;
-import org.java_websocket.handshake.ClientHandshake;
-import org.java_websocket.handshake.ServerHandshakeBuilder;
-import org.java_websocket.server.WebSocketServer;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Option;
@@ -115,8 +105,6 @@ public class ObserveCommand implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        int wsPort = port + 1;
-
         ApiKeyStore.Resolution key;
         UserStore users;
         try {
@@ -129,41 +117,19 @@ public class ObserveCommand implements Callable<Integer> {
         ApiAuth auth = new ApiAuth(key.digest(), users);
 
         NexoraEngine engine = parent.engine();
-        NexoraObservability observability = NexoraObservability.attach(engine, maxExecutions, maxEvents);
-        byte[] indexHtml = loadUiHtml(wsPort, auth.passwordLoginEnabled());
-
-        // WebSocket broadcast server
-        SnapshotBroadcaster broadcaster = new SnapshotBroadcaster(host, wsPort, auth, port);
-        observability.addSnapshotListener(snap -> {
-            try {
-                String json = JSON.writeValueAsString(snap);
-                broadcaster.broadcastSnapshot(json);
-            } catch (Exception ignored) {
-            }
-        });
-        broadcaster.start();
-
-        // HTTP server
-        HttpServer server = HttpServer.create(new InetSocketAddress(host, port), 0);
-        server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
-
-        registerRoutes(server, engine, observability, indexHtml, auth);
+        ObserveServer server = ObserveServer.start(
+                engine, auth, new ObserveServer.Config(host, port, port + 1, maxExecutions, maxEvents));
+        int wsPort = server.webSocketPort();
 
         CountDownLatch shutdownLatch = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
-                server.stop(0);
-                try {
-                    broadcaster.stop(500);
-                } catch (InterruptedException ignored) {
-                }
-                observability.close();
+                server.close();
             } finally {
                 shutdownLatch.countDown();
             }
         }));
 
-        server.start();
         System.out.println("Nexora Observability Server");
         System.out.println("===========================");
         System.out.printf("UI:        http://%s:%d/%n", hostForDisplay(host), port);
@@ -646,77 +612,6 @@ public class ObserveCommand implements Callable<Integer> {
             os.write(payload);
         } finally {
             exchange.close();
-        }
-    }
-
-    private static byte[] loadUiHtml(int wsPort, boolean passwordLogin) {
-        String resource = "observe/index.html";
-        try (InputStream is = ObserveCommand.class.getClassLoader().getResourceAsStream(resource)) {
-            if (is == null) {
-                return "<h1>Missing observe/index.html resource</h1>".getBytes(StandardCharsets.UTF_8);
-            }
-            String html = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            html = html.replace("{{WS_PORT}}", String.valueOf(wsPort))
-                    .replace("{{PASSWORD_LOGIN}}", String.valueOf(passwordLogin));
-            return html.getBytes(StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            return ("<h1>Failed to load UI resource</h1><pre>" + e.getMessage() + "</pre>")
-                    .getBytes(StandardCharsets.UTF_8);
-        }
-    }
-
-    static final class SnapshotBroadcaster extends WebSocketServer {
-
-        private final ApiAuth auth;
-        private final int dashboardPort;
-
-        SnapshotBroadcaster(String host, int port, ApiAuth auth, int dashboardPort) {
-            super(new InetSocketAddress("0.0.0.0".equals(host) ? "0.0.0.0" : host, port));
-            this.auth = Objects.requireNonNull(auth, "auth");
-            this.dashboardPort = dashboardPort;
-            setReuseAddr(true);
-        }
-
-        /** Snapshots carry goals and contexts, so the stream is held to the same credentials as /api. */
-        @Override
-        public ServerHandshakeBuilder onWebsocketHandshakeReceivedAsServer(
-                WebSocket conn, Draft draft, ClientHandshake request) throws InvalidDataException {
-            ServerHandshakeBuilder response = super.onWebsocketHandshakeReceivedAsServer(conn, draft, request);
-            boolean allowed = auth.allowsWebSocket(
-                    request.getFieldValue("Authorization"),
-                    request.getFieldValue("Cookie"),
-                    request.getFieldValue("Origin"),
-                    request.getFieldValue("Host"),
-                    dashboardPort);
-            if (!allowed) {
-                throw new InvalidDataException(CloseFrame.POLICY_VALIDATION, "Unauthorized");
-            }
-            return response;
-        }
-
-        @Override
-        public void onOpen(WebSocket conn, ClientHandshake handshake) {}
-
-        @Override
-        public void onClose(WebSocket conn, int code, String reason, boolean remote) {}
-
-        @Override
-        public void onMessage(WebSocket conn, String message) {}
-
-        @Override
-        public void onError(WebSocket conn, Exception ex) {}
-
-        @Override
-        public void onStart() {}
-
-        void broadcastSnapshot(String json) {
-            Collection<WebSocket> connections = getConnections();
-            if (connections.isEmpty()) return;
-            for (WebSocket ws : connections) {
-                if (ws.isOpen()) {
-                    ws.send(json);
-                }
-            }
         }
     }
 }
