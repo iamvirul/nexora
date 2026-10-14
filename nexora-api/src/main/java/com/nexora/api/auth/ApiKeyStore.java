@@ -2,13 +2,8 @@ package com.nexora.api.auth;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.FileAttribute;
-import java.nio.file.attribute.PosixFilePermission;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
@@ -16,7 +11,6 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -154,27 +148,11 @@ public final class ApiKeyStore {
         return HEX.parseHex(content);
     }
 
-    /** Writes through a temp file and an atomic move, so a crash never leaves a half-written digest. */
     private static void writeDigest(Path digestFile, byte[] digest) {
-        Path dir = digestFile.toAbsolutePath().getParent();
-        boolean posix = FileSystems.getDefault().supportedFileAttributeViews().contains("posix");
         try {
-            Files.createDirectories(dir, posix ? ownerOnly("rwx------") : new FileAttribute<?>[0]);
-            Path temp = Files.createTempFile(
-                    dir, ".api-key", ".tmp", posix ? ownerOnly("rw-------") : new FileAttribute<?>[0]);
-            try {
-                Files.writeString(temp, HEX.formatHex(digest) + System.lineSeparator(), StandardCharsets.UTF_8);
-                Files.move(temp, digestFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } finally {
-                Files.deleteIfExists(temp);
-            }
+            SecureFiles.writeOwnerOnly(digestFile, HEX.formatHex(digest) + System.lineSeparator());
         } catch (IOException e) {
             throw new IllegalStateException("Could not save the API key digest to " + digestFile, e);
         }
-    }
-
-    private static FileAttribute<?>[] ownerOnly(String permissions) {
-        Set<PosixFilePermission> perms = PosixFilePermissions.fromString(permissions);
-        return new FileAttribute<?>[] {PosixFilePermissions.asFileAttribute(perms)};
     }
 }

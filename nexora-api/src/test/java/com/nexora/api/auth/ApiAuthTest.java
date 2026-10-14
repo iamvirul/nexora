@@ -24,40 +24,40 @@ class ApiAuthTest {
 
     @Test
     void validBearerKeyAuthenticates() {
-        assertEquals(ApiAuth.Credential.API_KEY, auth.authenticate(bearer("POST", "Bearer " + KEY)));
+        assertEquals(ApiAuth.Credential.API_KEY, credentialOf(bearer("POST", "Bearer " + KEY)));
     }
 
     @Test
     void bearerSchemeIsCaseInsensitive() {
-        assertEquals(ApiAuth.Credential.API_KEY, auth.authenticate(bearer("GET", "bEaReR " + KEY)));
+        assertEquals(ApiAuth.Credential.API_KEY, credentialOf(bearer("GET", "bEaReR " + KEY)));
     }
 
     @Test
     void wrongMissingOrMalformedCredentialsAreRejected() {
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(bearer("GET", "Bearer " + KEY + "x")));
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(bearer("GET", null)));
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(bearer("GET", "Bearer ")));
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(bearer("GET", "Basic " + KEY)));
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(bearer("GET", KEY)));
+        assertEquals(ApiAuth.Credential.NONE, credentialOf(bearer("GET", "Bearer " + KEY + "x")));
+        assertEquals(ApiAuth.Credential.NONE, credentialOf(bearer("GET", null)));
+        assertEquals(ApiAuth.Credential.NONE, credentialOf(bearer("GET", "Bearer ")));
+        assertEquals(ApiAuth.Credential.NONE, credentialOf(bearer("GET", "Basic " + KEY)));
+        assertEquals(ApiAuth.Credential.NONE, credentialOf(bearer("GET", KEY)));
     }
 
     @Test
     void sessionCookieAuthenticatesReads() {
         String cookie = cookie(auth.createSession().token());
 
-        assertEquals(ApiAuth.Credential.SESSION, auth.authenticate(request("GET", cookie, null)));
+        assertEquals(ApiAuth.Credential.SESSION, credentialOf(request("GET", cookie, null)));
     }
 
     @Test
     void sessionCookieChangesStateOnlyFromThisServersOrigin() {
         String cookie = cookie(auth.createSession().token());
 
-        assertEquals(ApiAuth.Credential.SESSION, auth.authenticate(request("POST", cookie, DASHBOARD_ORIGIN)));
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(request("POST", cookie, null)));
+        assertEquals(ApiAuth.Credential.SESSION, credentialOf(request("POST", cookie, DASHBOARD_ORIGIN)));
+        assertEquals(ApiAuth.Credential.NONE, credentialOf(request("POST", cookie, null)));
         // Same host, other port: SameSite would still send the cookie, so the Origin check is what stops it.
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(request("DELETE", cookie, "http://127.0.0.1:3000")));
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(request("POST", cookie, "https://evil.example")));
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(request("POST", cookie, "null")));
+        assertEquals(ApiAuth.Credential.NONE, credentialOf(request("DELETE", cookie, "http://127.0.0.1:3000")));
+        assertEquals(ApiAuth.Credential.NONE, credentialOf(request("POST", cookie, "https://evil.example")));
+        assertEquals(ApiAuth.Credential.NONE, credentialOf(request("POST", cookie, "null")));
     }
 
     @Test
@@ -66,7 +66,7 @@ class ApiAuthTest {
 
         clock.advance(ApiAuth.SESSION_TTL.plusSeconds(1));
 
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(request("GET", cookie, null)));
+        assertEquals(ApiAuth.Credential.NONE, credentialOf(request("GET", cookie, null)));
     }
 
     @Test
@@ -75,14 +75,14 @@ class ApiAuthTest {
 
         auth.revokeSession(cookie);
 
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(request("GET", cookie, null)));
+        assertEquals(ApiAuth.Credential.NONE, credentialOf(request("GET", cookie, null)));
     }
 
     @Test
     void forgedSessionTokensAreRejected() {
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(request("GET", cookie("A".repeat(43)), null)));
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(request("GET", cookie("short"), null)));
-        assertEquals(ApiAuth.Credential.NONE, auth.authenticate(request("GET", "other=1", null)));
+        assertEquals(ApiAuth.Credential.NONE, credentialOf(request("GET", cookie("nxu_" + "A".repeat(43)), null)));
+        assertEquals(ApiAuth.Credential.NONE, credentialOf(request("GET", cookie("short"), null)));
+        assertEquals(ApiAuth.Credential.NONE, credentialOf(request("GET", "other=1", null)));
     }
 
     @Test
@@ -94,7 +94,7 @@ class ApiAuthTest {
         clock.advance(Duration.ofMillis(1));
         String newest = cookie(auth.createSession().token());
 
-        assertEquals(ApiAuth.Credential.SESSION, auth.authenticate(request("GET", newest, null)));
+        assertEquals(ApiAuth.Credential.SESSION, credentialOf(request("GET", newest, null)));
     }
 
     @Test
@@ -126,6 +126,10 @@ class ApiAuthTest {
     @Test
     void webSocketWithoutCredentialsIsRejected() {
         assertFalse(auth.allowsWebSocket(null, null, DASHBOARD_ORIGIN, "127.0.0.1:9465", DASHBOARD_PORT));
+    }
+
+    private ApiAuth.Credential credentialOf(ApiAuth.Request request) {
+        return auth.authenticate(request).credential();
     }
 
     private static ApiAuth.Request bearer(String method, String authorization) {
