@@ -23,6 +23,7 @@ import com.nexora.persistence.DeadLetterRecord;
 import com.nexora.persistence.ExecutionRecord;
 import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.ExecutionStore;
+import com.nexora.persistence.StepOutput;
 import com.nexora.persistence.StepRecord;
 import com.nexora.planner.engine.DefaultPlanningContext;
 import com.nexora.runtime.webhook.WebhookDeliveryService;
@@ -56,6 +57,7 @@ public final class ExecutionEngine {
     private final Duration defaultPlanDeadline; // null = no engine-wide deadline
     private final Executor executor;
     private final WebhookDeliveryService webhookDeliveryService;
+    private final int stepOutputMaxBytes;
     // Executions currently running on this engine; entries are removed once terminal handling is done.
     private final ConcurrentHashMap<String, HaltSignal> runningExecutions = new ConcurrentHashMap<>();
 
@@ -91,7 +93,8 @@ public final class ExecutionEngine {
     }
 
     /**
-     * Full constructor — includes plan deadline and the executor used to schedule the watchdog.
+     * Includes the plan deadline and the executor used to schedule the watchdog; step outputs are
+     * capped at {@link StepOutput#DEFAULT_MAX_BYTES}.
      *
      * @param defaultPlanDeadline engine-wide fallback deadline; {@code null} means no default
      * @param executor            the executor to schedule the delayed watchdog task on
@@ -106,6 +109,39 @@ public final class ExecutionEngine {
             Duration defaultPlanDeadline,
             Executor executor,
             String webhookSecret) {
+        this(
+                planner,
+                capabilityRegistry,
+                scheduler,
+                eventBus,
+                store,
+                sagaOrchestrator,
+                defaultPlanDeadline,
+                executor,
+                webhookSecret,
+                StepOutput.DEFAULT_MAX_BYTES);
+    }
+
+    /**
+     * Full constructor, adding the cap on each step output written to the store.
+     *
+     * @param stepOutputMaxBytes UTF-8 JSON bytes kept per step output; larger outputs are stored
+     *                           as a truncated preview, and {@code 0} stores none
+     * @throws IllegalArgumentException if {@code stepOutputMaxBytes} is neither 0 nor at least
+     *                                  {@link StepOutput#MIN_MAX_BYTES}
+     */
+    public ExecutionEngine(
+            Planner planner,
+            CapabilityRegistry capabilityRegistry,
+            DagStepScheduler scheduler,
+            ExecutionEventBus eventBus,
+            ExecutionStore store,
+            SagaOrchestrator sagaOrchestrator,
+            Duration defaultPlanDeadline,
+            Executor executor,
+            String webhookSecret,
+            int stepOutputMaxBytes) {
+        this.stepOutputMaxBytes = StepOutput.validateMaxBytes(stepOutputMaxBytes);
         this.planner = Objects.requireNonNull(planner);
         this.capabilityRegistry = Objects.requireNonNull(capabilityRegistry);
         this.scheduler = Objects.requireNonNull(scheduler);
@@ -137,7 +173,7 @@ public final class ExecutionEngine {
             try {
                 StepRecord running = StepRecord.started(
                         e.stepId(), e.capabilityId(), null, e.occurredAt().minus(e.elapsed()));
-                store.upsertStep(e.executionId(), running.completed(e.occurredAt()));
+                store.upsertStep(e.executionId(), running.completed(e.occurredAt(), captureOutput(e)));
             } catch (Exception ex) {
                 log.warn("Persistence: failed to record step completion stepId={}", e.stepId(), ex);
             }
@@ -151,6 +187,36 @@ public final class ExecutionEngine {
                 log.warn("Persistence: failed to record step failure stepId={}", e.stepId(), ex);
             }
         });
+    }
+
+    /** Cap on each step output written to the store, in UTF-8 JSON bytes; 0 means outputs are not stored. */
+    public int stepOutputMaxBytes() {
+        return stepOutputMaxBytes;
+    }
+
+    /** The output as stored. A step whose output cannot be stored still completes, with none recorded. */
+    private StepOutput captureOutput(StepCompletedEvent e) {
+        try {
+            StepOutput output = StepOutput.capture(e.output(), stepOutputMaxBytes);
+            if (output.truncated()) {
+                log.warn(
+                        "Persistence: step output over the size cap, storing a truncated preview executionId={} stepId={} capabilityId={} outputBytes={} maxBytes={}",
+                        e.executionId(),
+                        e.stepId(),
+                        e.capabilityId(),
+                        output.encodedBytes(),
+                        stepOutputMaxBytes);
+            }
+            return output;
+        } catch (IllegalArgumentException ex) {
+            log.warn(
+                    "Persistence: step output not stored executionId={} stepId={} capabilityId={} reason={}",
+                    e.executionId(),
+                    e.stepId(),
+                    e.capabilityId(),
+                    ex.getMessage());
+            return StepOutput.NONE;
+        }
     }
 
     private void writeDeadLetter(

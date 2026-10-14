@@ -406,6 +406,20 @@
     .steps-wrap { padding: 10px 14px 12px; overflow-x: auto; }
     .steps-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
 
+    /* ── Step outputs: a collapsible row under each step that returned something ── */
+    tr.out-row > td { padding-top: 0 !important; border-top: none !important; }
+    .step-out summary { cursor: pointer; color: var(--muted); font-size: 11px; font-family: var(--mono); padding: 2px 0; }
+    .step-out summary:hover { color: var(--text); }
+    .step-out summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+    .step-out .out-sum { color: var(--text); }
+    .step-out .out-cut { color: var(--orange); }
+    .step-out pre {
+      margin: 4px 0 6px; padding: 8px 10px; max-height: 260px; overflow: auto;
+      background: var(--surface2); border: 1px solid var(--border2); border-radius: 4px;
+      font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--text);
+      white-space: pre-wrap; overflow-wrap: anywhere;
+    }
+
     table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 400px; }
 
     thead th {
@@ -835,6 +849,8 @@ const flashEl   = document.getElementById('flash');
 
 let data = { activeExecutions: 0, executions: [], generatedAtMs: 0 };
 let openIds = new Set();
+// Step outputs the user expanded, as "executionId stepId"; kept across snapshot re-renders.
+const openOutputs = new Set();
 let ws, reconnectDelay = 500;
 let authed = false; // set once a session or key is accepted; gates the socket and background refreshes
 
@@ -1035,7 +1051,7 @@ function buildExec(exec, open) {
       <td class="dur">${step.elapsedMs ? fmtDur(step.elapsedMs) : '—'}</td>
       <td>${fmtTime(step.startedAtMs)}</td>
       ${errCell}
-    </tr>`;
+    </tr>${outputRow(exec.executionId, step, 6, openOutputs)}`;
   }).join('');
 
   const stepsTable = `
@@ -1049,6 +1065,49 @@ function buildExec(exec, open) {
 
   return `<div class="exec open" id="exec-${esc(exec.executionId)}">${header}<div class="exec-body">${kpis}${gantt}${stepsTable}</div></div>`;
 }
+
+// ── Step outputs ──────────────────────────────────────────────────────────────
+
+const OUTPUT_SUMMARY_KEYS = 3;
+const OUTPUT_SUMMARY_CHARS = 60;
+
+// One line describing an output: its keys, or the value when the step returned a plain value.
+function outputSummary(output, truncated) {
+  if (truncated) return 'preview of a larger output';
+  const keys = Object.keys(output);
+  if (keys.length === 1 && keys[0] === 'value') {
+    const text = JSON.stringify(output.value);
+    return text.length > OUTPUT_SUMMARY_CHARS ? text.slice(0, OUTPUT_SUMMARY_CHARS) + '…' : text;
+  }
+  const shown = keys.slice(0, OUTPUT_SUMMARY_KEYS).join(', ');
+  return '{' + shown + (keys.length > OUTPUT_SUMMARY_KEYS ? ', …' : '') + '}';
+}
+
+// A collapsible row under a step; nothing when the step recorded no output. Output text is
+// escaped like every other server value. openSet (live view only) remembers expanded rows.
+function outputRow(executionId, step, columns, openSet) {
+  const output = step.output;
+  if (!output || typeof output !== 'object' || !Object.keys(output).length) return '';
+  const truncated = step.outputTruncated === true;
+  const key = executionId === null ? '' : executionId + ' ' + step.stepId;
+  const open = openSet !== null && openSet.has(key);
+  const body = truncated
+    ? `${esc(output.preview)}\n\n<span class="out-cut">Truncated: only the start of this output was kept.</span>`
+    : esc(JSON.stringify(output, null, 2));
+  return `<tr class="out-row"><td colspan="${columns}">
+    <details class="step-out" data-key="${escAttr(key)}"${open ? ' open' : ''}>
+      <summary>Output <span class="out-sum">${esc(outputSummary(output, truncated))}</span>${truncated ? ' <span class="out-cut">truncated</span>' : ''}</summary>
+      <pre>${body}</pre>
+    </details>
+  </td></tr>`;
+}
+
+// toggle does not bubble, so listen in the capture phase; innerHTML re-renders keep the set.
+execList.addEventListener('toggle', e => {
+  const key = e.target.dataset && e.target.dataset.key;
+  if (!key) return;
+  if (e.target.open) openOutputs.add(key); else openOutputs.delete(key);
+}, true);
 
 // ── Dead Letter Queue ─────────────────────────────────────────────────────────
 
@@ -1322,7 +1381,7 @@ function histSteps(steps) {
     <td><span class="badge ${sc(s.state)}">${esc(s.state)}</span></td>
     <td>${fmtDur(s.durationMs)}</td>
     <td class="hist-fail">${s.failureCode ? esc(s.failureCode + (s.failureMessage ? ': ' + s.failureMessage : '')) : ''}</td>
-  </tr>`).join('');
+  </tr>${outputRow(null, s, 5, null)}`).join('');
   return `<table class="hist-steps"><thead><tr><th>Step</th><th>Capability</th><th>State</th><th>Duration</th><th>Failure</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 

@@ -9,6 +9,7 @@ import com.nexora.core.plan.condition.Not;
 import com.nexora.core.plan.condition.Or;
 import com.nexora.core.plan.condition.StepOutputEquals;
 import com.nexora.core.plan.condition.StepOutputPresent;
+import com.nexora.persistence.StepOutput;
 import com.nexora.persistence.jdbc.PoolConfig;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -47,6 +48,11 @@ public class CliConfig {
     /** Settings for the store at {@code executionStore}. */
     public static class PersistenceConfig {
         public PoolSettings pool = new PoolSettings();
+        /**
+         * Cap on each recorded step output in UTF-8 JSON bytes; larger outputs keep a truncated
+         * preview. 0 records none. Unset uses {@link StepOutput#DEFAULT_MAX_BYTES}.
+         */
+        public Integer stepOutputMaxBytes;
     }
 
     /** Connection pool keys under {@code persistence.pool}. Unset keys take the {@link PoolConfig} defaults. */
@@ -67,6 +73,14 @@ public class CliConfig {
                     connectionTimeoutMs != null ? connectionTimeoutMs : PoolConfig.DEFAULT_CONNECTION_TIMEOUT_MS,
                     idleTimeoutMs != null ? idleTimeoutMs : PoolConfig.DEFAULT_IDLE_TIMEOUT_MS);
         }
+    }
+
+    /** {@code persistence.stepOutputMaxBytes}, or the default when it or its section is unset. */
+    int stepOutputMaxBytes() {
+        if (persistence == null || persistence.stepOutputMaxBytes == null) {
+            return StepOutput.DEFAULT_MAX_BYTES;
+        }
+        return persistence.stepOutputMaxBytes;
     }
 
     /** Pool settings from {@code persistence.pool}, tolerating an explicit {@code null} for either section. */

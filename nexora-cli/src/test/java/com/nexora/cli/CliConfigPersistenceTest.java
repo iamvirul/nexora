@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexora.api.NexoraEngine;
+import com.nexora.persistence.StepOutput;
 import com.nexora.persistence.jdbc.PoolConfig;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
@@ -77,5 +78,32 @@ class CliConfigPersistenceTest {
         try (NexoraEngine engine = EngineFactory.fromConfig(config)) {
             assertTrue(engine.getStore().isHealthy());
         }
+    }
+
+    @Test
+    void stepOutputCapIsReadFromPersistenceSection() throws Exception {
+        CliConfig config = JSON.readValue("{\"persistence\": {\"stepOutputMaxBytes\": 4096}}", CliConfig.class);
+
+        try (NexoraEngine engine = EngineFactory.fromConfig(config)) {
+            assertEquals(4096, engine.stepOutputMaxBytes());
+        }
+    }
+
+    @Test
+    void missingStepOutputCapUsesTheDefault() throws Exception {
+        CliConfig config = JSON.readValue("{\"persistence\": null}", CliConfig.class);
+
+        try (NexoraEngine engine = EngineFactory.fromConfig(config)) {
+            assertEquals(StepOutput.DEFAULT_MAX_BYTES, engine.stepOutputMaxBytes());
+        }
+    }
+
+    @Test
+    void stepOutputCapBelowTheMinimumIsRejected() throws Exception {
+        CliConfig config = JSON.readValue("{\"persistence\": {\"stepOutputMaxBytes\": 10}}", CliConfig.class);
+
+        IllegalArgumentException error =
+                assertThrows(IllegalArgumentException.class, () -> EngineFactory.fromConfig(config));
+        assertTrue(error.getMessage().contains("stepOutputMaxBytes"), error.getMessage());
     }
 }

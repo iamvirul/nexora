@@ -1,6 +1,7 @@
 package com.nexora.persistence;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -8,6 +9,7 @@ import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -76,6 +78,72 @@ class JdbcExecutionHistoryTest {
         assertEquals(
                 StepState.SKIPPED,
                 store.findById("a").orElseThrow().steps().get(0).state());
+    }
+
+    @Test
+    void completedStepOutputIsReadableThroughFindById() {
+        insert("a", "goal", ExecutionState.COMPLETED, T0);
+        store.upsertStep("a", StepRecord.started("charge", "charge_card", "key-1", T0));
+        StepOutput output = StepOutput.capture(Map.of("paymentId", "p-1", "amount", 42), StepOutput.DEFAULT_MAX_BYTES);
+        store.upsertStep(
+                "a", StepRecord.started("charge", "charge_card", null, T0).completed(T0.plusMillis(30), output));
+
+        StepRecord step = store.findById("a").orElseThrow().steps().get(0);
+
+        assertEquals(Map.of("paymentId", "p-1", "amount", 42), step.output());
+        assertFalse(step.outputTruncated());
+        assertEquals("key-1", step.idempotencyKey());
+    }
+
+    @Test
+    void stepsWithoutOutputReadBackAsAnEmptyMap() {
+        insert("a", "goal", ExecutionState.FAILED, T0);
+        store.upsertStep("a", StepRecord.started("run", "cap", "k1", T0));
+        store.upsertStep("a", StepRecord.started("fail", "cap", "k2", T0).failed("DOWN", "down", T0.plusMillis(1)));
+        store.upsertStep("a", StepRecord.started("none", "cap", "k3", T0).completed(T0.plusMillis(1)));
+
+        for (StepRecord step : store.findById("a").orElseThrow().steps()) {
+            assertEquals(Map.of(), step.output(), step.stepId());
+            assertFalse(step.outputTruncated(), step.stepId());
+        }
+    }
+
+    @Test
+    void truncatedOutputKeepsItsPreviewAndFlag() {
+        insert("a", "goal", ExecutionState.COMPLETED, T0);
+        StepOutput output = StepOutput.capture(Map.of("blob", "x".repeat(5_000)), StepOutput.MIN_MAX_BYTES);
+        store.upsertStep("a", StepRecord.started("big", "cap", "k1", T0).completed(T0.plusMillis(1), output));
+
+        StepRecord step = store.findById("a").orElseThrow().steps().get(0);
+
+        assertTrue(step.outputTruncated());
+        assertEquals(output.value(), step.output());
+    }
+
+    @Test
+    void outputTheStoreCannotWriteStillRecordsTheStep() {
+        insert("a", "goal", ExecutionState.COMPLETED, T0);
+        // Built by hand rather than through StepOutput, with a value plain JSON cannot hold.
+        Map<String, Object> cyclic = new HashMap<>();
+        cyclic.put("self", cyclic);
+        StepRecord step = new StepRecord(
+                "s", "cap", "k1", StepState.COMPLETED, null, null, T0, T0.plusMillis(1), 1, cyclic, false);
+
+        store.upsertStep("a", step);
+
+        StepRecord stored = store.findById("a").orElseThrow().steps().get(0);
+        assertEquals(StepState.COMPLETED, stored.state());
+        assertEquals(Map.of(), stored.output());
+    }
+
+    @Test
+    void restartingAStepClearsTheOutputOfItsEarlierRun() {
+        insert("a", "goal", ExecutionState.RUNNING, T0);
+        StepOutput output = StepOutput.capture(Map.of("old", true), StepOutput.DEFAULT_MAX_BYTES);
+        store.upsertStep("a", StepRecord.started("s", "cap", "k1", T0).completed(T0.plusMillis(1), output));
+        store.upsertStep("a", StepRecord.started("s", "cap", "k1", T0.plusSeconds(1)));
+
+        assertEquals(Map.of(), store.findById("a").orElseThrow().steps().get(0).output());
     }
 
     private static StepRecord stepById(List<StepRecord> steps, String stepId) {

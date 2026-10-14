@@ -1,6 +1,7 @@
 package com.nexora.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -8,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexora.api.NexoraEngine;
 import com.nexora.persistence.ExecutionRecord;
 import com.nexora.persistence.ExecutionState;
+import com.nexora.persistence.StepOutput;
 import com.nexora.persistence.StepRecord;
 import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import com.sun.net.httpserver.HttpServer;
@@ -157,7 +159,11 @@ class ExecutionHistoryEndpointsTest {
                 null,
                 List.of()));
         store.upsertStep(
-                "e1", StepRecord.started("validate", "validate_order", "k1", T0).completed(T0.plusMillis(20)));
+                "e1",
+                StepRecord.started("validate", "validate_order", "k1", T0)
+                        .completed(
+                                T0.plusMillis(20),
+                                StepOutput.capture(Map.of("valid", true), StepOutput.DEFAULT_MAX_BYTES)));
 
         JsonNode body = getJson("/api/executions/e1", 200);
 
@@ -166,6 +172,8 @@ class ExecutionHistoryEndpointsTest {
         assertEquals("validate", body.at("/steps/0/stepId").asText());
         assertEquals("COMPLETED", body.at("/steps/0/state").asText());
         assertEquals(20, body.at("/steps/0/durationMs").asLong());
+        assertTrue(body.at("/steps/0/output/valid").asBoolean());
+        assertFalse(body.at("/steps/0/outputTruncated").asBoolean(true));
     }
 
     @Test

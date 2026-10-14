@@ -1,5 +1,6 @@
 package com.nexora.persistence.jdbc;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexora.persistence.DeadLetterRecord;
@@ -167,27 +168,34 @@ public final class JdbcExecutionStore implements ExecutionStore {
     @Override
     public void upsertStep(String executionId, StepRecord step) {
         // Completion and failure updates carry no idempotency key. COALESCE keeps the key recorded at
-        // step start, which replay needs to avoid repeating side effects.
+        // step start, which replay needs to avoid repeating side effects. The output is overwritten,
+        // not kept: a restarted step must not show the output of its earlier run.
         String sql = """
             MERGE INTO nexora_steps AS t
             USING (VALUES (CAST(? AS VARCHAR(36)), CAST(? AS VARCHAR(200)), CAST(? AS VARCHAR(200)),
                            CAST(? AS VARCHAR(36)), CAST(? AS VARCHAR(30)), CAST(? AS VARCHAR(100)), CAST(? AS TEXT),
-                           CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), CAST(? AS BIGINT)))
+                           CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), CAST(? AS BIGINT), CAST(? AS TEXT),
+                           CAST(? AS BOOLEAN)))
                 AS s (execution_id, step_id, capability_id, idempotency_key, state,
-                      failure_code, failure_message, started_at, completed_at, duration_ms)
+                      failure_code, failure_message, started_at, completed_at, duration_ms,
+                      output_json, output_truncated)
             ON t.execution_id = s.execution_id AND t.step_id = s.step_id
             WHEN MATCHED THEN UPDATE SET
                 capability_id = s.capability_id,
                 idempotency_key = COALESCE(s.idempotency_key, t.idempotency_key),
                 state = s.state, failure_code = s.failure_code, failure_message = s.failure_message,
-                started_at = s.started_at, completed_at = s.completed_at, duration_ms = s.duration_ms
+                started_at = s.started_at, completed_at = s.completed_at, duration_ms = s.duration_ms,
+                output_json = s.output_json, output_truncated = s.output_truncated
             WHEN NOT MATCHED THEN INSERT
                 (execution_id, step_id, capability_id, idempotency_key, state,
-                 failure_code, failure_message, started_at, completed_at, duration_ms)
+                 failure_code, failure_message, started_at, completed_at, duration_ms,
+                 output_json, output_truncated)
                 VALUES (s.execution_id, s.step_id, s.capability_id, s.idempotency_key, s.state,
-                        s.failure_code, s.failure_message, s.started_at, s.completed_at, s.duration_ms)
+                        s.failure_code, s.failure_message, s.started_at, s.completed_at, s.duration_ms,
+                        s.output_json, s.output_truncated)
         """;
         try (Connection conn = dataSource.getConnection()) {
+            String outputJson = outputJson(executionId, step);
             executeMerge(conn, sql, ps -> {
                 ps.setString(1, executionId);
                 ps.setString(2, step.stepId());
@@ -199,6 +207,8 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 ps.setTimestamp(8, step.startedAt() != null ? Timestamp.from(step.startedAt()) : null);
                 ps.setTimestamp(9, step.completedAt() != null ? Timestamp.from(step.completedAt()) : null);
                 ps.setLong(10, step.durationMs());
+                ps.setString(11, outputJson);
+                ps.setBoolean(12, step.outputTruncated());
             });
         } catch (SQLException e) {
             log.error("Failed to upsert step executionId={} stepId={}", executionId, step.stepId(), e);
@@ -764,6 +774,47 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 List.of());
     }
 
+    /**
+     * The output column for a step, or null when it has none. An output that cannot be written as
+     * JSON (a record built by hand rather than through StepOutput) is dropped, not the whole step.
+     */
+    private static String outputJson(String executionId, StepRecord step) {
+        if (step.output().isEmpty()) {
+            return null;
+        }
+        try {
+            return JSON.writeValueAsString(step.output());
+        } catch (JsonProcessingException e) {
+            log.warn(
+                    "Step output not stored executionId={} stepId={} error={}",
+                    executionId,
+                    step.stepId(),
+                    e.getOriginalMessage());
+            return null;
+        }
+    }
+
+    /**
+     * The step's recorded output. A row whose JSON does not parse (written by hand, or damaged)
+     * reads as no output instead of making the whole execution unreadable.
+     */
+    private static Map<String, Object> readOutput(ResultSet rs, String executionId) throws SQLException {
+        String json = rs.getString("output_json");
+        if (json == null) {
+            return Map.of();
+        }
+        try {
+            return JSON.readValue(json, MAP_TYPE);
+        } catch (JsonProcessingException e) {
+            log.warn(
+                    "Unreadable step output ignored executionId={} stepId={} error={}",
+                    executionId,
+                    rs.getString("step_id"),
+                    e.getOriginalMessage());
+            return Map.of();
+        }
+    }
+
     /** Runs on the caller's connection so a lookup never needs a second one from the pool. */
     private static ExecutionRecord withSteps(Connection conn, ExecutionRecord exec) throws SQLException {
         String sql = "SELECT * FROM nexora_steps WHERE execution_id = ? ORDER BY started_at";
@@ -783,7 +834,9 @@ public final class JdbcExecutionStore implements ExecutionStore {
                             rs.getString("failure_message"),
                             startedAt != null ? startedAt.toInstant() : null,
                             completedAt != null ? completedAt.toInstant() : null,
-                            rs.getLong("duration_ms")));
+                            rs.getLong("duration_ms"),
+                            readOutput(rs, exec.executionId()),
+                            rs.getBoolean("output_truncated")));
                 }
             }
         }

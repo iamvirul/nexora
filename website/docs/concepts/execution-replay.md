@@ -81,4 +81,4 @@ Replaying a dead letter (`POST /api/dead-letters/{id}/replay`, `nexora dlq repla
 
 ## Limits
 
-Replay restarts from the first step. Resuming from the last successful step needs step outputs to be persisted ([#32](https://github.com/iamvirul/nexora/issues/32)).
+Replay restarts from the first step. Step outputs are now stored ([#32](https://github.com/iamvirul/nexora/issues/32)), but resuming from the last successful step is not built yet. A truncated output (`outputTruncated: true`) cannot be restored, so a resume will have to run that step again.

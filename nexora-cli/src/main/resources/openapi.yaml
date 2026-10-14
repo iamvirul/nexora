@@ -196,7 +196,10 @@ paths:
       tags: [Executions]
       operationId: getExecution
       summary: Get one execution with its steps
-      description: Step outputs are not persisted yet ([#32](https://github.com/iamvirul/nexora/issues/32)).
+      description: >-
+        Each completed step includes its recorded `output`, up to `persistence.stepOutputMaxBytes`
+        (64 KB by default). Outputs can hold business data, so anyone with an API key or a
+        dashboard session can read them; set the cap to 0 to record none.
       responses:
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -217,6 +220,17 @@ paths:
                     startedAt: '2026-10-01T10:00:00.123Z'
                     completedAt: '2026-10-01T10:00:01.456Z'
                     steps:
+                      - stepId: validate
+                        capabilityId: validate_order
+                        idempotencyKey: 7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+                        state: COMPLETED
+                        failureCode: null
+                        failureMessage: null
+                        startedAt: '2026-10-01T10:00:00.130Z'
+                        completedAt: '2026-10-01T10:00:00.190Z'
+                        durationMs: 60
+                        output: { valid: true, requestId: req-12 }
+                        outputTruncated: false
                       - stepId: charge
                         capabilityId: charge_card
                         idempotencyKey: 0b8f6a2e-3c4d-4e5f-8a9b-1c2d3e4f5a6b
@@ -226,6 +240,8 @@ paths:
                         startedAt: '2026-10-01T10:00:00.200Z'
                         completedAt: '2026-10-01T10:00:01.400Z'
                         durationMs: 1200
+                        output: {}
+                        outputTruncated: false
         '404':
           $ref: '#/components/responses/ExecutionNotFound'
         '500':
@@ -1366,7 +1382,7 @@ components:
           minimum: 0
     StepRecord:
       type: object
-      required: [stepId, capabilityId, state, durationMs]
+      required: [stepId, capabilityId, state, durationMs, output, outputTruncated]
       properties:
         stepId:
           type: string
@@ -1388,6 +1404,26 @@ components:
           format: date-time
         durationMs:
           type: integer
+        output:
+          $ref: '#/components/schemas/StepOutput'
+        outputTruncated:
+          type: boolean
+          description: >-
+            True when the output was larger than `persistence.stepOutputMaxBytes` (64 KB by
+            default) and `output` holds only a `preview`.
+    StepOutput:
+      type: object
+      additionalProperties: true
+      description: >-
+        What the step returned, as JSON. A map output appears as is; any other value appears
+        under `value`. Empty for steps that returned nothing, have not completed, or failed, and
+        when the server records no outputs (`stepOutputMaxBytes: 0`). When truncated, the only
+        key is `preview`: the start of the output's JSON text.
+      examples:
+        - paymentId: p-1
+          status: CAPTURED
+        - value: charged
+        - preview: '{"blob":"xxxxxxxx'
     ExecutionDetail:
       type: object
       required: [executionId, goal, context, state, startedAt, steps]
@@ -1720,6 +1756,14 @@ components:
           type: [string, 'null']
         failureMessage:
           type: [string, 'null']
+        output:
+          $ref: '#/components/schemas/StepOutput'
+        outputTruncated:
+          type: boolean
+          description: >-
+            True when `output` holds only a `preview`. The snapshot keeps at most 4 KB of each
+            output, since it is resent on every event; the execution detail route returns the
+            stored output, up to the server's cap.
     TimelineEntry:
       type: object
       properties:
