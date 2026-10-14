@@ -62,7 +62,7 @@ curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/ap
 
 The observe UI's **Execution History** panel shows a **Replay** button on replayable rows.
 
-> **Authentication**: this endpoint requires the observe server's API key. See [Authentication](../observability#authentication).
+> **Authentication**: this endpoint requires the observe server's API key. See [Authentication](authentication).
 
 ## CLI
 

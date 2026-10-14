@@ -74,7 +74,7 @@ nexora dlq resolve <dead-letter-id> --reason "Root cause fixed in 1.2.3"
 
 All DLQ endpoints are served by the observability server (`nexora observe`).
 
-> **Authentication**: this endpoint requires the observe server's API key. See [Authentication](../observability#authentication).
+> **Authentication**: this endpoint requires the observe server's API key. See [Authentication](authentication).
 
 ### List dead letters
 

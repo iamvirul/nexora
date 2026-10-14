@@ -56,11 +56,10 @@ curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/ap
 
 ## Authentication
 
-Every `/api/*` route requires an API key, and so does the live WebSocket stream on `port + 1`. `/metrics`, `/health/*`, the dashboard page, `/openapi.yaml` and `/docs` stay public, because scrapers and probes cannot carry credentials.
+Every `/api/*` route and the live WebSocket require a key, sent as `Authorization: Bearer <key>`. `/metrics`, `/health/*`, the dashboard page, `/openapi.yaml` and `/docs` stay public for scrapers and probes.
 
-**First start.** `nexora observe` generates a key, prints it once, and saves only its SHA-256 digest to `~/.nexora/observe-api-key.sha256` (owner-only permissions; change the path with `--api-key-file`). Later starts read the digest and cannot show the key again.
-
-**CI and containers.** Set `NEXORA_API_KEY` (at least 32 characters) and nothing is generated, printed or written. `--api-key` also works, but flags are visible to other users in the process list.
+- **Server key** (`nxk_...`): printed once on first start (only its hash is saved), or set with `NEXORA_API_KEY` for CI and containers. Rotate with `--rotate-api-key`.
+- **User key** (`nxu_...`): minted when someone signs in with a username and password. The dashboard gets it as an HttpOnly cookie; `nexora login` saves it for `nexora cancel` / `nexora replay`. Valid 12 hours, logged under the user's name. Manage users with `nexora user add/passwd/remove/list`.
 
 ```bash
 export NEXORA_API_KEY="$(openssl rand -base64 32)"
@@ -68,18 +67,9 @@ nexora observe
 curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/process
 ```
 
-**Dashboard.** The UI signs in with a username and password, or with the key, and receives an `HttpOnly; SameSite=Strict` session cookie (12 hours), so no secret is ever stored in the browser. A cookie-authenticated request that changes state must also come from the dashboard's own origin.
+The payment pipeline demo prints a fresh server key in its console on every start and has no user accounts, so paste that key into its sign-in card.
 
-**Users and passwords.** For people, add dashboard accounts with `nexora user add <username>` (also `passwd`, `remove`, `list`). Passwords are hashed with PBKDF2-HMAC-SHA256 (600,000 iterations, per-user salt) into `~/.nexora/observe-users`, owner-only (override with `--users-file`); they must be 12 to 128 characters. A correct password mints a **user API key** (`nxu_...`): valid for 12 hours, accepted everywhere the server's key is, and recorded under the user's name in the audit log. The dashboard receives it as the `HttpOnly` session cookie, so page script never sees it; `nexora login` receives it from `POST /api/keys` and saves it to `~/.nexora/credentials` for `nexora cancel` and `nexora replay`. Removing a user, changing their password, signing out, or restarting the server revokes their keys, and account changes apply to a running server without a restart. Five wrong passwords lock a username for 15 minutes, and each client gets at most 20 attempts a minute; unknown usernames are treated exactly like real ones, so responses never reveal whether an account exists. The server's own key keeps working throughout, as the break-glass login.
-
-
-**CLI.** `nexora cancel` and `nexora replay` use `--api-key`, else `NEXORA_API_KEY`, else the user API key saved by `nexora login`.
-
-**Payment pipeline demo.** `tests/payment-pipeline` uses the same auth. It prints a key for each run and saves nothing, or uses `NEXORA_API_KEY`.
-
-**Rotation.** Restart with `nexora observe --rotate-api-key` to print a new key and replace the stored digest; the old key stops working immediately. With `NEXORA_API_KEY`, change the variable and restart.
-
-A missing or wrong key gets `401` with `{"error":{"code":"UNAUTHORIZED","message":"..."}}`, before any other check. Until TLS lands ([#40](https://github.com/iamvirul/nexora/issues/40)) the key crosses the network in clear, so keep the server on localhost or a trusted network, or put a TLS proxy in front of it.
+See [Authentication](concepts/authentication) for how each sign-in flow works, user management, the demo, and what `401` and `429` mean.
 
 ## Health Checks
 

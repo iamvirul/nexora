@@ -96,7 +96,7 @@ The observe UI shows a **Cancel** button on every running execution, which calls
 | `409` | `{"error":"Execution has already finished","executionId":"..."}` | Already terminal |
 | `409` | `{"error":"Execution is not running on this engine instance","executionId":"..."}` | Owned by another instance |
 
-> **Authentication**: this endpoint requires the observe server's API key. See [Authentication](../observability#authentication).
+> **Authentication**: this endpoint requires the observe server's API key. See [Authentication](authentication).
 
 ---
 
