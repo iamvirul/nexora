@@ -406,7 +406,7 @@ To use webhooks securely, configure an HMAC-SHA256 signature secret in your `nex
 When invoking an execution, supply the `webhookUrl` and optionally filter which terminal `webhookEvents` trigger a callback:
 
 ```bash
-curl -X POST http://localhost:9464/api/execute \
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/execute \
   -H "content-type: application/json" \
   -d '{
         "goal": "process order payment",
@@ -458,21 +458,21 @@ Or via the observability REST API:
 
 ```bash
 # list PENDING (default)
-curl http://localhost:9464/api/dead-letters
+curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/dead-letters
 
 # filter by state, paginate
-curl "http://localhost:9464/api/dead-letters?state=RESOLVED&page=0&size=10"
+curl -H "Authorization: Bearer $NEXORA_API_KEY" "http://localhost:9464/api/dead-letters?state=RESOLVED&page=0&size=10"
 
 # replay
-curl -X POST http://localhost:9464/api/dead-letters/<id>/replay
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/dead-letters/<id>/replay
 
 # resolve
-curl -X POST http://localhost:9464/api/dead-letters/<id>/resolve \
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/dead-letters/<id>/resolve \
   -H "content-type: application/json" \
   -d '{"reason":"investigated and closed"}'
 ```
 
-> **Authentication**: DLQ endpoints will require a Bearer token once [#30](https://github.com/iamvirul/nexora/issues/30) lands.
+> **Authentication**: these endpoints require the API key. See [Authentication](#authentication).
 
 ## Cron Scheduling
 
@@ -534,13 +534,13 @@ nexora schedule remove <schedule-id>
 Or via the observability REST API (also exposed in the dashboard Cron Schedules panel):
 
 ```bash
-curl http://localhost:9464/api/schedules
+curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/schedules
 
-curl -X POST http://localhost:9464/api/schedules \
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/schedules \
   -H "content-type: application/json" \
   -d '{"cronExpression":"0 0 * * *","goal":"nightly cleanup","missedFirePolicy":"FIRE_ONCE"}'
 
-curl -X DELETE http://localhost:9464/api/schedules/<id>
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X DELETE http://localhost:9464/api/schedules/<id>
 ```
 
 ## Observability UI + Prometheus + Grafana
@@ -577,10 +577,33 @@ It exposes these endpoints with no external dependencies:
 
 > **Note**: `/health/live` and `/health` were added in v0.3.0. In v0.3.0 `/health/ready` changed from reporting capability circuit state to reporting dependency readiness; circuit states are now under `capabilities` in `GET /health`.
 
+### Authentication
+
+Every `/api/*` route requires an API key, and so does the live WebSocket stream on `port + 1`. `/metrics`, `/health/*`, the dashboard page, `/openapi.yaml` and `/docs` stay public, because scrapers and probes cannot carry credentials.
+
+**First start.** `nexora observe` generates a key, prints it once, and saves only its SHA-256 digest to `~/.nexora/observe-api-key.sha256` (owner-only permissions; change the path with `--api-key-file`). Later starts read the digest and cannot show the key again.
+
+**CI and containers.** Set `NEXORA_API_KEY` (at least 32 characters) and nothing is generated, printed or written. `--api-key` also works, but flags are visible to other users in the process list.
+
+```bash
+export NEXORA_API_KEY="$(openssl rand -base64 32)"
+nexora observe
+curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/process
+```
+
+**Dashboard.** The UI asks for the key once and trades it for an `HttpOnly; SameSite=Strict` session cookie (12 hours), so the key is never stored in the browser. A cookie-authenticated request that changes state must also come from the dashboard's own origin.
+
+**CLI.** `nexora cancel` and `nexora replay` read `NEXORA_API_KEY`, or take `--api-key`.
+
+**Rotation.** Restart with `nexora observe --rotate-api-key` to print a new key and replace the stored digest; the old key stops working immediately. With `NEXORA_API_KEY`, change the variable and restart.
+
+A missing or wrong key gets `401` with `{"error":{"code":"UNAUTHORIZED","message":"..."}}`, before any other check. Until TLS lands ([#40](https://github.com/iamvirul/nexora/issues/40)) the key crosses the network in clear, so keep the server on localhost or a trusted network, or put a TLS proxy in front of it.
+
+
 Example execute request:
 
 ```bash
-curl -X POST http://localhost:9464/api/execute \
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/execute \
   -H "content-type: application/json" \
   -d '{"goal":"process order payment notification","context":{"orderId":"ORD-99"}}'
 ```

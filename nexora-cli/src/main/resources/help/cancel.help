@@ -8,6 +8,9 @@ Cancel an execution running inside a `nexora observe` server.
   (DELETE /api/executions/{id}) because executions live in the memory
   of the process that started them.
 
+
+  The observe server requires its API key. It is read from NEXORA_API_KEY,
+  or pass --api-key. A rejected or missing key exits with code 1.
   Exit codes
   ──────────
   0  Cancellation requested (also when the execution was already being cancelled)

@@ -79,12 +79,12 @@ engine.subscribe(PlanCancelledEvent.class, e ->
 `POST /api/execute` returns the id of the execution it started:
 
 ```bash
-curl -X POST http://localhost:9464/api/execute \
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/execute \
   -H "content-type: application/json" \
   -d '{"goal":"process payment","context":{"orderId":"ORD-1"}}'
 # 202 {"accepted":true,"goal":"process payment","executionId":"4f3a1c2d-...","message":"Execution accepted"}
 
-curl -X DELETE http://localhost:9464/api/executions/4f3a1c2d-...
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X DELETE http://localhost:9464/api/executions/4f3a1c2d-...
 ```
 
 The observe UI shows a **Cancel** button on every running execution, which calls the same endpoint.
@@ -96,7 +96,7 @@ The observe UI shows a **Cancel** button on every running execution, which calls
 | `409` | `{"error":"Execution has already finished","executionId":"..."}` | Already terminal |
 | `409` | `{"error":"Execution is not running on this engine instance","executionId":"..."}` | Owned by another instance |
 
-> **Warning**: This endpoint currently has no caller authentication. Do not expose the observe server to untrusted networks. Authentication will be enforced once [#30](https://github.com/iamvirul/nexora/issues/30) lands.
+> **Authentication**: this endpoint requires the observe server's API key. See [Authentication](../observability#authentication).
 
 ---
 

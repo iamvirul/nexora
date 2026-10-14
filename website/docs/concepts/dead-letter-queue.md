@@ -74,16 +74,16 @@ nexora dlq resolve <dead-letter-id> --reason "Root cause fixed in 1.2.3"
 
 All DLQ endpoints are served by the observability server (`nexora observe`).
 
-> **Authentication**: Bearer token enforcement is deferred to [#30](https://github.com/iamvirul/nexora/issues/30).
+> **Authentication**: this endpoint requires the observe server's API key. See [Authentication](../observability#authentication).
 
 ### List dead letters
 
 ```bash
 # default: PENDING, page 0, size 20
-curl http://localhost:9464/api/dead-letters
+curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/dead-letters
 
 # with filters
-curl "http://localhost:9464/api/dead-letters?state=RESOLVED&page=0&size=10"
+curl -H "Authorization: Bearer $NEXORA_API_KEY" "http://localhost:9464/api/dead-letters?state=RESOLVED&page=0&size=10"
 ```
 
 Response:
@@ -111,7 +111,7 @@ Response:
 Creates a new execution with the original goal and context, then transitions the dead letter to `REPLAYED`.
 
 ```bash
-curl -X POST http://localhost:9464/api/dead-letters/<id>/replay
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/dead-letters/<id>/replay
 ```
 
 Returns `409 Conflict` if the dead letter is not in `PENDING` state.
@@ -121,7 +121,7 @@ Returns `409 Conflict` if the dead letter is not in `PENDING` state.
 Marks the dead letter as `RESOLVED` with an optional reason.
 
 ```bash
-curl -X POST http://localhost:9464/api/dead-letters/<id>/resolve \
+curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/dead-letters/<id>/resolve \
   -H "content-type: application/json" \
   -d '{"reason": "investigated and closed, no retry needed"}'
 ```

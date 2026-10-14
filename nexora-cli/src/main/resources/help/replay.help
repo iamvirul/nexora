@@ -11,6 +11,9 @@ Replay an unsuccessful execution (FAILED, TIMED_OUT, CANCELLED or COMPENSATED) t
   Only FAILED, TIMED_OUT, CANCELLED and COMPENSATED executions can be
   replayed. Requires a persistence store on the observe server.
 
+
+  The observe server requires its API key. It is read from NEXORA_API_KEY,
+  or pass --api-key. A rejected or missing key exits with code 1.
   Exit codes
   ──────────
   0  Replay started
