@@ -127,6 +127,31 @@ printf '%s\n' "$ALICE_PASSWORD" | nexora user add alice --password-stdin
 
 Restart with `nexora observe --rotate-api-key`. A new key is printed, the stored hash is replaced, and the old key stops working. With `NEXORA_API_KEY`, change the variable and restart. Lost the key? Rotate it; user sign-in keeps working meanwhile.
 
+## Try it: the login demo
+
+`tests/login-demo` runs the real observe server with two demo users, so you can try every flow on this page without setting anything up:
+
+```bash
+mvn -q install -DskipTests
+java -jar tests/login-demo/target/login-demo.jar
+# or run com.nexora.samples.login.LoginDemoApp from your IDE
+```
+
+It listens on `http://localhost:9470` (localhost only) and prints the users, a server key for the run, and a guided tour:
+
+| User | Password |
+|---|---|
+| `alice` | `alice-demo-password` |
+| `bob` | `bob-demo-password` |
+
+1. **Dashboard sign-in:** sign in as alice and run "process order"; the console logs it as `principal=alice`.
+2. **Lockout:** five wrong passwords for bob, and the sixth attempt is refused for 15 minutes.
+3. **CLI:** `nexora login -u bob`, then `nexora cancel`, then `nexora logout`, against the demo.
+4. **curl:** mint a user API key from `POST /api/keys` and use it as a Bearer header.
+5. **Live revocation:** `nexora user remove alice` while she is signed in, and the dashboard asks her to sign in again.
+
+Every sign-in, rejection and change appears on the demo's console as an `audit` line. The users, their keys and the demo's CLI login file live in a temp folder that is deleted when you stop the demo. The passwords are printed on purpose: never reuse them.
+
 ## The payment pipeline demo
 
 The demo (`tests/payment-pipeline`) uses the same rules with two differences: it saves nothing, and it has no user accounts. So its sign-in card only asks for the server key.

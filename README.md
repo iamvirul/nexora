@@ -593,7 +593,7 @@ nexora observe
 curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/process
 ```
 
-The payment pipeline demo prints a fresh server key in its console on every start and has no user accounts, so paste that key into its sign-in card.
+The payment pipeline demo prints a fresh server key in its console on every start and has no user accounts, so paste that key into its sign-in card. To try username and password sign-in, run the login demo: `java -jar tests/login-demo/target/login-demo.jar` (users `alice` / `bob`, guided tour on its console).
 
 See the [Authentication guide](website/docs/concepts/authentication.md) for how each sign-in flow works, user management, the demo, and what `401` and `429` mean.
 
