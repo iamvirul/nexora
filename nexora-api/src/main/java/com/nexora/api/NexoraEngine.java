@@ -24,6 +24,7 @@ import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.ExecutionStore;
 import com.nexora.persistence.MissedFirePolicy;
 import com.nexora.persistence.ScheduleRecord;
+import com.nexora.persistence.StepOutput;
 import com.nexora.persistence.StepRecord;
 import com.nexora.persistence.StepState;
 import com.nexora.planner.engine.CompositePlanner;
@@ -297,6 +298,15 @@ public final class NexoraEngine implements AutoCloseable {
     }
 
     /**
+     * Cap on each recorded step output, in UTF-8 JSON bytes; 0 means outputs are not recorded.
+     *
+     * @see Builder#withStepOutputMaxBytes(int)
+     */
+    public int stepOutputMaxBytes() {
+        return engine.stepOutputMaxBytes();
+    }
+
+    /**
      * Reports readiness of the engine's own dependencies: persistence, its schema migrations,
      * plugins, and the shared executor. A {@code null} persistence store (persistence disabled)
      * reports both persistence checks UP — there is nothing to check, not a degraded dependency.
@@ -452,6 +462,7 @@ public final class NexoraEngine implements AutoCloseable {
         private ExecutionStore executionStore = null;
         private boolean sagaEnabled = false;
         private String webhookSecret = null;
+        private int stepOutputMaxBytes = StepOutput.DEFAULT_MAX_BYTES;
 
         private final List<NexoraPlugin> plugins = new ArrayList<>();
         private final List<Path> pluginJars = new ArrayList<>();
@@ -503,6 +514,19 @@ public final class NexoraEngine implements AutoCloseable {
 
         public Builder withWebhookSecret(String webhookSecret) {
             this.webhookSecret = webhookSecret;
+            return this;
+        }
+
+        /**
+         * Caps each step output kept in the store and the process snapshot, in UTF-8 JSON bytes
+         * (default {@link StepOutput#DEFAULT_MAX_BYTES}). A larger output is kept as a truncated
+         * preview and logged at WARN; the step still completes and later steps still see all of it.
+         * {@code 0} keeps no outputs, for workflows whose outputs must not be written anywhere.
+         *
+         * @throws IllegalArgumentException unless {@code maxBytes} is 0 or at least {@link StepOutput#MIN_MAX_BYTES}
+         */
+        public Builder withStepOutputMaxBytes(int maxBytes) {
+            this.stepOutputMaxBytes = StepOutput.validateMaxBytes(maxBytes);
             return this;
         }
 
@@ -597,7 +621,8 @@ public final class NexoraEngine implements AutoCloseable {
                     sagaOrchestrator,
                     defaultPlanDeadline,
                     executor,
-                    webhookSecret);
+                    webhookSecret,
+                    stepOutputMaxBytes);
 
             // Cron scheduler (optional — requires a store)
             CronScheduler cronScheduler =

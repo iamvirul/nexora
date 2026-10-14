@@ -11,6 +11,7 @@ import com.nexora.event.StepCompletedEvent;
 import com.nexora.event.StepFailedEvent;
 import com.nexora.event.StepStartedEvent;
 import com.nexora.event.Subscription;
+import com.nexora.persistence.StepOutput;
 import io.prometheus.client.CollectorRegistry;
 import io.prometheus.client.Counter;
 import io.prometheus.client.Gauge;
@@ -23,11 +24,14 @@ import java.util.Comparator;
 import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Bridges Nexora execution events to:
@@ -38,6 +42,14 @@ public final class NexoraObservability implements AutoCloseable {
 
     private static final int DEFAULT_MAX_EXECUTIONS = 100;
     private static final int DEFAULT_MAX_TIMELINE_EVENTS = 200;
+    /**
+     * Per-step output cap in the snapshot, tighter than the store's: the whole snapshot is sent to
+     * every dashboard on each event, for up to maxExecutions executions. The history view reads the
+     * stored output, up to the engine's cap.
+     */
+    static final int SNAPSHOT_OUTPUT_MAX_BYTES = 4 * 1024;
+
+    private static final Logger log = LoggerFactory.getLogger(NexoraObservability.class);
 
     @FunctionalInterface
     public interface SnapshotListener {
@@ -263,7 +275,7 @@ public final class NexoraObservability implements AutoCloseable {
         stepDurationSeconds
                 .labels(safeLabel(event.capabilityId()), "completed")
                 .observe(seconds(event.elapsed().toNanos()));
-        processTracker.onStepCompleted(event);
+        processTracker.onStepCompleted(event, snapshotOutput(event));
         broadcastSnapshot();
     }
 
@@ -277,6 +289,21 @@ public final class NexoraObservability implements AutoCloseable {
                 .observe(seconds(event.elapsed().toNanos()));
         processTracker.onStepFailed(event);
         broadcastSnapshot();
+    }
+
+    private StepOutput snapshotOutput(StepCompletedEvent event) {
+        int maxBytes = Math.min(engine.stepOutputMaxBytes(), SNAPSHOT_OUTPUT_MAX_BYTES);
+        try {
+            return StepOutput.capture(event.output(), maxBytes);
+        } catch (IllegalArgumentException e) {
+            // The engine logs this at WARN when it writes the step to a store.
+            log.debug(
+                    "Step output left out of the snapshot executionId={} stepId={} reason={}",
+                    event.executionId(),
+                    event.stepId(),
+                    e.getMessage());
+            return StepOutput.NONE;
+        }
     }
 
     private static String safeLabel(String value) {
@@ -315,7 +342,9 @@ public final class NexoraObservability implements AutoCloseable {
             long finishedAtMs,
             long elapsedMs,
             String failureCode,
-            String failureMessage) {}
+            String failureMessage,
+            Map<String, Object> output,
+            boolean outputTruncated) {}
 
     public record TimelineSnapshot(long occurredAtMs, String type, String message) {}
 
@@ -410,14 +439,15 @@ public final class NexoraObservability implements AutoCloseable {
                     event.stepId(), event.capabilityId(), event.occurredAt().toEpochMilli());
         }
 
-        void onStepCompleted(StepCompletedEvent event) {
+        void onStepCompleted(StepCompletedEvent event, StepOutput output) {
             MutableExecution execution = executions.get(event.executionId());
             if (execution == null) return;
             execution.markStepCompleted(
                     event.stepId(),
                     event.capabilityId(),
                     event.occurredAt().toEpochMilli(),
-                    event.elapsed().toMillis());
+                    event.elapsed().toMillis(),
+                    output);
         }
 
         void onStepFailed(StepFailedEvent event) {
@@ -483,9 +513,9 @@ public final class NexoraObservability implements AutoCloseable {
         }
 
         private synchronized void markStepCompleted(
-                String stepId, String capabilityId, long occurredAtMs, long elapsedMs) {
+                String stepId, String capabilityId, long occurredAtMs, long elapsedMs, StepOutput output) {
             MutableStep step = steps.computeIfAbsent(stepId, id -> new MutableStep(stepId));
-            step.markCompleted(capabilityId, occurredAtMs, elapsedMs);
+            step.markCompleted(capabilityId, occurredAtMs, elapsedMs, output);
             appendTimeline(occurredAtMs, "step_completed", stepId + " (" + elapsedMs + "ms)");
         }
 
@@ -595,6 +625,7 @@ public final class NexoraObservability implements AutoCloseable {
         private volatile long elapsedMs;
         private volatile String failureCode;
         private volatile String failureMessage;
+        private volatile StepOutput output = StepOutput.NONE;
 
         private MutableStep(String stepId) {
             this.stepId = stepId;
@@ -608,9 +639,11 @@ public final class NexoraObservability implements AutoCloseable {
             this.elapsedMs = 0;
             this.failureCode = null;
             this.failureMessage = null;
+            this.output = StepOutput.NONE;
         }
 
-        private synchronized void markCompleted(String capabilityId, long finishedAtMs, long elapsedMs) {
+        private synchronized void markCompleted(
+                String capabilityId, long finishedAtMs, long elapsedMs, StepOutput output) {
             this.capabilityId = capabilityId == null ? this.capabilityId : capabilityId;
             this.status = STATUS_COMPLETED;
             if (startedAtMs == 0) {
@@ -620,6 +653,7 @@ public final class NexoraObservability implements AutoCloseable {
             this.elapsedMs = elapsedMs;
             this.failureCode = null;
             this.failureMessage = null;
+            this.output = output;
         }
 
         private synchronized void markFailed(
@@ -633,11 +667,21 @@ public final class NexoraObservability implements AutoCloseable {
             this.elapsedMs = elapsedMs;
             this.failureCode = failureCode;
             this.failureMessage = failureMessage;
+            this.output = StepOutput.NONE;
         }
 
         private synchronized StepSnapshot toSnapshot() {
             return new StepSnapshot(
-                    stepId, capabilityId, status, startedAtMs, finishedAtMs, elapsedMs, failureCode, failureMessage);
+                    stepId,
+                    capabilityId,
+                    status,
+                    startedAtMs,
+                    finishedAtMs,
+                    elapsedMs,
+                    failureCode,
+                    failureMessage,
+                    output.value(),
+                    output.truncated());
         }
     }
 }
