@@ -26,6 +26,9 @@ nexora [--config <file>] <command>
 | `nexora schedule remove <id>` | Cancel a schedule immediately |
 | `nexora cancel <executionId>` | Cancel an execution running in the observe server |
 | `nexora replay <executionId>` | Replay a failed, timed-out, cancelled or compensated execution through the observe server |
+| `nexora user add <username>` | Create a dashboard user (also `passwd`, `remove`, `list`) |
+| `nexora login` | Sign in with a username and password; saves a user API key for `cancel` / `replay` |
+| `nexora logout` | Revoke and delete the saved user API key |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 

@@ -128,6 +128,9 @@ nexora [--config <file>] <command>
 | `nexora schedule remove <id>` | Cancel a schedule immediately |
 | `nexora cancel <executionId>` | Cancel an execution running in the observe server |
 | `nexora replay <executionId>` | Replay a failed, timed-out, cancelled or compensated execution through the observe server |
+| `nexora user add <username>` | Create a dashboard user (also `passwd`, `remove`, `list`) |
+| `nexora login` | Sign in with a username and password; saves a user API key for `cancel` / `replay` |
+| `nexora logout` | Revoke and delete the saved user API key |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 
@@ -591,9 +594,12 @@ nexora observe
 curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/process
 ```
 
-**Dashboard.** The UI asks for the key once and trades it for an `HttpOnly; SameSite=Strict` session cookie (12 hours), so the key is never stored in the browser. A cookie-authenticated request that changes state must also come from the dashboard's own origin.
+**Dashboard.** The UI signs in with a username and password, or with the key, and receives an `HttpOnly; SameSite=Strict` session cookie (12 hours), so no secret is ever stored in the browser. A cookie-authenticated request that changes state must also come from the dashboard's own origin.
 
-**CLI.** `nexora cancel` and `nexora replay` read `NEXORA_API_KEY`, or take `--api-key`.
+**Users and passwords.** For people, add dashboard accounts with `nexora user add <username>` (also `passwd`, `remove`, `list`). Passwords are hashed with PBKDF2-HMAC-SHA256 (600,000 iterations, per-user salt) into `~/.nexora/observe-users`, owner-only (override with `--users-file`); they must be 12 to 128 characters. A correct password mints a **user API key** (`nxu_...`): valid for 12 hours, accepted everywhere the server's key is, and recorded under the user's name in the audit log. The dashboard receives it as the `HttpOnly` session cookie, so page script never sees it; `nexora login` receives it from `POST /api/keys` and saves it to `~/.nexora/credentials` for `nexora cancel` and `nexora replay`. Removing a user, changing their password, signing out, or restarting the server revokes their keys, and account changes apply to a running server without a restart. Five wrong passwords lock a username for 15 minutes, and each client gets at most 20 attempts a minute; unknown usernames are treated exactly like real ones, so responses never reveal whether an account exists. The server's own key keeps working throughout, as the break-glass login.
+
+
+**CLI.** `nexora cancel` and `nexora replay` use `--api-key`, else `NEXORA_API_KEY`, else the user API key saved by `nexora login`.
 
 **Payment pipeline demo.** `tests/payment-pipeline` uses the same auth. It prints a key for each run and saves nothing, or uses `NEXORA_API_KEY`.
 
