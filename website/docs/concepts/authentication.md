@@ -17,7 +17,7 @@ The observe server (`nexora observe`) and the payment pipeline demo protect thei
 | How long it lasts | Until you rotate it | 12 hours, or until logout, a password change, user removal or a server restart |
 | Audit log shows | `principal=api-key` | `principal=alice` |
 
-Both are sent the same way, `Authorization: Bearer <key>`, and both unlock the same routes.
+Both are sent the same way, `Authorization: Bearer <key>`, and both unlock the same routes, with one exception: only the server key or a password can open a dashboard session (`POST /api/session`). A user key cannot mint another session, so one stolen key cannot renew itself; to sign in to the dashboard, use your username and password.
 
 ## What is locked
 
@@ -146,9 +146,17 @@ It listens on `http://localhost:9470` (localhost only) and prints the users, a s
 
 1. **Dashboard sign-in:** sign in as alice and run "process order"; the console logs it as `principal=alice`.
 2. **Lockout:** five wrong passwords for bob, and the sixth attempt is refused for 15 minutes.
-3. **CLI:** `nexora login -u bob`, then `nexora cancel`, then `nexora logout`, against the demo.
+3. **CLI:** the CLI defaults to port 9464, so point every command at the demo with `--server`:
+
+   ```bash
+   nexora login  --server http://localhost:9470 -u bob
+   nexora cancel <executionId> --server http://localhost:9470
+   nexora logout --server http://localhost:9470
+   ```
+
+   The demo's own console prints these with a `--credentials-file` inside its temp folder, so they leave your real `~/.nexora/credentials` alone.
 4. **curl:** mint a user API key from `POST /api/keys` and use it as a Bearer header.
-5. **Live revocation:** `nexora user remove alice` while she is signed in, and the dashboard asks her to sign in again.
+5. **Live revocation:** `nexora user remove alice --users-file <path printed by the demo>` while she is signed in, and the dashboard asks her to sign in again.
 
 Every sign-in, rejection and change appears on the demo's console as an `audit` line. The users, their keys and the demo's CLI login file live in a temp folder that is deleted when you stop the demo. The passwords are printed on purpose: never reuse them.
 
@@ -182,6 +190,6 @@ Responses never say whether a username exists: an unknown name is rejected, time
 
 ## Limits to know
 
-- **Plain HTTP.** Until TLS lands ([#40](https://github.com/iamvirul/nexora/issues/40)), keys and passwords cross the network unencrypted. Keep the server on localhost or a trusted network, or put a TLS proxy in front of it. The CLI warns when it would send a key or password over plain HTTP to another machine.
+- **Plain HTTP.** Until TLS lands ([#40](https://github.com/iamvirul/nexora/issues/40)), keys and passwords cross the network unencrypted. Keep the server on localhost or a trusted network, or put a TLS proxy in front of it and use an `https://` URL. The CLI (`login`, `logout`, `cancel`, `replay`) **refuses** to send a password or key over plain HTTP to another machine unless you pass `--allow-insecure-http`; localhost is always allowed.
 - **Restarts.** User keys live in the server's memory, so a restart signs everyone out. The server key and user accounts are on disk and survive.
 - **Reverse proxies.** Dashboard requests that change something must carry an `Origin` matching the address they were sent to. A proxy that rewrites the `Host` header breaks this; Bearer keys are unaffected.

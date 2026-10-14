@@ -644,7 +644,9 @@ paths:
       summary: Log in with a username and password and get a user API key
       description: |
         Returns a user API key (`nxu_...`) in the body, for the CLI (`nexora login`) and scripts to
-        send as `Authorization: Bearer`. It works everywhere the server's own key does, is recorded
+        send as `Authorization: Bearer`. It works on every route the server's own key does, except
+        that it cannot open a dashboard session at `POST /api/session` (sign in there with the
+        username and password). It is recorded
         under the user's name in the audit log, and is valid for 12 hours. Removing the user,
         changing their password, `DELETE /api/session` or a server restart revoke it. Five failed
         attempts lock a username for 15 minutes, and each client is limited to 20 attempts a minute.
