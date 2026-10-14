@@ -72,6 +72,8 @@ curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/proces
 
 **CLI.** `nexora cancel` and `nexora replay` read `NEXORA_API_KEY`, or take `--api-key`.
 
+**Payment pipeline demo.** `tests/payment-pipeline` uses the same auth. It prints a key for each run and saves nothing, or uses `NEXORA_API_KEY`.
+
 **Rotation.** Restart with `nexora observe --rotate-api-key` to print a new key and replace the stored digest; the old key stops working immediately. With `NEXORA_API_KEY`, change the variable and restart.
 
 A missing or wrong key gets `401` with `{"error":{"code":"UNAUTHORIZED","message":"..."}}`, before any other check. Until TLS lands ([#40](https://github.com/iamvirul/nexora/issues/40)) the key crosses the network in clear, so keep the server on localhost or a trusted network, or put a TLS proxy in front of it.

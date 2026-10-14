@@ -118,8 +118,10 @@ The payment pipeline sample (`tests/payment-pipeline`) runs a cancellation scena
 ```bash
 mvn -q install -DskipTests
 java -jar tests/payment-pipeline/target/payment-pipeline.jar
-# open http://localhost:9464/
+# open http://localhost:9464/ and paste the API key the demo printed at startup
 ```
+
+The demo protects its API like `nexora observe` does: it prints a key for that run (nothing is saved), or uses `NEXORA_API_KEY` when set.
 
 ---
 
