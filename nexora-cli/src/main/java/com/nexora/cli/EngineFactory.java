@@ -16,7 +16,8 @@ final class EngineFactory {
                 ? config.webhookSecret
                 : System.getenv("NEXORA_WEBHOOK_SECRET");
 
-        NexoraEngine.Builder builder = NexoraEngine.builder().withWebhookSecret(secret);
+        NexoraEngine.Builder builder =
+                NexoraEngine.builder().withWebhookSecret(secret).withStepOutputMaxBytes(config.stepOutputMaxBytes());
 
         if (config.executionStore != null && !config.executionStore.isBlank()) {
             builder.withExecutionStore(JdbcExecutionStore.h2AutoServer(config.executionStore, config.poolConfig()));
