@@ -183,7 +183,7 @@ public final class SessionEndpoints {
                 case ApiAuth.LoginResult.Accepted accepted -> {
                     return Optional.of(accepted);
                 }
-                case ApiAuth.LoginResult.Rejected rejected -> ApiAuth.rejectUnauthorized(exchange);
+                case ApiAuth.LoginResult.Rejected() -> ApiAuth.rejectUnauthorized(exchange);
                 case ApiAuth.LoginResult.Throttled throttled -> {
                     exchange.getResponseHeaders()
                             .set(

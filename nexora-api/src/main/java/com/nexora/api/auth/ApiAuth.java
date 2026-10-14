@@ -207,15 +207,15 @@ public final class ApiAuth {
      */
     public LoginResult passwordLogin(String username, char[] password, String client) {
         String name = UserStore.normalize(username);
-        Optional<Duration> wait = throttle.retryAfter(name, client);
+        // Reserved before hashing and counted as a failure until proven right, so parallel guesses cannot outrun the
+        // lock.
+        Optional<Duration> wait = throttle.reserve(name, client);
         if (wait.isPresent()) {
             log.warn("Throttled dashboard login user={} client={}", loggable(name), client);
             return new LoginResult.Throttled(wait.get());
         }
-        throttle.recordAttempt(client);
         if (users.isEmpty()) {
             // No accounts at all on this server, so nothing to time against: reject outright.
-            throttle.recordFailure(name);
             return new LoginResult.Rejected();
         }
         UserStore store = users.get();
@@ -228,7 +228,6 @@ public final class ApiAuth {
             matches = false;
         }
         if (!matches) {
-            throttle.recordFailure(name);
             log.warn("Rejected dashboard login user={} client={}", loggable(name), client);
             return new LoginResult.Rejected();
         }

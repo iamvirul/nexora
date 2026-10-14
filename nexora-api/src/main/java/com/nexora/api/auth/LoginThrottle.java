@@ -17,6 +17,11 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>per client address: at most {@value #MAX_ATTEMPTS_PER_WINDOW} attempts per {@link #WINDOW}.
  * </ul>
  *
+ * <p>{@link #reserve} checks both limits and counts the attempt in one synchronized step, before
+ * any hashing, and counts it as a failure until {@link #recordSuccess} clears it. Checking first
+ * and recording after the (slow) hash would let parallel guesses all pass the check before any
+ * of them is counted. The lock is held only for these map updates, never during hashing.
+ *
  * <p>Unknown usernames are counted exactly like real ones, so a lockout never reveals whether an
  * account exists. The API key always still works, which keeps a locked-out operator from being
  * stuck. State is in memory and bounded; a restart clears it.
@@ -41,8 +46,23 @@ final class LoginThrottle {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    /**
+     * Admits an attempt or says how long to wait. An admitted attempt is already counted against
+     * the client's window and as a failure for {@code username}; call {@link #recordSuccess} when
+     * the password turns out to be right.
+     */
+    synchronized Optional<Duration> reserve(String username, String client) {
+        Optional<Duration> wait = retryAfter(username, client);
+        if (wait.isPresent()) {
+            return wait;
+        }
+        recordAttempt(client);
+        recordFailure(username);
+        return Optional.empty();
+    }
+
     /** How long the caller must wait, if this attempt may not be made at all. */
-    Optional<Duration> retryAfter(String username, String client) {
+    synchronized Optional<Duration> retryAfter(String username, String client) {
         Instant now = clock.instant();
         Failures failures = failuresByUser.get(username);
         if (failures != null && failures.lockedUntil() != null && now.isBefore(failures.lockedUntil())) {
@@ -58,7 +78,7 @@ final class LoginThrottle {
     }
 
     /** Counts an attempt against the client's window, whatever its outcome. */
-    void recordAttempt(String client) {
+    synchronized void recordAttempt(String client) {
         Instant now = clock.instant();
         prune(now);
         attemptsByClient.merge(
@@ -68,7 +88,7 @@ final class LoginThrottle {
                         now.isBefore(old.start().plus(WINDOW)) ? new Window(old.start(), old.attempts() + 1) : fresh);
     }
 
-    void recordFailure(String username) {
+    synchronized void recordFailure(String username) {
         Instant now = clock.instant();
         prune(now);
         failuresByUser.merge(username, new Failures(1, null), (old, fresh) -> {
@@ -78,7 +98,7 @@ final class LoginThrottle {
         });
     }
 
-    void recordSuccess(String username) {
+    synchronized void recordSuccess(String username) {
         failuresByUser.remove(username);
     }
 

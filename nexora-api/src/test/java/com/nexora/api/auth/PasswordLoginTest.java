@@ -78,6 +78,37 @@ class PasswordLoginTest {
     }
 
     @Test
+    void parallelGuessesCannotOutrunTheLockout() throws Exception {
+        // A slower hash widens the gap between checking the lock and recording the failure.
+        UserStore slowUsers = new UserStore(dir.resolve("slow-users"), new PasswordHasher(50_000));
+        slowUsers.add("carol", PASSWORD);
+        ApiAuth slowAuth = new ApiAuth(ApiKeyStore.digest(SERVER_KEY), slowUsers);
+        int guesses = 20;
+        java.util.concurrent.CyclicBarrier start = new java.util.concurrent.CyclicBarrier(guesses);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(guesses);
+        try {
+            java.util.List<java.util.concurrent.Future<ApiAuth.LoginResult>> results = new java.util.ArrayList<>();
+            for (int i = 0; i < guesses; i++) {
+                String client = "client-" + i; // distinct clients, so only the per-username lock can stop them
+                results.add(pool.submit(() -> {
+                    start.await();
+                    return slowAuth.passwordLogin("carol", "wrong password!!".toCharArray(), client);
+                }));
+            }
+            long hashed = 0;
+            for (java.util.concurrent.Future<ApiAuth.LoginResult> result : results) {
+                if (result.get(30, java.util.concurrent.TimeUnit.SECONDS) instanceof ApiAuth.LoginResult.Rejected) {
+                    hashed++;
+                }
+            }
+
+            assertEquals(LoginThrottle.MAX_FAILURES, hashed, "only the first attempts may reach the password check");
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
     void passwordChangeRevokesTheUsersKeys() {
         String key = login("alice").session().token();
 
