@@ -349,7 +349,8 @@ public final class DagStepScheduler {
                     step.capabilityId(),
                     request.traceContext().traceId(),
                     elapsed,
-                    Instant.now()));
+                    Instant.now(),
+                    result.output()));
             log.debug("Step completed id={} elapsed={}ms", step.id(), elapsed.toMillis());
         } else {
             eventBus.publish(new StepFailedEvent(
