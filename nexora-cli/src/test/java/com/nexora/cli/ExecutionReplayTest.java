@@ -102,8 +102,8 @@ class ExecutionReplayTest {
 
     @Test
     void replayRouteOnlyAcceptsPost() throws Exception {
-        HttpResponse<String> response = client.send(
-                HttpRequest.newBuilder(replayUri("any")).GET().build(), HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response =
+                client.send(TestAuth.authorized(replayUri("any")).GET().build(), HttpResponse.BodyHandlers.ofString());
 
         assertEquals(405, response.statusCode());
         assertEquals("POST", response.headers().firstValue("Allow").orElse(null));
@@ -118,7 +118,7 @@ class ExecutionReplayTest {
                         "http://" + LOOPBACK + ":" + bare.getAddress().getPort() + ExecutionEndpoints.PATH_PREFIX
                                 + "any" + ExecutionEndpoints.REPLAY_SUFFIX);
                 HttpResponse<String> response = client.send(
-                        HttpRequest.newBuilder(uri)
+                        TestAuth.authorized(uri)
                                 .POST(HttpRequest.BodyPublishers.noBody())
                                 .build(),
                         HttpResponse.BodyHandlers.ofString());
@@ -166,7 +166,7 @@ class ExecutionReplayTest {
 
     private HttpResponse<String> post(String executionId) throws Exception {
         return client.send(
-                HttpRequest.newBuilder(replayUri(executionId))
+                TestAuth.authorized(replayUri(executionId))
                         .POST(HttpRequest.BodyPublishers.noBody())
                         .build(),
                 HttpResponse.BodyHandlers.ofString());
@@ -183,7 +183,7 @@ class ExecutionReplayTest {
 
     private static HttpServer startServer(NexoraEngine engine) throws IOException {
         HttpServer http = HttpServer.create(new InetSocketAddress(LOOPBACK, 0), 0);
-        new ExecutionEndpoints(engine).register(http);
+        new ExecutionEndpoints(engine).register(http, TestAuth.auth());
         http.start();
         return http;
     }
@@ -198,7 +198,7 @@ class ExecutionReplayTest {
         CommandLine cmd = new CommandLine(new ReplayCommand());
         cmd.setOut(new PrintWriter(out));
         cmd.setErr(new PrintWriter(err));
-        int exitCode = cmd.execute(args);
+        int exitCode = cmd.execute(withTestKey(args));
         return new CommandResult(exitCode, out.toString(), err.toString());
     }
 
@@ -234,5 +234,13 @@ class ExecutionReplayTest {
             @Override
             public void shutdown() {}
         };
+    }
+
+    /** The server under test requires the API key, as a real one does. */
+    private static String[] withTestKey(String... args) {
+        String[] withKey = java.util.Arrays.copyOf(args, args.length + 2);
+        withKey[args.length] = "--api-key";
+        withKey[args.length + 1] = TestAuth.KEY;
+        return withKey;
     }
 }

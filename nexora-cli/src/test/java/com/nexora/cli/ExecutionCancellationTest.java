@@ -72,7 +72,7 @@ class ExecutionCancellationTest {
                 .build();
         engine.subscribe(PlanStartedEvent.class, e -> startedExecutionId.complete(e.executionId()));
         server = HttpServer.create(new InetSocketAddress(LOOPBACK, 0), 0);
-        new ExecutionEndpoints(engine).register(server);
+        new ExecutionEndpoints(engine).register(server, TestAuth.auth());
         server.start();
     }
 
@@ -124,7 +124,7 @@ class ExecutionCancellationTest {
 
     @Test
     void unsupportedMethodsAreRejectedWithAllowHeader() throws Exception {
-        HttpRequest put = HttpRequest.newBuilder(executionUri("anything"))
+        HttpRequest put = TestAuth.authorized(executionUri("anything"))
                 .PUT(HttpRequest.BodyPublishers.noBody())
                 .build();
 
@@ -141,7 +141,7 @@ class ExecutionCancellationTest {
 
     @Test
     void postExecuteReturnsExecutionIdThatCanBeCancelled() throws Exception {
-        HttpRequest post = HttpRequest.newBuilder(URI.create(serverUrl() + ExecutionEndpoints.EXECUTE_PATH))
+        HttpRequest post = TestAuth.authorized(URI.create(serverUrl() + ExecutionEndpoints.EXECUTE_PATH))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString("{\"goal\":\"slow job\"}"))
                 .build();
@@ -157,7 +157,7 @@ class ExecutionCancellationTest {
 
     @Test
     void postExecuteRejectsMissingGoal() throws Exception {
-        HttpRequest post = HttpRequest.newBuilder(URI.create(serverUrl() + ExecutionEndpoints.EXECUTE_PATH))
+        HttpRequest post = TestAuth.authorized(URI.create(serverUrl() + ExecutionEndpoints.EXECUTE_PATH))
                 .POST(HttpRequest.BodyPublishers.ofString("{\"context\":{}}"))
                 .build();
 
@@ -169,7 +169,7 @@ class ExecutionCancellationTest {
 
     @Test
     void postExecuteRejectsInvalidJson() throws Exception {
-        HttpRequest post = HttpRequest.newBuilder(URI.create(serverUrl() + ExecutionEndpoints.EXECUTE_PATH))
+        HttpRequest post = TestAuth.authorized(URI.create(serverUrl() + ExecutionEndpoints.EXECUTE_PATH))
                 .POST(HttpRequest.BodyPublishers.ofString("{not json"))
                 .build();
 
@@ -179,7 +179,7 @@ class ExecutionCancellationTest {
 
     @Test
     void executeEndpointRejectsGet() throws Exception {
-        HttpRequest get = HttpRequest.newBuilder(URI.create(serverUrl() + ExecutionEndpoints.EXECUTE_PATH))
+        HttpRequest get = TestAuth.authorized(URI.create(serverUrl() + ExecutionEndpoints.EXECUTE_PATH))
                 .GET()
                 .build();
 
@@ -209,6 +209,18 @@ class ExecutionCancellationTest {
 
         assertEquals(ObserveServerClient.EXIT_FAILED, result.exitCode());
         assertTrue(result.err().contains("no execution found"), result.err());
+    }
+
+    @Test
+    void cancelCommandExplainsARejectedKey() {
+        StringWriter err = new StringWriter();
+        CommandLine cmd = new CommandLine(new CancelCommand());
+        cmd.setErr(new PrintWriter(err));
+
+        int exitCode = cmd.execute("any-id", "--server", serverUrl(), "--api-key", "wrong-key-0123456789abcdefghijkl");
+
+        assertEquals(ObserveServerClient.EXIT_FAILED, exitCode);
+        assertTrue(err.toString().contains("rejected the API key"), err.toString());
     }
 
     @Test
@@ -243,7 +255,7 @@ class ExecutionCancellationTest {
 
     private HttpResponse<String> delete(String executionId) throws Exception {
         HttpRequest request =
-                HttpRequest.newBuilder(executionUri(executionId)).DELETE().build();
+                TestAuth.authorized(executionUri(executionId)).DELETE().build();
         return client.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
@@ -265,7 +277,7 @@ class ExecutionCancellationTest {
         CommandLine cmd = new CommandLine(new CancelCommand());
         cmd.setOut(new PrintWriter(out));
         cmd.setErr(new PrintWriter(err));
-        int exitCode = cmd.execute(args);
+        int exitCode = cmd.execute(withTestKey(args));
         return new CommandResult(exitCode, out.toString(), err.toString());
     }
 
@@ -314,5 +326,13 @@ class ExecutionCancellationTest {
                 return capability;
             }
         };
+    }
+
+    /** The server under test requires the API key, as a real one does. */
+    private static String[] withTestKey(String... args) {
+        String[] withKey = java.util.Arrays.copyOf(args, args.length + 2);
+        withKey[args.length] = "--api-key";
+        withKey[args.length + 1] = TestAuth.KEY;
+        return withKey;
     }
 }

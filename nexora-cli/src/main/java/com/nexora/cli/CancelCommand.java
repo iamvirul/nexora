@@ -35,9 +35,16 @@ public class CancelCommand implements Callable<Integer> {
             description = "Base URL of the running observe server. Default: ${DEFAULT-VALUE}")
     private URI server;
 
+    @Option(
+            names = {"--api-key"},
+            description = "API key for the observe server. Default: the " + ApiKeyStore.ENV_VAR
+                    + " environment variable, which keeps the key out of the process list.")
+    private String apiKey;
+
     @Override
     public Integer call() {
-        return ObserveServerClient.call(spec, server, executionId, "DELETE", "", this::report);
+        return ObserveServerClient.call(
+                spec, ObserveServerClient.Server.of(server, apiKey), executionId, "DELETE", "", this::report);
     }
 
     private int report(HttpResponse<String> response, PrintWriter out, PrintWriter err) {

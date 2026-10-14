@@ -38,6 +38,20 @@ final class ObserveServerClient {
         int report(HttpResponse<String> response, PrintWriter out, PrintWriter err);
     }
 
+    private static final int STATUS_UNAUTHORIZED = 401;
+
+    /**
+     * Where to send the request and the API key to send with it. {@code apiKey} is the
+     * {@code --api-key} value, falling back to {@value ApiKeyStore#ENV_VAR}; null sends none.
+     */
+    record Server(URI url, String apiKey) {
+
+        static Server of(URI url, String flagKey) {
+            String key = flagKey != null ? flagKey : System.getenv(ApiKeyStore.ENV_VAR);
+            return new Server(url, key == null || key.isBlank() ? null : key.strip());
+        }
+    }
+
     private ObserveServerClient() {}
 
     /**
@@ -48,13 +62,14 @@ final class ObserveServerClient {
      */
     static int call(
             CommandSpec spec,
-            URI server,
+            Server target,
             String executionId,
             String method,
             String pathSuffix,
             ResponseReporter reporter) {
         PrintWriter out = spec.commandLine().getOut();
         PrintWriter err = spec.commandLine().getErr();
+        URI server = target.url();
 
         if (executionId.isBlank()) {
             err.println("Error: EXECUTION_ID must not be blank.");
@@ -67,13 +82,18 @@ final class ObserveServerClient {
             return EXIT_USAGE;
         }
 
-        URI target = URI.create(stripTrailingSlash(server.toString())
+        URI uri = URI.create(stripTrailingSlash(server.toString())
                 + ExecutionEndpoints.PATH_PREFIX
                 + encodePathSegment(executionId)
                 + pathSuffix);
+        if (target.apiKey() != null && sendsKeyInClear(server)) {
+            err.printf(
+                    "Warning: sending the API key over plain HTTP to %s; anyone on the path can read it.%n",
+                    server.getHost());
+        }
         HttpResponse<String> response;
         try {
-            response = send(target, method);
+            response = send(uri, method, target.apiKey());
         } catch (IOException e) {
             err.printf(
                     "Error: could not reach the observe server at %s (%s). Is `nexora observe` running?%n",
@@ -84,7 +104,25 @@ final class ObserveServerClient {
             err.println("Error: interrupted while waiting for the observe server.");
             return EXIT_FAILED;
         }
+        if (response.statusCode() == STATUS_UNAUTHORIZED) {
+            err.println(
+                    target.apiKey() == null
+                            ? "Error: the observe server requires an API key. Set " + ApiKeyStore.ENV_VAR
+                                    + " or pass --api-key."
+                            : "Error: the observe server rejected the API key. Check " + ApiKeyStore.ENV_VAR
+                                    + " or --api-key.");
+            return EXIT_FAILED;
+        }
         return reporter.report(response, out, err);
+    }
+
+    /** Plain HTTP to anything but this machine exposes the Bearer key on the network. */
+    private static boolean sendsKeyInClear(URI server) {
+        if (!"http".equalsIgnoreCase(server.getScheme())) {
+            return false;
+        }
+        String host = server.getHost();
+        return !("localhost".equalsIgnoreCase(host) || host.startsWith("127.") || "[::1]".equals(host));
     }
 
     /** Pulls the "error" field out of a JSON error body, falling back to the raw body. */
@@ -102,14 +140,17 @@ final class ObserveServerClient {
         }
     }
 
-    private static HttpResponse<String> send(URI target, String method) throws IOException, InterruptedException {
+    private static HttpResponse<String> send(URI target, String method, String apiKey)
+            throws IOException, InterruptedException {
         HttpClient client =
                 HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
-        HttpRequest request = HttpRequest.newBuilder(target)
+        HttpRequest.Builder request = HttpRequest.newBuilder(target)
                 .timeout(REQUEST_TIMEOUT)
-                .method(method, HttpRequest.BodyPublishers.noBody())
-                .build();
-        return client.send(request, HttpResponse.BodyHandlers.ofString());
+                .method(method, HttpRequest.BodyPublishers.noBody());
+        if (apiKey != null) {
+            request.header("Authorization", "Bearer " + apiKey);
+        }
+        return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     /** ConnectException and friends often carry no message; fall back to the exception type. */
