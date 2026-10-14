@@ -47,6 +47,11 @@
             <artifactId>jackson-annotations</artifactId>
         </dependency>
         <dependency>
+            <!-- Step outputs holding java.time values are recorded as ISO-8601 strings. -->
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
         </dependency>

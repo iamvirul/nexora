@@ -10,6 +10,7 @@ import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.MissedFirePolicy;
 import com.nexora.persistence.ScheduleRecord;
 import com.nexora.persistence.ScheduleStatus;
+import com.nexora.persistence.StepRecord;
 import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -28,6 +29,7 @@ class SchemaMigrationTest {
     private static final Instant T0 = Instant.parse("2026-10-01T10:00:00Z");
     private static final String BROKEN_LOCATION = "classpath:db/nexora-test/broken";
     private static final String EDITED_LOCATION = "classpath:db/nexora-test/edited";
+    private static final String V1_ONLY_LOCATION = "classpath:db/nexora-test/v1-only";
 
     private JdbcDataSource database;
 
@@ -38,10 +40,10 @@ class SchemaMigrationTest {
     }
 
     @Test
-    void freshDatabaseIsMigratedToV1OnConstruction() throws SQLException {
+    void freshDatabaseIsMigratedToTheLatestVersionOnConstruction() throws SQLException {
         JdbcExecutionStore store = new JdbcExecutionStore(database);
 
-        assertEquals(List.of("1:true"), history());
+        assertEquals(List.of("1:true", "2:true"), history());
         assertTrue(store.isSchemaCurrent());
     }
 
@@ -50,7 +52,7 @@ class SchemaMigrationTest {
         new JdbcExecutionStore(database);
         JdbcExecutionStore second = new JdbcExecutionStore(database);
 
-        assertEquals(List.of("1:true"), history());
+        assertEquals(List.of("1:true", "2:true"), history());
         assertTrue(second.isSchemaCurrent());
     }
 
@@ -100,10 +102,28 @@ class SchemaMigrationTest {
         JdbcExecutionStore store = new JdbcExecutionStore(database);
         store.createSchedule(schedule("nightly"));
 
-        assertEquals(List.of("0:true", "1:true"), history());
+        assertEquals(List.of("0:true", "1:true", "2:true"), history());
         assertEquals(
                 ExecutionState.COMPLETED, store.findById("legacy").orElseThrow().state());
         assertTrue(store.findScheduleById("nightly").isPresent());
+    }
+
+    @Test
+    void v1StoreGainsStepOutputColumnsKeepingItsSteps() throws SQLException {
+        // A store migrated before step outputs existed: V1 applied, steps recorded, no output columns.
+        new JdbcExecutionStore(database, V1_ONLY_LOCATION);
+        execute("INSERT INTO nexora_executions (execution_id, context_json, state, started_at)"
+                + " VALUES ('old', '{}', 'COMPLETED', TIMESTAMP '2026-01-01 00:00:00')");
+        execute("INSERT INTO nexora_steps (execution_id, step_id, capability_id, idempotency_key, state, duration_ms)"
+                + " VALUES ('old', 'charge', 'charge_card', 'key-1', 'COMPLETED', 12)");
+
+        JdbcExecutionStore store = new JdbcExecutionStore(database);
+
+        assertEquals(List.of("1:true", "2:true"), history());
+        StepRecord step = store.findById("old").orElseThrow().steps().get(0);
+        assertEquals("key-1", step.idempotencyKey());
+        assertEquals(Map.of(), step.output());
+        assertFalse(step.outputTruncated());
     }
 
     @Test
@@ -130,8 +150,9 @@ class SchemaMigrationTest {
     void schemaIsNotCurrentWhenTheDatabaseIsOlderThanThisRelease() throws SQLException {
         JdbcExecutionStore store = new JdbcExecutionStore(database);
 
-        // As after restoring a backup taken before V1 was applied.
-        execute("DELETE FROM \"nexora_schema_history\" WHERE \"version\" = '1'");
+        // As after restoring a backup taken before the latest migration was applied.
+        execute("DELETE FROM \"nexora_schema_history\" WHERE \"installed_rank\" ="
+                + " (SELECT MAX(\"installed_rank\") FROM \"nexora_schema_history\")");
 
         assertFalse(store.isSchemaCurrent());
     }
