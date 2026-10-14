@@ -1,0 +1,21 @@
+<configuration>
+  <!-- The auth audit trail is the point of this demo: show who signed in, who changed what. -->
+  <appender name="AUDIT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss} audit  %msg%n</pattern>
+    </encoder>
+  </appender>
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss} %-5level %logger{20} - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <logger name="com.nexora.api.auth" level="INFO" additivity="false">
+    <appender-ref ref="AUDIT"/>
+  </logger>
+
+  <root level="WARN">
+    <appender-ref ref="CONSOLE"/>
+  </root>
+</configuration>

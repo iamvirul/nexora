@@ -46,6 +46,7 @@
         <module>nexora-all</module>
         <module>tests/payment-pipeline</module>
         <module>tests/json-config-demo</module>
+        <module>tests/login-demo</module>
     </modules>
 
     <properties>
