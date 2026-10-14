@@ -43,8 +43,13 @@ public final class ExecutionContext {
         return reused != null ? reused : UUID.randomUUID().toString();
     }
 
+    /** Stores {@code value} under {@code key}; {@code null} removes the key, as ConcurrentHashMap holds no nulls. */
     public void put(String key, Object value) {
-        data.put(key, value);
+        if (value == null) {
+            data.remove(key);
+        } else {
+            data.put(key, value);
+        }
     }
 
     public <T> Optional<T> get(String key, Class<T> type) {
@@ -55,9 +60,16 @@ public final class ExecutionContext {
         return Map.copyOf(data);
     }
 
-    /** Called by the executor after a step completes successfully. */
+    /**
+     * Called by the executor after a step completes successfully. A {@code null} output, from a
+     * capability that succeeds with nothing to return, clears any earlier output of the step.
+     */
     public void recordStepOutput(String stepId, Object output) {
-        stepOutputs.put(stepId, output);
+        if (output == null) {
+            stepOutputs.remove(stepId);
+        } else {
+            stepOutputs.put(stepId, output);
+        }
     }
 
     /**

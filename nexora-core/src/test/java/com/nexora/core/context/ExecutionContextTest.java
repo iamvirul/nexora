@@ -42,4 +42,27 @@ class ExecutionContextTest {
         assertThat(ctx.getInputOverrides("step-1")).containsEntry("flag", true);
         assertThat(ctx.getInputOverrides("step-2")).isEmpty();
     }
+
+    @Test
+    void nullStepOutputIsRecordedAsNoOutput() {
+        ExecutionContext ctx = new ExecutionContext(new Intent("test", Map.of()), TraceContext.root());
+        ctx.recordStepOutput("charge", Map.of("old", true));
+
+        // Capabilities may succeed with no output; this used to throw from ConcurrentHashMap.
+        ctx.recordStepOutput("charge", null);
+
+        assertThat(ctx.getStepOutput("charge", null)).isNull();
+        assertThat(ctx.getStepOutput("charge", "old")).isNull();
+    }
+
+    @Test
+    void puttingNullRemovesTheKey() {
+        ExecutionContext ctx = new ExecutionContext(new Intent("test", Map.of()), TraceContext.root());
+        ctx.put("receipt", "r-1");
+
+        ctx.put("receipt", null);
+
+        assertThat(ctx.get("receipt", String.class)).isEmpty();
+        assertThat(ctx.getAll()).doesNotContainKey("receipt");
+    }
 }
