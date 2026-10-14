@@ -35,6 +35,11 @@ public class LogoutCommand implements Callable<Integer> {
     URI server;
 
     @Option(
+            names = {ObserveServerClient.ALLOW_INSECURE_HTTP},
+            description = "Send the key over plain HTTP to another machine anyway (it can be read on the way).")
+    boolean allowInsecureHttp;
+
+    @Option(
             names = {"--credentials-file"},
             defaultValue = CliCredentials.DEFAULT_FILE,
             description = "Where `nexora login` saved the key. Default: ${DEFAULT-VALUE}")
@@ -59,6 +64,11 @@ public class LogoutCommand implements Callable<Integer> {
         if (key.isEmpty()) {
             out.printf("Not logged in to %s.%n", server);
             return ObserveServerClient.EXIT_OK;
+        }
+        Optional<String> refusal = ObserveServerClient.refuseCleartext(server, "API key", allowInsecureHttp);
+        if (refusal.isPresent()) {
+            err.println(refusal.get());
+            return ObserveServerClient.EXIT_USAGE;
         }
         // Forget the key locally even if the server is down: it expires there on its own.
         boolean revoked = revokeOnServer(key.get());

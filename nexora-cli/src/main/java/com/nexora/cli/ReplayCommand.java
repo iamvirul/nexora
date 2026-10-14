@@ -47,11 +47,16 @@ public class ReplayCommand implements Callable<Integer> {
             description = "Where `nexora login` saved user API keys. Default: ${DEFAULT-VALUE}")
     private Path credentialsFile;
 
+    @Option(
+            names = {ObserveServerClient.ALLOW_INSECURE_HTTP},
+            description = "Send the key over plain HTTP to another machine anyway (it can be read on the way).")
+    private boolean allowInsecureHttp;
+
     @Override
     public Integer call() {
         return ObserveServerClient.call(
                 spec,
-                ObserveServerClient.Server.of(server, apiKey, credentialsFile),
+                ObserveServerClient.Server.of(server, apiKey, credentialsFile, allowInsecureHttp),
                 executionId,
                 "POST",
                 ExecutionEndpoints.REPLAY_SUFFIX,

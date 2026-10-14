@@ -19,6 +19,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Model.CommandSpec;
@@ -59,6 +60,11 @@ public class LoginCommand implements Callable<Integer> {
     boolean passwordStdin;
 
     @Option(
+            names = {ObserveServerClient.ALLOW_INSECURE_HTTP},
+            description = "Send the password over plain HTTP to another machine anyway (it can be read on the way).")
+    boolean allowInsecureHttp;
+
+    @Option(
             names = {"--credentials-file"},
             defaultValue = CliCredentials.DEFAULT_FILE,
             description = "Where the user API key is saved. Default: ${DEFAULT-VALUE}")
@@ -75,15 +81,16 @@ public class LoginCommand implements Callable<Integer> {
             err.printf("Error: --server must be an http(s) URL such as http://localhost:9464, got: %s%n", server);
             return ObserveServerClient.EXIT_USAGE;
         }
+        // Before prompting: never ask for a password that will not be sent.
+        Optional<String> refusal = ObserveServerClient.refuseCleartext(server, "password", allowInsecureHttp);
+        if (refusal.isPresent()) {
+            err.println(refusal.get());
+            return ObserveServerClient.EXIT_USAGE;
+        }
         char[] password = null;
         try {
             String name = username != null ? username : prompt("Username: ");
             password = readPassword();
-            if (ObserveServerClient.sendsKeyInClear(server)) {
-                err.printf(
-                        "Warning: sending the password over plain HTTP to %s; anyone on the path can read it.%n",
-                        server.getHost());
-            }
             HttpResponse<String> response = requestKey(name, password);
             return report(response, out, err);
         } catch (IllegalArgumentException e) {

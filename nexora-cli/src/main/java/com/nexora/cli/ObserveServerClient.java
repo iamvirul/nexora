@@ -47,15 +47,33 @@ final class ObserveServerClient {
      * {@value ApiKeyStore#ENV_VAR}, else the user API key {@code nexora login} saved for this server.
      * Null sends none.
      */
-    record Server(URI url, String apiKey) {
+    record Server(URI url, String apiKey, boolean allowInsecureHttp) {
 
-        static Server of(URI url, String flagKey, Path credentialsFile) {
+        static Server of(URI url, String flagKey, Path credentialsFile, boolean allowInsecureHttp) {
             String key = flagKey != null ? flagKey : System.getenv(ApiKeyStore.ENV_VAR);
             if ((key == null || key.isBlank()) && isHttpUrl(url)) {
                 key = new CliCredentials(credentialsFile).keyFor(url).orElse(null);
             }
-            return new Server(url, key == null || key.isBlank() ? null : key.strip());
+            return new Server(url, key == null || key.isBlank() ? null : key.strip(), allowInsecureHttp);
         }
+    }
+
+    static final String ALLOW_INSECURE_HTTP = "--allow-insecure-http";
+
+    /**
+     * Refuses to send {@code secret} (an API key or a password) over plain HTTP to another machine,
+     * where anyone on the path can read it, unless the caller explicitly opted in. A warning is not
+     * enough: once sent, a password stays exposed until it is changed.
+     *
+     * @return the error to print, or empty when sending is fine
+     */
+    static Optional<String> refuseCleartext(URI server, String secret, boolean allowInsecureHttp) {
+        if (!sendsKeyInClear(server) || allowInsecureHttp) {
+            return Optional.empty();
+        }
+        return Optional.of("Error: refusing to send the " + secret + " over plain HTTP to " + server.getHost()
+                + ", where anyone on the network path can read it. Use an https:// URL (for example behind a"
+                + " TLS proxy), or pass " + ALLOW_INSECURE_HTTP + " to accept the risk.");
     }
 
     static boolean isHttpUrl(URI server) {
@@ -96,10 +114,17 @@ final class ObserveServerClient {
                 + ExecutionEndpoints.PATH_PREFIX
                 + encodePathSegment(executionId)
                 + pathSuffix);
-        if (target.apiKey() != null && sendsKeyInClear(server)) {
-            err.printf(
-                    "Warning: sending the API key over plain HTTP to %s; anyone on the path can read it.%n",
-                    server.getHost());
+        if (target.apiKey() != null) {
+            Optional<String> refusal = refuseCleartext(server, "API key", target.allowInsecureHttp());
+            if (refusal.isPresent()) {
+                err.println(refusal.get());
+                return EXIT_USAGE;
+            }
+            if (sendsKeyInClear(server)) {
+                err.printf(
+                        "Warning: sending the API key over plain HTTP to %s (%s).%n",
+                        server.getHost(), ALLOW_INSECURE_HTTP);
+            }
         }
         HttpResponse<String> response;
         try {

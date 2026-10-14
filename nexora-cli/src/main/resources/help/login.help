@@ -10,6 +10,10 @@ Log in to an observe server with a dashboard username and password.
 
   Five wrong passwords lock the username for 15 minutes.
 
+
+  Over plain http:// to another machine the key or password could be read on
+  the way, so the command refuses unless you pass --allow-insecure-http. Use an
+  https:// URL (for example behind a TLS proxy) instead. Localhost is fine.
   Exit codes
   ──────────
   0  Logged in and the key was saved

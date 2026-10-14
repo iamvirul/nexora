@@ -14,6 +14,10 @@ Replay an unsuccessful execution (FAILED, TIMED_OUT, CANCELLED or COMPENSATED) t
 
   The observe server requires a key: --api-key, else NEXORA_API_KEY, else the
   user API key saved by `nexora login`. A rejected or missing key exits with 1.
+
+  Over plain http:// to another machine the key or password could be read on
+  the way, so the command refuses unless you pass --allow-insecure-http. Use an
+  https:// URL (for example behind a TLS proxy) instead. Localhost is fine.
   Exit codes
   ──────────
   0  Replay started
