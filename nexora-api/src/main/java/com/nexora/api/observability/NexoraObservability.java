@@ -1,6 +1,8 @@
 package com.nexora.api.observability;
 
 import com.nexora.api.NexoraEngine;
+import com.nexora.event.EventHandler;
+import com.nexora.event.ExecutionEvent;
 import com.nexora.event.PlanAmendedEvent;
 import com.nexora.event.PlanCancelledEvent;
 import com.nexora.event.PlanCompletedEvent;
@@ -149,15 +151,28 @@ public final class NexoraObservability implements AutoCloseable {
                         "1 if the engine's dependencies (persistence, migrations, plugins, executor) are all healthy per /health/ready, 0 otherwise.")
                 .register(registry);
 
-        subscriptions.add(engine.subscribe(PlanStartedEvent.class, this::onPlanStarted));
-        subscriptions.add(engine.subscribe(PlanCompletedEvent.class, this::onPlanCompleted));
-        subscriptions.add(engine.subscribe(PlanFailedEvent.class, this::onPlanFailed));
-        subscriptions.add(engine.subscribe(PlanTimedOutEvent.class, this::onPlanTimedOut));
-        subscriptions.add(engine.subscribe(PlanCancelledEvent.class, this::onPlanCancelled));
-        subscriptions.add(engine.subscribe(PlanAmendedEvent.class, this::onPlanAmended));
-        subscriptions.add(engine.subscribe(StepStartedEvent.class, this::onStepStarted));
-        subscriptions.add(engine.subscribe(StepCompletedEvent.class, this::onStepCompleted));
-        subscriptions.add(engine.subscribe(StepFailedEvent.class, this::onStepFailed));
+        track(PlanStartedEvent.class, this::onPlanStarted);
+        track(PlanCompletedEvent.class, this::onPlanCompleted);
+        track(PlanFailedEvent.class, this::onPlanFailed);
+        track(PlanTimedOutEvent.class, this::onPlanTimedOut);
+        track(PlanCancelledEvent.class, this::onPlanCancelled);
+        track(PlanAmendedEvent.class, this::onPlanAmended);
+        track(StepStartedEvent.class, this::onStepStarted);
+        track(StepCompletedEvent.class, this::onStepCompleted);
+        track(StepFailedEvent.class, this::onStepFailed);
+    }
+
+    /**
+     * Applies each event on the publishing thread, in publish order. Async dispatch runs every event
+     * as its own task, so a fast step's events can be handled out of order: a step event seen before
+     * its plan started was dropped, and a start seen after the completion put the step back to RUNNING.
+     * The handlers only update counters and in-memory state; serialising and sending the snapshot
+     * stays off the engine's threads. The sync subscription is added first, so the async broadcast
+     * for an event always sees that event applied.
+     */
+    private <E extends ExecutionEvent> void track(Class<E> eventType, EventHandler<E> handler) {
+        subscriptions.add(engine.subscribeSync(eventType, handler));
+        subscriptions.add(engine.subscribe(eventType, event -> broadcastSnapshot()));
     }
 
     public static NexoraObservability attach(NexoraEngine engine) {
@@ -223,7 +238,6 @@ public final class NexoraObservability implements AutoCloseable {
         planStartedTotal.inc();
         activeExecutionsGauge.set(activeExecutions.incrementAndGet());
         processTracker.onPlanStarted(event);
-        broadcastSnapshot();
     }
 
     private void onPlanCompleted(PlanCompletedEvent event) {
@@ -231,7 +245,6 @@ public final class NexoraObservability implements AutoCloseable {
         planDurationSeconds.labels("completed").observe(seconds(event.elapsed().toNanos()));
         activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
         processTracker.onPlanCompleted(event);
-        broadcastSnapshot();
     }
 
     private void onPlanFailed(PlanFailedEvent event) {
@@ -239,7 +252,6 @@ public final class NexoraObservability implements AutoCloseable {
         planDurationSeconds.labels("failed").observe(seconds(event.elapsed().toNanos()));
         activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
         processTracker.onPlanFailed(event);
-        broadcastSnapshot();
     }
 
     private void onPlanTimedOut(PlanTimedOutEvent event) {
@@ -247,7 +259,6 @@ public final class NexoraObservability implements AutoCloseable {
         planDurationSeconds.labels("timed_out").observe(seconds(event.elapsed().toNanos()));
         activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
         processTracker.onPlanTimedOut(event);
-        broadcastSnapshot();
     }
 
     private void onPlanCancelled(PlanCancelledEvent event) {
@@ -255,19 +266,16 @@ public final class NexoraObservability implements AutoCloseable {
         planDurationSeconds.labels("cancelled").observe(seconds(event.elapsed().toNanos()));
         activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
         processTracker.onPlanCancelled(event);
-        broadcastSnapshot();
     }
 
     private void onPlanAmended(PlanAmendedEvent event) {
         planAmendmentsTotal.labels(safeLabel(event.amendmentType())).inc();
         processTracker.onPlanAmended(event);
-        broadcastSnapshot();
     }
 
     private void onStepStarted(StepStartedEvent event) {
         stepStartedTotal.labels(safeLabel(event.capabilityId())).inc();
         processTracker.onStepStarted(event);
-        broadcastSnapshot();
     }
 
     private void onStepCompleted(StepCompletedEvent event) {
@@ -276,7 +284,6 @@ public final class NexoraObservability implements AutoCloseable {
                 .labels(safeLabel(event.capabilityId()), "completed")
                 .observe(seconds(event.elapsed().toNanos()));
         processTracker.onStepCompleted(event, snapshotOutput(event));
-        broadcastSnapshot();
     }
 
     private void onStepFailed(StepFailedEvent event) {
@@ -288,7 +295,6 @@ public final class NexoraObservability implements AutoCloseable {
                 .labels(capabilityId, status)
                 .observe(seconds(event.elapsed().toNanos()));
         processTracker.onStepFailed(event);
-        broadcastSnapshot();
     }
 
     private StepOutput snapshotOutput(StepCompletedEvent event) {
