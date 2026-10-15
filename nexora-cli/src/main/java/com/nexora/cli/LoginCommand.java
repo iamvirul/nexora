@@ -10,7 +10,6 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -22,6 +21,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
+import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Spec;
@@ -70,6 +70,9 @@ public class LoginCommand implements Callable<Integer> {
             description = "Where the user API key is saved. Default: ${DEFAULT-VALUE}")
     Path credentialsFile;
 
+    @Mixin
+    CaCertOption caCert;
+
     /** Where --password-stdin reads from; tests replace it. */
     InputStream in = System.in;
 
@@ -97,8 +100,7 @@ public class LoginCommand implements Callable<Integer> {
             err.println("Error: " + e.getMessage());
             return ObserveServerClient.EXIT_USAGE;
         } catch (IOException e) {
-            err.printf(
-                    "Error: could not reach the observe server at %s (%s). Is `nexora observe` running?%n", server, e);
+            err.println(ObserveServerClient.unreachable(server, e));
             return ObserveServerClient.EXIT_FAILED;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -145,10 +147,7 @@ public class LoginCommand implements Callable<Integer> {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(credentials)))
                 .build();
-        return HttpClient.newBuilder()
-                .connectTimeout(TIMEOUT)
-                .build()
-                .send(request, HttpResponse.BodyHandlers.ofString());
+        return caCert.client(TIMEOUT).send(request, HttpResponse.BodyHandlers.ofString());
     }
 
     private String prompt(String label) throws IOException {

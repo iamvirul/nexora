@@ -7,6 +7,7 @@ import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
+import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
@@ -54,11 +55,14 @@ public class CancelCommand implements Callable<Integer> {
             description = "Send the key over plain HTTP to another machine anyway (it can be read on the way).")
     private boolean allowInsecureHttp;
 
+    @Mixin
+    private CaCertOption caCert;
+
     @Override
     public Integer call() {
         return ObserveServerClient.call(
                 spec,
-                ObserveServerClient.Server.of(server, apiKey, credentialsFile, allowInsecureHttp),
+                ObserveServerClient.Server.of(server, apiKey, credentialsFile, allowInsecureHttp, caCert),
                 executionId,
                 "DELETE",
                 "",

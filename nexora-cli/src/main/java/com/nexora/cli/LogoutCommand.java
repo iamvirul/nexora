@@ -4,7 +4,6 @@ import com.nexora.api.auth.SessionEndpoints;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
@@ -12,6 +11,7 @@ import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
+import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Spec;
@@ -44,6 +44,9 @@ public class LogoutCommand implements Callable<Integer> {
             defaultValue = CliCredentials.DEFAULT_FILE,
             description = "Where `nexora login` saved the key. Default: ${DEFAULT-VALUE}")
     Path credentialsFile;
+
+    @Mixin
+    CaCertOption caCert;
 
     @Override
     public Integer call() {
@@ -94,10 +97,7 @@ public class LogoutCommand implements Callable<Integer> {
                 .DELETE()
                 .build();
         try {
-            HttpResponse<Void> response = HttpClient.newBuilder()
-                    .connectTimeout(TIMEOUT)
-                    .build()
-                    .send(request, HttpResponse.BodyHandlers.discarding());
+            HttpResponse<Void> response = caCert.client(TIMEOUT).send(request, HttpResponse.BodyHandlers.discarding());
             // 401 means the key had already expired or been revoked: nothing left to revoke.
             return response.statusCode() == 200 || response.statusCode() == 401;
         } catch (IOException e) {
