@@ -92,7 +92,7 @@
 
         <spotless.version>3.10.4</spotless.version>
         <palantir-java-format.version>2.100.0</palantir-java-format.version>
-        <swagger-ui.version>5.32.15</swagger-ui.version>
+        <swagger-ui.version>5.33.1</swagger-ui.version>
     </properties>
 
     <distributionManagement>
