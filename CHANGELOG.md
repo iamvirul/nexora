@@ -33,6 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - **A step that succeeds with no output no longer fails** - `CapabilityResult.success(null)` threw a `NullPointerException` inside `ExecutionContext`, which failed the step and dead-lettered the execution. A `null` output now means no output, and `ExecutionContext.put(key, null)` removes the key ([#32](https://github.com/iamvirul/nexora/issues/32))
+- **The dashboard no longer loses or rewinds fast steps** - `NexoraObservability` handled each engine event on its own async task, so a step that finished in under a millisecond could have its events applied out of order. A step event that ran before its plan's start event was dropped, and a start that ran after the completion put a finished step back to `RUNNING`, in `/api/process`, the WebSocket stream and the dashboards. Events are now applied on the publishing thread in the order they happened, and the snapshot is still serialised and sent off the engine's threads. New `NexoraEngine.subscribeSync` gives embedders the same ordering
 
 ---
 
