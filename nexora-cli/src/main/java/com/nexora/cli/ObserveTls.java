@@ -41,6 +41,8 @@ public final class ObserveTls {
 
     private static final String KEY_ALIAS = "observe";
     private static final String PKCS12 = "PKCS12";
+    // One shared, self-seeding generator; SecureRandom is thread-safe.
+    private static final SecureRandom RANDOM = new SecureRandom();
     private static final byte[] PROBE = "nexora key pair check".getBytes(StandardCharsets.US_ASCII);
 
     private final SSLContext context;
@@ -169,7 +171,7 @@ public final class ObserveTls {
             TrustManagerFactory trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
             trust.init(store);
             SSLContext context = SSLContext.getInstance("TLS");
-            context.init(null, trust.getTrustManagers(), new SecureRandom());
+            context.init(null, trust.getTrustManagers(), RANDOM);
             return context;
         } catch (GeneralSecurityException | IOException e) {
             throw new IllegalArgumentException(
@@ -181,7 +183,7 @@ public final class ObserveTls {
         KeyManagerFactory keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
         keys.init(store, password);
         SSLContext context = SSLContext.getInstance("TLS");
-        context.init(keys.getKeyManagers(), null, new SecureRandom());
+        context.init(keys.getKeyManagers(), null, RANDOM);
         return context;
     }
 
@@ -223,7 +225,7 @@ public final class ObserveTls {
     /** The in-memory keystore needs a password; it never leaves this process. */
     private static char[] randomPassword() {
         byte[] bytes = new byte[24];
-        new SecureRandom().nextBytes(bytes);
+        RANDOM.nextBytes(bytes);
         return HexFormat.of().formatHex(bytes).toCharArray();
     }
 }
