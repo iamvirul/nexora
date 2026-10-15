@@ -39,6 +39,7 @@ import org.slf4j.LoggerFactory;
 public final class ApiAuth {
 
     public static final String SESSION_COOKIE = "nexora_session";
+    private static final String COOKIE_ATTRIBUTES = "; Path=/; HttpOnly; SameSite=Strict";
     public static final Duration SESSION_TTL = Duration.ofHours(12);
     public static final int MAX_SESSIONS = 1_000;
 
@@ -312,12 +313,18 @@ public final class ApiAuth {
                 .map(entry -> new SessionInfo(entry.user(), entry.expiresAt()));
     }
 
-    public static String sessionCookie(String token) {
-        return SESSION_COOKIE + "=" + token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" + SESSION_TTL.toSeconds();
+    /** @param secure adds {@code Secure}, so the browser never sends the cookie over plain HTTP */
+    public static String sessionCookie(String token, boolean secure) {
+        return SESSION_COOKIE + "=" + token + COOKIE_ATTRIBUTES + secureAttribute(secure) + "; Max-Age="
+                + SESSION_TTL.toSeconds();
     }
 
-    public static String clearedSessionCookie() {
-        return SESSION_COOKIE + "=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0";
+    public static String clearedSessionCookie(boolean secure) {
+        return SESSION_COOKIE + "=" + COOKIE_ATTRIBUTES + secureAttribute(secure) + "; Max-Age=0";
+    }
+
+    private static String secureAttribute(boolean secure) {
+        return secure ? "; Secure" : "";
     }
 
     public static void rejectUnauthorized(HttpExchange exchange) throws IOException {
