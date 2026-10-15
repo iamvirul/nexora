@@ -1,6 +1,8 @@
 package com.nexora.api.observability;
 
 import com.nexora.api.NexoraEngine;
+import com.nexora.event.EventHandler;
+import com.nexora.event.ExecutionEvent;
 import com.nexora.event.PlanAmendedEvent;
 import com.nexora.event.PlanCancelledEvent;
 import com.nexora.event.PlanCompletedEvent;
@@ -29,7 +31,9 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,6 +64,9 @@ public final class NexoraObservability implements AutoCloseable {
     private final ProcessTracker processTracker;
     private final List<Subscription> subscriptions;
     private final List<SnapshotListener> snapshotListeners = new CopyOnWriteArrayList<>();
+    // Not synchronized: a listener may block on I/O, which would pin the virtual thread.
+    private final ReentrantLock broadcastLock = new ReentrantLock();
+    private final AtomicBoolean broadcastRequested = new AtomicBoolean();
 
     private final Counter planStartedTotal;
     private final Counter planCompletedTotal;
@@ -149,15 +156,40 @@ public final class NexoraObservability implements AutoCloseable {
                         "1 if the engine's dependencies (persistence, migrations, plugins, executor) are all healthy per /health/ready, 0 otherwise.")
                 .register(registry);
 
-        subscriptions.add(engine.subscribe(PlanStartedEvent.class, this::onPlanStarted));
-        subscriptions.add(engine.subscribe(PlanCompletedEvent.class, this::onPlanCompleted));
-        subscriptions.add(engine.subscribe(PlanFailedEvent.class, this::onPlanFailed));
-        subscriptions.add(engine.subscribe(PlanTimedOutEvent.class, this::onPlanTimedOut));
-        subscriptions.add(engine.subscribe(PlanCancelledEvent.class, this::onPlanCancelled));
-        subscriptions.add(engine.subscribe(PlanAmendedEvent.class, this::onPlanAmended));
-        subscriptions.add(engine.subscribe(StepStartedEvent.class, this::onStepStarted));
-        subscriptions.add(engine.subscribe(StepCompletedEvent.class, this::onStepCompleted));
-        subscriptions.add(engine.subscribe(StepFailedEvent.class, this::onStepFailed));
+        track(PlanStartedEvent.class, this::onPlanStarted);
+        track(PlanCompletedEvent.class, this::onPlanCompleted);
+        track(PlanFailedEvent.class, this::onPlanFailed);
+        track(PlanTimedOutEvent.class, this::onPlanTimedOut);
+        track(PlanCancelledEvent.class, this::onPlanCancelled);
+        track(PlanAmendedEvent.class, this::onPlanAmended);
+        track(StepStartedEvent.class, this::onStepStarted);
+        track(StepCompletedEvent.class, this::onStepCompleted, this::recordStepOutput);
+        track(StepFailedEvent.class, this::onStepFailed);
+    }
+
+    /**
+     * Applies each event on the publishing thread, in publish order. Async dispatch runs every event
+     * as its own task, so a fast step's events can be handled out of order: a step event seen before
+     * its plan started was dropped, and a start seen after the completion put the step back to RUNNING.
+     * The handlers only update counters and in-memory state; serialising and sending the snapshot
+     * stays off the engine's threads.
+     */
+    private <E extends ExecutionEvent> void track(Class<E> eventType, EventHandler<E> apply) {
+        track(eventType, apply, event -> {});
+    }
+
+    /**
+     * As {@link #track(Class, EventHandler)}, with {@code offThread} run on the async task before the
+     * broadcast, for work too slow for the engine's thread. The sync subscription is added first, so
+     * that task always sees the event applied.
+     */
+    private <E extends ExecutionEvent> void track(
+            Class<E> eventType, EventHandler<E> apply, EventHandler<E> offThread) {
+        subscriptions.add(engine.subscribeSync(eventType, apply));
+        subscriptions.add(engine.subscribe(eventType, event -> {
+            offThread.onEvent(event);
+            broadcastSnapshot();
+        }));
     }
 
     public static NexoraObservability attach(NexoraEngine engine) {
@@ -196,9 +228,29 @@ public final class NexoraObservability implements AutoCloseable {
         snapshotListeners.add(Objects.requireNonNull(listener));
     }
 
+    /**
+     * Broadcasts run on concurrent tasks, so one taking its snapshot earlier could deliver after one
+     * taking it later and leave listeners on an older state. One delivery runs at a time, each with a
+     * snapshot taken after the previous one was sent, so listeners only see the state move forward. A
+     * broadcast that finds another in progress leaves a request for it and returns: the running one
+     * sends again with a fresh snapshot, so a burst of events becomes one or two sends, not one each.
+     */
     private void broadcastSnapshot() {
         if (snapshotListeners.isEmpty()) return;
-        ProcessSnapshot snap = processSnapshot();
+        broadcastRequested.set(true);
+        // Re-checked after unlocking: a request left while the lock was held is never lost.
+        while (broadcastRequested.get() && broadcastLock.tryLock()) {
+            try {
+                if (broadcastRequested.getAndSet(false)) {
+                    deliver(processSnapshot());
+                }
+            } finally {
+                broadcastLock.unlock();
+            }
+        }
+    }
+
+    private void deliver(ProcessSnapshot snap) {
         for (SnapshotListener listener : snapshotListeners) {
             try {
                 listener.onSnapshot(snap);
@@ -223,7 +275,6 @@ public final class NexoraObservability implements AutoCloseable {
         planStartedTotal.inc();
         activeExecutionsGauge.set(activeExecutions.incrementAndGet());
         processTracker.onPlanStarted(event);
-        broadcastSnapshot();
     }
 
     private void onPlanCompleted(PlanCompletedEvent event) {
@@ -231,7 +282,6 @@ public final class NexoraObservability implements AutoCloseable {
         planDurationSeconds.labels("completed").observe(seconds(event.elapsed().toNanos()));
         activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
         processTracker.onPlanCompleted(event);
-        broadcastSnapshot();
     }
 
     private void onPlanFailed(PlanFailedEvent event) {
@@ -239,7 +289,6 @@ public final class NexoraObservability implements AutoCloseable {
         planDurationSeconds.labels("failed").observe(seconds(event.elapsed().toNanos()));
         activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
         processTracker.onPlanFailed(event);
-        broadcastSnapshot();
     }
 
     private void onPlanTimedOut(PlanTimedOutEvent event) {
@@ -247,7 +296,6 @@ public final class NexoraObservability implements AutoCloseable {
         planDurationSeconds.labels("timed_out").observe(seconds(event.elapsed().toNanos()));
         activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
         processTracker.onPlanTimedOut(event);
-        broadcastSnapshot();
     }
 
     private void onPlanCancelled(PlanCancelledEvent event) {
@@ -255,19 +303,16 @@ public final class NexoraObservability implements AutoCloseable {
         planDurationSeconds.labels("cancelled").observe(seconds(event.elapsed().toNanos()));
         activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
         processTracker.onPlanCancelled(event);
-        broadcastSnapshot();
     }
 
     private void onPlanAmended(PlanAmendedEvent event) {
         planAmendmentsTotal.labels(safeLabel(event.amendmentType())).inc();
         processTracker.onPlanAmended(event);
-        broadcastSnapshot();
     }
 
     private void onStepStarted(StepStartedEvent event) {
         stepStartedTotal.labels(safeLabel(event.capabilityId())).inc();
         processTracker.onStepStarted(event);
-        broadcastSnapshot();
     }
 
     private void onStepCompleted(StepCompletedEvent event) {
@@ -275,8 +320,12 @@ public final class NexoraObservability implements AutoCloseable {
         stepDurationSeconds
                 .labels(safeLabel(event.capabilityId()), "completed")
                 .observe(seconds(event.elapsed().toNanos()));
-        processTracker.onStepCompleted(event, snapshotOutput(event));
-        broadcastSnapshot();
+        processTracker.onStepCompleted(event);
+    }
+
+    /** Off the engine's thread: capping still writes the whole output as JSON first. */
+    private void recordStepOutput(StepCompletedEvent event) {
+        processTracker.onStepOutput(event, snapshotOutput(event));
     }
 
     private void onStepFailed(StepFailedEvent event) {
@@ -288,7 +337,6 @@ public final class NexoraObservability implements AutoCloseable {
                 .labels(capabilityId, status)
                 .observe(seconds(event.elapsed().toNanos()));
         processTracker.onStepFailed(event);
-        broadcastSnapshot();
     }
 
     private StepOutput snapshotOutput(StepCompletedEvent event) {
@@ -439,15 +487,20 @@ public final class NexoraObservability implements AutoCloseable {
                     event.stepId(), event.capabilityId(), event.occurredAt().toEpochMilli());
         }
 
-        void onStepCompleted(StepCompletedEvent event, StepOutput output) {
+        void onStepCompleted(StepCompletedEvent event) {
             MutableExecution execution = executions.get(event.executionId());
             if (execution == null) return;
             execution.markStepCompleted(
                     event.stepId(),
                     event.capabilityId(),
                     event.occurredAt().toEpochMilli(),
-                    event.elapsed().toMillis(),
-                    output);
+                    event.elapsed().toMillis());
+        }
+
+        void onStepOutput(StepCompletedEvent event, StepOutput output) {
+            MutableExecution execution = executions.get(event.executionId());
+            if (execution == null) return;
+            execution.recordStepOutput(event.stepId(), output);
         }
 
         void onStepFailed(StepFailedEvent event) {
@@ -513,10 +566,17 @@ public final class NexoraObservability implements AutoCloseable {
         }
 
         private synchronized void markStepCompleted(
-                String stepId, String capabilityId, long occurredAtMs, long elapsedMs, StepOutput output) {
+                String stepId, String capabilityId, long occurredAtMs, long elapsedMs) {
             MutableStep step = steps.computeIfAbsent(stepId, id -> new MutableStep(stepId));
-            step.markCompleted(capabilityId, occurredAtMs, elapsedMs, output);
+            step.markCompleted(capabilityId, occurredAtMs, elapsedMs);
             appendTimeline(occurredAtMs, "step_completed", stepId + " (" + elapsedMs + "ms)");
+        }
+
+        private void recordStepOutput(String stepId, StepOutput output) {
+            MutableStep step = steps.get(stepId);
+            if (step != null) {
+                step.recordOutput(output);
+            }
         }
 
         private synchronized void markStepFailed(
@@ -642,8 +702,7 @@ public final class NexoraObservability implements AutoCloseable {
             this.output = StepOutput.NONE;
         }
 
-        private synchronized void markCompleted(
-                String capabilityId, long finishedAtMs, long elapsedMs, StepOutput output) {
+        private synchronized void markCompleted(String capabilityId, long finishedAtMs, long elapsedMs) {
             this.capabilityId = capabilityId == null ? this.capabilityId : capabilityId;
             this.status = STATUS_COMPLETED;
             if (startedAtMs == 0) {
@@ -653,7 +712,13 @@ public final class NexoraObservability implements AutoCloseable {
             this.elapsedMs = elapsedMs;
             this.failureCode = null;
             this.failureMessage = null;
-            this.output = output;
+        }
+
+        /** Applied after {@link #markCompleted}, which ran on the publishing thread before this was queued. */
+        private synchronized void recordOutput(StepOutput output) {
+            if (STATUS_COMPLETED.equals(status)) {
+                this.output = output;
+            }
         }
 
         private synchronized void markFailed(
