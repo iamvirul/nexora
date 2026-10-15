@@ -276,6 +276,16 @@ public final class NexoraEngine implements AutoCloseable {
         return eventBus.subscribe(eventType, handler);
     }
 
+    /**
+     * Like {@link #subscribe}, but the handler runs on the thread that publishes the event, before
+     * {@code publish} returns. Events of one execution then reach it in the order they happened,
+     * which {@link #subscribe} does not promise. The handler holds up the execution while it runs,
+     * so it must be quick and must not block.
+     */
+    public <E extends ExecutionEvent> Subscription subscribeSync(Class<E> eventType, EventHandler<E> handler) {
+        return eventBus.subscribeSync(eventType, handler);
+    }
+
     public void loadPlugin(Path pluginJar, String pluginId) {
         pluginManager.loadPlugin(pluginJar);
         pluginManager.activatePlugin(pluginId);
