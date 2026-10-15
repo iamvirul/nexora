@@ -91,7 +91,8 @@ class ObserveTlsTest {
         ObserveTls tls = ObserveTls.fromPem(write("server.pem", issued), writeKey("key.pem", issued));
 
         assertEquals(Optional.empty(), tls.validityWarning(issuedAt.plus(Duration.ofDays(1))));
-        assertTrue(tls.validityWarning(issuedAt.plus(Duration.ofDays(20)))
+        Instant expiry = tls.certificate().getNotAfter().toInstant();
+        assertTrue(tls.validityWarning(expiry.minus(Duration.ofDays(10)))
                 .orElseThrow()
                 .contains("expires in 10 day(s)"));
         assertTrue(tls.validityWarning(issuedAt.plus(Duration.ofDays(31)))

@@ -91,7 +91,23 @@ class DevCertificatesTest {
                 DevCertificates.issue(DevCertificates.DEFAULT_HOSTS, 30, NOW).serverCertificate();
 
         assertEquals(NOW.minus(Duration.ofHours(1)), server.getNotBefore().toInstant());
-        assertEquals(NOW.plus(Duration.ofDays(30)), server.getNotAfter().toInstant());
+        assertEquals(
+                NOW.minus(Duration.ofHours(1)).plus(Duration.ofDays(30)),
+                server.getNotAfter().toInstant());
+    }
+
+    @Test
+    void maximumValidityStaysWithinApplesLimitIncludingTheBackdating() {
+        DevCertificates.Issued issued =
+                DevCertificates.issue(DevCertificates.DEFAULT_HOSTS, DevCertificates.MAX_VALID_DAYS, NOW);
+
+        // Apple measures notBefore to notAfter, so the clock-skew hour must come out of the days, not on top.
+        for (X509Certificate certificate : List.of(issued.serverCertificate(), issued.caCertificate())) {
+            Duration validity = Duration.between(
+                    certificate.getNotBefore().toInstant(),
+                    certificate.getNotAfter().toInstant());
+            assertEquals(Duration.ofDays(DevCertificates.MAX_VALID_DAYS), validity);
+        }
     }
 
     @Test

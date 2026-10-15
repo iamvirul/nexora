@@ -41,7 +41,7 @@ import java.util.regex.Pattern;
 final class DevCertificates {
 
     static final int DEFAULT_VALID_DAYS = 365;
-    /** Apple platforms refuse TLS server certificates valid for longer than this. */
+    /** Apple platforms refuse TLS server certificates whose notBefore to notAfter span is longer than this. */
     static final int MAX_VALID_DAYS = 825;
 
     static final List<String> DEFAULT_HOSTS = List.of("localhost", "127.0.0.1", "::1");
@@ -104,7 +104,8 @@ final class DevCertificates {
         }
         List<SubjectName> names = parseHosts(hosts);
         Instant notBefore = now.minus(CLOCK_SKEW);
-        Instant notAfter = now.plus(Duration.ofDays(validDays));
+        // From notBefore, not now: Apple's limit covers the whole span, backdated hour included.
+        Instant notAfter = notBefore.plus(Duration.ofDays(validDays));
         try {
             KeyPair ca = newKeyPair();
             KeyPair server = newKeyPair();

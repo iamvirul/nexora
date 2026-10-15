@@ -41,7 +41,8 @@ class TlsGenCommandTest {
         tls.certificate().verify(ca.getPublicKey());
         assertTrue(tls.certificate().getSubjectAlternativeNames().contains(List.of(2, "nexora.test")));
         assertEquals(
-                NOW.plus(Duration.ofDays(365)), tls.certificate().getNotAfter().toInstant());
+                NOW.minus(Duration.ofHours(1)).plus(Duration.ofDays(365)),
+                tls.certificate().getNotAfter().toInstant());
         assertTrue(result.out().contains("--tls-cert"), result.out());
         assertTrue(result.out().contains("curl --cacert"), result.out());
     }
