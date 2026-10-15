@@ -67,7 +67,7 @@
         <logback.version>1.6.5</logback.version>
         <prometheus.version>0.16.0</prometheus.version>
         <h2.version>2.5.252</h2.version>
-        <hikaricp.version>7.0.2</hikaricp.version>
+        <hikaricp.version>7.1.0</hikaricp.version>
         <flyway.version>13.10.0</flyway.version>
         
         <!-- Internal Module Versions -->
