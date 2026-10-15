@@ -190,6 +190,6 @@ Responses never say whether a username exists: an unknown name is rejected, time
 
 ## Limits to know
 
-- **Plain HTTP.** Until TLS lands ([#40](https://github.com/iamvirul/nexora/issues/40)), keys and passwords cross the network unencrypted. Keep the server on localhost or a trusted network, or put a TLS proxy in front of it and use an `https://` URL. The CLI (`login`, `logout`, `cancel`, `replay`) **refuses** to send a password or key over plain HTTP to another machine unless you pass `--allow-insecure-http`; localhost is always allowed.
+- **Plain HTTP.** Without TLS, keys and passwords cross the network unencrypted, and the server logs a `WARN` on every start. Serve HTTPS with `--tls-cert` and `--tls-key` (see [HTTPS (TLS)](tls.md)), or put a TLS proxy in front of it and use an `https://` URL. Over HTTPS the session cookie is also marked `Secure`. The CLI (`login`, `logout`, `cancel`, `replay`) **refuses** to send a password or key over plain HTTP to another machine unless you pass `--allow-insecure-http`; localhost is always allowed.
 - **Restarts.** User keys live in the server's memory, so a restart signs everyone out. The server key and user accounts are on disk and survive.
 - **Reverse proxies.** Dashboard requests that change something must carry an `Origin` matching the address they were sent to. A proxy that rewrites the `Host` header breaks this; Bearer keys are unaffected.

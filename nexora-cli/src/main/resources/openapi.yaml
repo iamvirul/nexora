@@ -761,7 +761,7 @@ paths:
           description: Signed in. The key is in `Set-Cookie`, not the body.
           headers:
             Set-Cookie:
-              description: '`nexora_session=nxu_...; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200`'
+              description: '`nexora_session=nxu_...; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200`, plus `Secure` when the server runs with TLS'
               schema:
                 type: string
           content:

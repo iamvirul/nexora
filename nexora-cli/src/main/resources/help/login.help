@@ -13,7 +13,9 @@ Log in to an observe server with a dashboard username and password.
 
   Over plain http:// to another machine the key or password could be read on
   the way, so the command refuses unless you pass --allow-insecure-http. Use an
-  https:// URL (for example behind a TLS proxy) instead. Localhost is fine.
+  https:// URL instead (`nexora observe --tls-cert`, or a TLS proxy). Localhost
+  is fine. For a server whose certificate comes from a private CA, such as
+  `nexora tls-gen`, pass --cacert with that CA's ca.pem.
   Exit codes
   ──────────
   0  Logged in and the key was saved

@@ -25,6 +25,18 @@ Start a local observability server for Nexora.
   HttpOnly cookie; `nexora login` saves it for the CLI. Accounts live in
   ~/.nexora/observe-users (see --users-file) and changes apply without a restart.
 
+  HTTPS
+  ─────
+  --tls-cert and --tls-key serve HTTPS, and WSS for the live stream on the next
+  port, from a PEM certificate (with its chain, such as certbot's fullchain.pem)
+  and an unencrypted private key. --keystore takes a PKCS12 file instead, with
+  its password in NEXORA_KEYSTORE_PASSWORD. Only TLS 1.2 and 1.3 are accepted,
+  and the session cookie is marked Secure. The certificate is read at start:
+  restart after a renewal. Without TLS the server logs a WARN, since keys,
+  passwords and cookies then cross the network unencrypted.
+
+  For local use, `nexora tls-gen` writes a development CA and certificate.
+
   Key rotation
   ────────────
   Restart with --rotate-api-key: a new key is printed, the stored digest is
@@ -41,6 +53,17 @@ Start a local observability server for Nexora.
 
   Retain more history for UI:
     nexora observe --max-executions 300 --max-events 500
+
+  Serve HTTPS with a development certificate:
+    nexora tls-gen --out ./certs
+    nexora observe --tls-cert ./certs/server.pem --tls-key ./certs/server-key.pem
+
+  Serve HTTPS with a Let's Encrypt certificate:
+    nexora observe --tls-cert /etc/letsencrypt/live/<host>/fullchain.pem \
+      --tls-key /etc/letsencrypt/live/<host>/privkey.pem
+
+  Serve HTTPS from a PKCS12 keystore:
+    NEXORA_KEYSTORE_PASSWORD=... nexora observe --keystore server.p12
 
   Run headless with a key from the environment:
     NEXORA_API_KEY=... nexora observe

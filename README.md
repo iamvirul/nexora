@@ -131,6 +131,7 @@ nexora [--config <file>] <command>
 | `nexora user add <username>` | Create a dashboard user (also `passwd`, `remove`, `list`) |
 | `nexora login` | Sign in with a username and password; saves a user API key for `cancel` / `replay` |
 | `nexora logout` | Revoke and delete the saved user API key |
+| `nexora tls-gen` | Write a development CA and server certificate for HTTPS on localhost |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
 
@@ -599,6 +600,27 @@ curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/proces
 The payment pipeline demo prints a fresh server key in its console on every start and has no user accounts, so paste that key into its sign-in card. To try username and password sign-in, run the login demo: `java -jar tests/login-demo/target/login-demo.jar` (users `alice` / `bob`, guided tour on its console).
 
 See the [Authentication guide](website/docs/concepts/authentication.md) for how each sign-in flow works, user management, the demo, and what `401` and `429` mean.
+
+### HTTPS
+
+Without TLS the server logs a `WARN` on start, since keys, passwords and the session cookie cross the network in cleartext. To serve HTTPS (and WSS for the live stream) on your machine:
+
+```bash
+nexora tls-gen --out ./certs        # a dev CA plus a localhost certificate
+nexora observe --tls-cert ./certs/server.pem --tls-key ./certs/server-key.pem
+curl --cacert ./certs/ca.pem https://localhost:9464/health/live
+nexora login --server https://localhost:9464 --cacert ./certs/ca.pem
+```
+
+Import `certs/ca.pem` as a trusted authority in your browser or OS to open the dashboard without warnings. In production, use a certificate from your CA or Let's Encrypt:
+
+```bash
+nexora observe \
+  --tls-cert /etc/letsencrypt/live/nexora.example.com/fullchain.pem \
+  --tls-key  /etc/letsencrypt/live/nexora.example.com/privkey.pem
+```
+
+A PKCS12 keystore works too: `--keystore server.p12` with its password in `NEXORA_KEYSTORE_PASSWORD`. Only TLS 1.2 and 1.3 are accepted. The certificate is read at start, so restart after a renewal. See the [HTTPS guide](website/docs/concepts/tls.md) for trusting the CA per browser and OS, key formats, and troubleshooting.
 
 Example execute request:
 
