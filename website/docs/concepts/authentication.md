@@ -137,7 +137,7 @@ java -jar tests/login-demo/target/login-demo.jar
 # or run com.nexora.samples.login.LoginDemoApp from your IDE
 ```
 
-It listens on `http://localhost:9470` (localhost only) and prints the users, a server key for the run, and a guided tour:
+It listens on `http://localhost:9470` (localhost only) and prints the users, a server key for the run, and a guided tour. It runs without TLS, so its console starts with the `Serving plain HTTP` warning every plain-HTTP server logs; that is expected here, since nothing leaves your machine:
 
 | User | Password |
 |---|---|
