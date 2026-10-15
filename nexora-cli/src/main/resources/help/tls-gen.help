@@ -1,0 +1,35 @@
+Write a development certificate authority and server certificate, so
+`nexora observe` can serve HTTPS on this machine.
+
+  Files written to --out
+  ──────────────────────
+    ca.pem          The certificate authority to trust: give it to curl
+                    (--cacert), the Nexora CLI (--cacert) and your browser.
+    server.pem      The server certificate, for --tls-cert.
+    server-key.pem  Its private key, for --tls-key. Readable only by you.
+
+  The server certificate is valid for localhost, 127.0.0.1 and ::1, plus every
+  --host, for --days days (default 365, at most 825). The CA's own key is not
+  kept, so nothing else can ever be signed with a CA you have trusted. Run the
+  command again for a new set; existing files are kept unless --force is given.
+
+  These certificates are for development. In production use one from your CA
+  or Let's Encrypt.
+
+  Exit codes
+  ──────────
+  0  Certificates written
+  1  The files could not be written
+  2  Invalid arguments, or the files already exist without --force
+
+  Examples
+  ────────
+  Certificates for localhost:
+    nexora tls-gen
+
+  Also valid for a LAN name and address:
+    nexora tls-gen --out ./certs --host nexora.local --host 192.168.1.20
+
+  Serve and call it:
+    nexora observe --tls-cert ./certs/server.pem --tls-key ./certs/server-key.pem
+    curl --cacert ./certs/ca.pem https://localhost:9464/health/live
