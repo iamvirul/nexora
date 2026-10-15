@@ -10,6 +10,7 @@ import com.nexora.api.observability.NexoraObservability.StepSnapshot;
 import com.nexora.core.capability.CapabilityResult;
 import com.nexora.core.execution.ExecutionResult;
 import com.nexora.core.intent.Intent;
+import com.nexora.persistence.StepOutput;
 import com.nexora.planner.model.StepDefinition;
 import com.nexora.spi.Capability;
 import com.nexora.spi.CapabilityDescriptor;
@@ -19,13 +20,16 @@ import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -40,14 +44,11 @@ class NexoraObservabilityEventOrderTest {
 
     /** Runs every task on a virtual thread after a random delay, so tasks finish out of submission order. */
     private static final Executor JITTERED = task -> Thread.ofVirtual().start(() -> {
-        try {
-            TimeUnit.MICROSECONDS.sleep(ThreadLocalRandom.current().nextInt(MAX_JITTER_MICROS));
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return;
-        }
+        jitter();
         task.run();
     });
+
+    private final AtomicReference<Object> chargeOutput = new AtomicReference<>(Map.of("paymentId", "p-1"));
 
     @Test
     void snapshotReflectsEveryFinishedExecutionWhenEventsAreDispatchedOutOfOrder() throws Exception {
@@ -61,13 +62,17 @@ class NexoraObservabilityEventOrderTest {
             for (CompletableFuture<ExecutionResult> run : runs) {
                 String executionId = run.get(WAIT_SECONDS, TimeUnit.SECONDS).executionId();
 
-                // No polling: the view is current by the time the result is handed back.
+                // No polling: statuses are current by the time the result is handed back.
                 ExecutionSnapshot execution = find(observability.processSnapshot(), executionId);
                 assertThat(execution.status()).isEqualTo("COMPLETED");
                 assertThat(execution.steps())
                         .extracting(StepSnapshot::stepId, StepSnapshot::status)
                         .containsExactlyInAnyOrder(tuple("charge", "COMPLETED"), tuple("receipt", "COMPLETED"));
-                assertThat(stepOf(execution, "charge").output()).isEqualTo(Map.of("paymentId", "p-1"));
+            }
+            for (CompletableFuture<ExecutionResult> run : runs) {
+                String executionId = run.join().executionId();
+                // Outputs are converted off the engine's threads, so they may land just after.
+                await(() -> hasChargeOutput(observability.processSnapshot(), executionId));
             }
             assertThat(observability.processSnapshot().activeExecutions()).isZero();
             assertThat(observability.scrapePrometheus())
@@ -76,30 +81,101 @@ class NexoraObservabilityEventOrderTest {
     }
 
     @Test
-    void listenersReceiveTheFinalStateOfAnExecution() throws Exception {
-        AtomicReference<ProcessSnapshot> latest = new AtomicReference<>();
+    void stepOutputIsNotSerialisedOnTheEngineThread() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        chargeOutput.set(new BlockingOutput(release));
         try (NexoraEngine engine = engine();
                 NexoraObservability observability = NexoraObservability.attach(engine)) {
-            observability.addSnapshotListener(latest::set);
-
-            String executionId = engine.execute(new Intent("process order", Map.of()))
-                    .get(WAIT_SECONDS, TimeUnit.SECONDS)
-                    .executionId();
-
-            long deadline = System.nanoTime() + Duration.ofSeconds(WAIT_SECONDS).toNanos();
-            while (!isCompleted(latest.get(), executionId) && System.nanoTime() < deadline) {
-                Thread.sleep(10);
+            String executionId;
+            try {
+                // Writing the output as JSON blocks until released; the execution must not wait for it.
+                executionId = engine.execute(new Intent("process order", Map.of()))
+                        .get(WAIT_SECONDS, TimeUnit.SECONDS)
+                        .executionId();
+                assertThat(find(observability.processSnapshot(), executionId).status())
+                        .isEqualTo("COMPLETED");
+            } finally {
+                release.countDown();
             }
-            assertThat(isCompleted(latest.get(), executionId))
-                    .as("a listener saw the execution complete")
-                    .isTrue();
+
+            // Not a map, so it is recorded under "value".
+            Map<String, ?> expected = Map.of(StepOutput.VALUE_KEY, Map.of("paymentId", "p-1"));
+            await(() -> hasChargeOutput(observability.processSnapshot(), executionId, expected));
         }
     }
 
-    private static boolean isCompleted(ProcessSnapshot snapshot, String executionId) {
-        return snapshot != null
-                && snapshot.executions().stream()
-                        .anyMatch(e -> e.executionId().equals(executionId) && "COMPLETED".equals(e.status()));
+    @Test
+    void listenersNeverReceiveAnOlderStateAfterANewerOne() throws Exception {
+        List<ProcessSnapshot> delivered = Collections.synchronizedList(new ArrayList<>());
+        try (NexoraEngine engine = engine();
+                NexoraObservability observability = NexoraObservability.attach(engine, EXECUTIONS, 50)) {
+            // A slow listener widens the window in which two broadcasts overlap.
+            observability.addSnapshotListener(snapshot -> {
+                delivered.add(snapshot);
+                jitter();
+            });
+            List<CompletableFuture<ExecutionResult>> runs = new ArrayList<>();
+            for (int i = 0; i < EXECUTIONS; i++) {
+                runs.add(engine.execute(new Intent("process order", Map.of("n", i))));
+            }
+            List<String> executionIds = new ArrayList<>();
+            for (CompletableFuture<ExecutionResult> run : runs) {
+                executionIds.add(run.get(WAIT_SECONDS, TimeUnit.SECONDS).executionId());
+            }
+
+            await(() -> {
+                ProcessSnapshot last = lastOf(delivered);
+                return last != null && executionIds.stream().allMatch(id -> hasChargeOutput(last, id));
+            });
+
+            List<ProcessSnapshot> sequence;
+            synchronized (delivered) {
+                sequence = List.copyOf(delivered);
+            }
+            for (String executionId : executionIds) {
+                int previousProgress = -1;
+                for (ProcessSnapshot snapshot : sequence) {
+                    int progress = progressOf(snapshot, executionId);
+                    assertThat(progress)
+                            .as("execution %s went backwards between delivered snapshots", executionId)
+                            .isGreaterThanOrEqualTo(previousProgress);
+                    previousProgress = progress;
+                }
+            }
+        }
+    }
+
+    /**
+     * How far an execution has got in one snapshot: finished steps, a step's output, and the
+     * execution's own completion each add one. -1 when the snapshot does not include it yet.
+     */
+    private static int progressOf(ProcessSnapshot snapshot, String executionId) {
+        return snapshot.executions().stream()
+                .filter(e -> e.executionId().equals(executionId))
+                .findFirst()
+                .map(e -> e.completedSteps()
+                        + (int) e.steps().stream()
+                                .filter(s -> !s.output().isEmpty())
+                                .count()
+                        + ("COMPLETED".equals(e.status()) ? 1 : 0))
+                .orElse(-1);
+    }
+
+    private static ProcessSnapshot lastOf(List<ProcessSnapshot> delivered) {
+        synchronized (delivered) {
+            return delivered.isEmpty() ? null : delivered.get(delivered.size() - 1);
+        }
+    }
+
+    private static boolean hasChargeOutput(ProcessSnapshot snapshot, String executionId) {
+        return hasChargeOutput(snapshot, executionId, Map.of("paymentId", "p-1"));
+    }
+
+    private static boolean hasChargeOutput(ProcessSnapshot snapshot, String executionId, Map<String, ?> expected) {
+        return snapshot.executions().stream()
+                .filter(e -> e.executionId().equals(executionId) && "COMPLETED".equals(e.status()))
+                .flatMap(e -> e.steps().stream())
+                .anyMatch(s -> s.stepId().equals("charge") && s.output().equals(expected));
     }
 
     private static ExecutionSnapshot find(ProcessSnapshot snapshot, String executionId) {
@@ -109,14 +185,41 @@ class NexoraObservabilityEventOrderTest {
                 .orElseThrow(() -> new AssertionError("execution " + executionId + " missing from the snapshot"));
     }
 
-    private static StepSnapshot stepOf(ExecutionSnapshot execution, String stepId) {
-        return execution.steps().stream()
-                .filter(s -> s.stepId().equals(stepId))
-                .findFirst()
-                .orElseThrow();
+    private static void await(BooleanSupplier condition) throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(WAIT_SECONDS).toNanos();
+        while (!condition.getAsBoolean()) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("Condition not met within " + WAIT_SECONDS + "s");
+            }
+            Thread.sleep(10);
+        }
     }
 
-    private static NexoraEngine engine() {
+    private static void jitter() {
+        try {
+            TimeUnit.MICROSECONDS.sleep(ThreadLocalRandom.current().nextInt(MAX_JITTER_MICROS));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Serialises to {@code {"paymentId":"p-1"}}, but only once released. */
+    public static final class BlockingOutput {
+        private final CountDownLatch release;
+
+        BlockingOutput(CountDownLatch release) {
+            this.release = release;
+        }
+
+        public String getPaymentId() throws InterruptedException {
+            if (!release.await(WAIT_SECONDS, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("never released");
+            }
+            return "p-1";
+        }
+    }
+
+    private NexoraEngine engine() {
         return NexoraEngine.builder()
                 .withExecutor(JITTERED)
                 .withPlugin(plugin())
@@ -130,7 +233,7 @@ class NexoraObservabilityEventOrderTest {
                 .build();
     }
 
-    private static NexoraPlugin plugin() {
+    private NexoraPlugin plugin() {
         return new NexoraPlugin() {
             @Override
             public PluginDescriptor descriptor() {
@@ -143,7 +246,7 @@ class NexoraObservabilityEventOrderTest {
             @Override
             public List<CapabilityProvider> capabilityProviders() {
                 return List.of(
-                        provider("charge", req -> CapabilityResult.success(Map.of("paymentId", "p-1"))),
+                        provider("charge", req -> CapabilityResult.success(chargeOutput.get())),
                         provider("receipt", req -> CapabilityResult.success("sent")));
             }
 
