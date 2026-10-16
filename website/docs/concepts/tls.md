@@ -32,7 +32,7 @@ The server certificate is valid for `localhost`, `127.0.0.1` and `::1`, for 365 
 
 The CA's own private key is thrown away as soon as the server certificate is signed. Once you trust `ca.pem`, nobody, you included, can use it to sign a certificate for some other site. Run `tls-gen` again for a new set.
 
-Why a CA and not a single self-signed certificate: Firefox refuses a certificate that is both a CA and the server's own, and curl and OpenSSL refuse one that is not a CA as something to trust. A small CA plus a server certificate works with all of them, which is how `mkcert` does it too.
+Why a CA and not a single self-signed certificate: curl, OpenSSL and the JDK accept either, but Firefox only imports CA certificates as authorities. A self-signed server certificate would need a security exception in Firefox instead, and exceptions are per host and port, so the WebSocket port (9465) would need a second one before the dashboard goes live. Trusting `ca.pem` once covers both ports, which is how `mkcert` does it too.
 
 ### Trusting `ca.pem`
 

@@ -33,10 +33,13 @@ import java.util.regex.Pattern;
  * Certificates for running the observe server over HTTPS on a development machine.
  *
  * <p>Issues a throwaway certificate authority and a server certificate signed by it, the way
- * {@code mkcert} does. A self-signed server certificate would be simpler, but Firefox refuses a CA
- * certificate used as the server's own, and without the CA flag curl and OpenSSL refuse it as a
- * trust anchor. Trusting {@code ca.pem} instead works everywhere. The CA's private key is never
- * returned, so nothing else can ever be signed with a CA someone has trusted.
+ * {@code mkcert} does. curl, OpenSSL and the JDK would also accept one self-signed certificate as
+ * its own anchor. Firefox is why there is a CA: it imports only CA certificates as authorities, so
+ * a self-signed server certificate there needs a security exception, and those are per host and
+ * port, so the WebSocket port would need a second one before the dashboard goes live. A self-signed
+ * certificate cannot simply carry the CA flag instead, because Firefox rejects a CA certificate
+ * used as a server's own. The CA's private key is never returned, so nothing else can ever be
+ * signed with a CA someone has trusted.
  */
 final class DevCertificates {
 
