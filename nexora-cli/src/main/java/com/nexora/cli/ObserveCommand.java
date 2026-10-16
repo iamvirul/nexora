@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Callable;
@@ -48,6 +49,10 @@ public class ObserveCommand implements Callable<Integer> {
             Objects.requireNonNullElse(ObserveCommand.class.getPackage().getImplementationVersion(), "unknown");
 
     private static final int EXIT_USAGE = 2;
+
+    /** Preferred over --keystore-password, which other users can read in the process list. */
+    static final String KEYSTORE_PASSWORD_ENV = "NEXORA_KEYSTORE_PASSWORD";
+
     private static final String API_PREFIX = "/api/";
 
     @ParentCommand
@@ -96,6 +101,30 @@ public class ObserveCommand implements Callable<Integer> {
     private boolean rotateApiKey;
 
     @Option(
+            names = {"--tls-cert"},
+            description = "PEM certificate to serve HTTPS and WSS with, optionally followed by its chain"
+                    + " (certbot's fullchain.pem). Needs --tls-key. Make one for local use with `nexora tls-gen`.")
+    private Path tlsCert;
+
+    @Option(
+            names = {"--tls-key"},
+            description = "Unencrypted PEM private key for --tls-cert (certbot's privkey.pem).")
+    private Path tlsKey;
+
+    @Option(
+            names = {"--keystore"},
+            description = "PKCS12 keystore holding the server's key and certificate chain, instead of"
+                    + " --tls-cert and --tls-key. Its password comes from " + KEYSTORE_PASSWORD_ENV
+                    + " or --keystore-password.")
+    private Path keystore;
+
+    @Option(
+            names = {"--keystore-password"},
+            description = "Password for --keystore. Prefer the " + KEYSTORE_PASSWORD_ENV
+                    + " environment variable: flags are visible to other users in the process list.")
+    private String keystorePassword;
+
+    @Option(
             names = {"--max-executions"},
             defaultValue = "100",
             description = "Number of recent executions retained in UI memory. Default: ${DEFAULT-VALUE}")
@@ -111,7 +140,10 @@ public class ObserveCommand implements Callable<Integer> {
     public Integer call() throws Exception {
         ApiKeyStore.Resolution key;
         UserStore users;
+        ObserveTls tls;
         try {
+            // TLS first: a bad certificate should not cost a freshly generated key.
+            tls = resolveTls();
             key = resolveApiKey(environment.apply(ApiKeyStore.ENV_VAR));
             users = new UserStore(usersFile, new PasswordHasher());
         } catch (IllegalArgumentException | IllegalStateException e) {
@@ -121,9 +153,11 @@ public class ObserveCommand implements Callable<Integer> {
         ApiAuth auth = new ApiAuth(key.digest(), users);
 
         NexoraEngine engine = parent.engine();
-        ObserveServer server = ObserveServer.start(
-                engine, auth, new ObserveServer.Config(host, port, port + 1, maxExecutions, maxEvents));
+        ObserveServer.Config config = new ObserveServer.Config(host, port, port + 1, maxExecutions, maxEvents);
+        ObserveServer server = ObserveServer.start(engine, auth, tls == null ? config : config.withTls(tls));
         int wsPort = server.webSocketPort();
+        String scheme = server.tlsEnabled() ? "https" : "http";
+        String wsScheme = server.tlsEnabled() ? "wss" : "ws";
 
         CountDownLatch shutdownLatch = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -136,15 +170,16 @@ public class ObserveCommand implements Callable<Integer> {
 
         System.out.println("Nexora Observability Server");
         System.out.println("===========================");
-        System.out.printf("UI:        http://%s:%d/%n", hostForDisplay(host), port);
-        System.out.printf("Metrics:   http://%s:%d/metrics%n", hostForDisplay(host), port);
-        System.out.printf("Process:   http://%s:%d/api/process%n", hostForDisplay(host), port);
+        String display = hostForDisplay(host);
+        System.out.printf("UI:        %s://%s:%d/%n", scheme, display, port);
+        System.out.printf("Metrics:   %s://%s:%d/metrics%n", scheme, display, port);
+        System.out.printf("Process:   %s://%s:%d/api/process%n", scheme, display, port);
         System.out.printf(
-                "Health:    http://%s:%d/health (live: /health/live, ready: /health/ready)%n",
-                hostForDisplay(host), port);
-        System.out.printf("API docs:  http://%s:%d/docs (OpenAPI: /openapi.yaml)%n", hostForDisplay(host), port);
-        System.out.printf("WebSocket: ws://%s:%d/%n", hostForDisplay(host), wsPort);
+                "Health:    %s://%s:%d/health (live: /health/live, ready: /health/ready)%n", scheme, display, port);
+        System.out.printf("API docs:  %s://%s:%d/docs (OpenAPI: /openapi.yaml)%n", scheme, display, port);
+        System.out.printf("WebSocket: %s://%s:%d/%n", wsScheme, display, wsPort);
         System.out.println();
+        printTlsStatus(tls);
         printApiKeyStatus(key);
         printUserStatus(users);
         System.out.println();
@@ -544,6 +579,52 @@ public class ObserveCommand implements Callable<Integer> {
             }
             send(exchange, 200, "text/html; charset=utf-8", indexHtml);
         });
+    }
+
+    /**
+     * The certificate to serve, or {@code null} for plain HTTP.
+     *
+     * @throws IllegalArgumentException for an incomplete or conflicting set of TLS options, or files that cannot be used
+     */
+    private ObserveTls resolveTls() {
+        boolean pem = tlsCert != null || tlsKey != null;
+        if (pem && keystore != null) {
+            throw new IllegalArgumentException("use either --tls-cert and --tls-key, or --keystore, not both");
+        }
+        if (pem) {
+            if (tlsCert == null || tlsKey == null) {
+                throw new IllegalArgumentException("--tls-cert and --tls-key must be given together");
+            }
+            return ObserveTls.fromPem(tlsCert, tlsKey);
+        }
+        if (keystore == null) {
+            if (keystorePassword != null) {
+                throw new IllegalArgumentException("--keystore-password needs --keystore");
+            }
+            return null;
+        }
+        String password = keystorePassword != null ? keystorePassword : environment.apply(KEYSTORE_PASSWORD_ENV);
+        if (password == null) {
+            throw new IllegalArgumentException(
+                    "--keystore needs its password: set " + KEYSTORE_PASSWORD_ENV + " or pass --keystore-password");
+        }
+        char[] chars = password.toCharArray();
+        try {
+            return ObserveTls.fromPkcs12(keystore, chars);
+        } finally {
+            Arrays.fill(chars, '\0');
+        }
+    }
+
+    private static void printTlsStatus(ObserveTls tls) {
+        if (tls == null) {
+            System.out.println(
+                    "TLS:       off. Keys and passwords travel in cleartext; see --tls-cert or `nexora tls-gen`");
+            return;
+        }
+        System.out.println(
+                "TLS:       " + tls.certificate().getSubjectX500Principal().getName() + ", valid until "
+                        + tls.certificate().getNotAfter().toInstant());
     }
 
     /** --rotate-api-key excludes a supplied key: rotating while another key is in force would be a no-op. */

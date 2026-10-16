@@ -28,6 +28,7 @@ import picocli.CommandLine.Spec;
             UserCommand.class,
             LoginCommand.class,
             LogoutCommand.class,
+            TlsGenCommand.class,
             CommandLine.HelpCommand.class
         })
 public class NexoraCli implements Callable<Integer> {

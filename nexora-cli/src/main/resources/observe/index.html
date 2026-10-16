@@ -838,7 +838,8 @@ function setConn(state, label) {
 function connect() {
   if (!authed) return;
   setConn('connecting', 'Connecting');
-  ws = new WebSocket(`ws://${location.hostname}:${WS_PORT}/`);
+  // An https page may only open wss: the browser blocks ws:// from it as mixed content.
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:${WS_PORT}/`);
 
   ws.onopen = () => {
     reconnectDelay = 500;

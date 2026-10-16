@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsExchange;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
@@ -231,12 +232,17 @@ public final class SessionEndpoints {
         auth.revokeSession(request.cookie());
         auth.revokeBearer(request.authorization());
         log.info("Dashboard session closed principal={} remote={}", caller.name(), exchange.getRemoteAddress());
-        exchange.getResponseHeaders().add("Set-Cookie", ApiAuth.clearedSessionCookie());
+        exchange.getResponseHeaders().add("Set-Cookie", ApiAuth.clearedSessionCookie(isHttps(exchange)));
         Responses.send(exchange, STATUS_OK, Responses.JSON, "{\"status\":\"LOGGED_OUT\"}");
     }
 
+    /** Over HTTPS the cookie is marked Secure, so a later plain-HTTP request to the same host cannot leak it. */
+    private static boolean isHttps(HttpExchange exchange) {
+        return exchange instanceof HttpsExchange;
+    }
+
     private static void sendSession(HttpExchange exchange, ApiAuth.Session session, String user) throws IOException {
-        exchange.getResponseHeaders().add("Set-Cookie", ApiAuth.sessionCookie(session.token()));
+        exchange.getResponseHeaders().add("Set-Cookie", ApiAuth.sessionCookie(session.token(), isHttps(exchange)));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("user", user);
         body.put("expiresAt", session.expiresAt().toString());

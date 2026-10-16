@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import javax.net.ssl.SSLHandshakeException;
 import picocli.CommandLine.Model.CommandSpec;
 
 /**
@@ -47,14 +48,18 @@ final class ObserveServerClient {
      * {@value ApiKeyStore#ENV_VAR}, else the user API key {@code nexora login} saved for this server.
      * Null sends none.
      */
-    record Server(URI url, String apiKey, boolean allowInsecureHttp) {
+    record Server(URI url, String apiKey, boolean allowInsecureHttp, HttpClient client) {
 
-        static Server of(URI url, String flagKey, Path credentialsFile, boolean allowInsecureHttp) {
+        static Server of(URI url, String flagKey, Path credentialsFile, boolean allowInsecureHttp, CaCertOption trust) {
             String key = flagKey != null ? flagKey : System.getenv(ApiKeyStore.ENV_VAR);
             if ((key == null || key.isBlank()) && isHttpUrl(url)) {
                 key = new CliCredentials(credentialsFile).keyFor(url).orElse(null);
             }
-            return new Server(url, key == null || key.isBlank() ? null : key.strip(), allowInsecureHttp);
+            return new Server(
+                    url,
+                    key == null || key.isBlank() ? null : key.strip(),
+                    allowInsecureHttp,
+                    trust.client(CONNECT_TIMEOUT));
         }
     }
 
@@ -128,11 +133,9 @@ final class ObserveServerClient {
         }
         HttpResponse<String> response;
         try {
-            response = send(uri, method, target.apiKey());
+            response = send(target.client(), uri, method, target.apiKey());
         } catch (IOException e) {
-            err.printf(
-                    "Error: could not reach the observe server at %s (%s). Is `nexora observe` running?%n",
-                    server, describe(e));
+            err.println(unreachable(server, e));
             return EXIT_FAILED;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -176,10 +179,8 @@ final class ObserveServerClient {
         }
     }
 
-    private static HttpResponse<String> send(URI target, String method, String apiKey)
+    private static HttpResponse<String> send(HttpClient client, URI target, String method, String apiKey)
             throws IOException, InterruptedException {
-        HttpClient client =
-                HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
         HttpRequest.Builder request = HttpRequest.newBuilder(target)
                 .timeout(REQUEST_TIMEOUT)
                 .method(method, HttpRequest.BodyPublishers.noBody());
@@ -187,6 +188,19 @@ final class ObserveServerClient {
             request.header("Authorization", "Bearer " + apiKey);
         }
         return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    /**
+     * Why {@code server} could not be reached. A certificate the JVM does not trust is the usual
+     * failure against a {@code nexora tls-gen} server, so that case names the fix.
+     */
+    static String unreachable(URI server, IOException e) {
+        if (e instanceof SSLHandshakeException) {
+            return "Error: could not verify the TLS certificate of " + server + " (" + describe(e) + "). If it"
+                    + " comes from a private CA such as `nexora tls-gen`, pass --cacert with that CA's ca.pem.";
+        }
+        return "Error: could not reach the observe server at " + server + " (" + describe(e)
+                + "). Is `nexora observe` running?";
     }
 
     /** ConnectException and friends often carry no message; fall back to the exception type. */

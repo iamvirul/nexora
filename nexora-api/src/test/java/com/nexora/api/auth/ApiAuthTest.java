@@ -99,12 +99,24 @@ class ApiAuthTest {
 
     @Test
     void sessionCookieIsHttpOnlyAndStrict() {
-        String header = ApiAuth.sessionCookie("token");
+        String header = ApiAuth.sessionCookie("token", false);
 
         assertTrue(header.contains("HttpOnly"), header);
         assertTrue(header.contains("SameSite=Strict"), header);
         assertTrue(header.contains("Path=/"), header);
-        assertTrue(ApiAuth.clearedSessionCookie().contains("Max-Age=0"));
+        assertFalse(header.contains("Secure"), header);
+        assertTrue(ApiAuth.clearedSessionCookie(false).contains("Max-Age=0"));
+    }
+
+    @Test
+    void sessionCookieIsSecureWhenServedOverHttps() {
+        String header = ApiAuth.sessionCookie("token", true);
+        String cleared = ApiAuth.clearedSessionCookie(true);
+
+        assertTrue(header.contains("; Secure;"), header);
+        assertTrue(header.contains("HttpOnly"), header);
+        // A browser only replaces a Secure cookie with one that is also Secure.
+        assertTrue(cleared.contains("; Secure;") && cleared.contains("Max-Age=0"), cleared);
     }
 
     @Test

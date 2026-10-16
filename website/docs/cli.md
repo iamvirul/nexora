@@ -29,8 +29,19 @@ nexora [--config <file>] <command>
 | `nexora user add <username>` | Create a dashboard user (also `passwd`, `remove`, `list`) |
 | `nexora login` | Sign in with a username and password; saves a user API key for `cancel` / `replay` |
 | `nexora logout` | Revoke and delete the saved user API key |
+| `nexora tls-gen` | Write a development CA and server certificate for HTTPS on localhost |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
+
+## HTTPS for `nexora observe`
+
+| Option | What it does |
+|--------|-------------|
+| `--tls-cert <file>` | PEM certificate, optionally followed by its chain (certbot's `fullchain.pem`). Needs `--tls-key` |
+| `--tls-key <file>` | Unencrypted PEM private key for `--tls-cert` (certbot's `privkey.pem`) |
+| `--keystore <file>` | PKCS12 keystore instead of the two PEM files; password from `NEXORA_KEYSTORE_PASSWORD` or `--keystore-password` |
+
+`nexora tls-gen [--out ./certs] [--host <name>]... [--days 365] [--force]` writes `ca.pem`, `server.pem` and `server-key.pem` for local use. `nexora login`, `logout`, `cancel` and `replay` take `--cacert <ca.pem>` to trust that CA. See [HTTPS (TLS)](concepts/tls.md).
 
 ## Config file
 

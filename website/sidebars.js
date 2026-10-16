@@ -27,6 +27,7 @@ const sidebars = {
         'concepts/dead-letter-queue',
         'concepts/cron-scheduling',
         'concepts/authentication',
+        'concepts/tls',
       ],
     },
     {

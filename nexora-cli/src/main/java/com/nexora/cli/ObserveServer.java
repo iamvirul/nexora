@@ -4,19 +4,25 @@ import com.nexora.api.NexoraEngine;
 import com.nexora.api.auth.ApiAuth;
 import com.nexora.api.observability.NexoraObservability;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsParameters;
+import com.sun.net.httpserver.HttpsServer;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.Objects;
 import java.util.concurrent.Executors;
+import javax.net.ssl.SSLParameters;
 import org.java_websocket.WebSocket;
 import org.java_websocket.drafts.Draft;
 import org.java_websocket.exceptions.InvalidDataException;
 import org.java_websocket.framing.CloseFrame;
 import org.java_websocket.handshake.ClientHandshake;
 import org.java_websocket.handshake.ServerHandshakeBuilder;
+import org.java_websocket.server.SSLParametersWebSocketServerFactory;
 import org.java_websocket.server.WebSocketServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,8 +41,10 @@ public final class ObserveServer implements AutoCloseable {
 
     /**
      * @param webSocketPort the dashboard expects it at {@code httpPort + 1} unless told otherwise
+     * @param tls           the certificate for HTTPS and WSS, or {@code null} to serve plain HTTP and WS
      */
-    public record Config(String host, int httpPort, int webSocketPort, int maxExecutions, int maxEvents) {
+    public record Config(
+            String host, int httpPort, int webSocketPort, int maxExecutions, int maxEvents, ObserveTls tls) {
 
         public static final int DEFAULT_MAX_EXECUTIONS = 100;
         public static final int DEFAULT_MAX_EVENTS = 200;
@@ -53,9 +61,19 @@ public final class ObserveServer implements AutoCloseable {
             }
         }
 
+        /** Plain HTTP and WS. */
+        public Config(String host, int httpPort, int webSocketPort, int maxExecutions, int maxEvents) {
+            this(host, httpPort, webSocketPort, maxExecutions, maxEvents, null);
+        }
+
         /** HTTP on {@code httpPort}, the WebSocket on the next port, default retention. */
         public static Config of(String host, int httpPort) {
             return new Config(host, httpPort, httpPort + 1, DEFAULT_MAX_EXECUTIONS, DEFAULT_MAX_EVENTS);
+        }
+
+        /** The same settings, served over HTTPS and WSS with {@code tls}. */
+        public Config withTls(ObserveTls tls) {
+            return new Config(host, httpPort, webSocketPort, maxExecutions, maxEvents, Objects.requireNonNull(tls));
         }
 
         private static void requirePort(int port, String name) {
@@ -95,6 +113,10 @@ public final class ObserveServer implements AutoCloseable {
         try {
             byte[] indexHtml = loadUiHtml(config.webSocketPort(), auth.passwordLoginEnabled());
             broadcaster = new SnapshotBroadcaster(config.host(), config.webSocketPort(), auth, config.httpPort());
+            if (config.tls() != null) {
+                broadcaster.setWebSocketFactory(new SSLParametersWebSocketServerFactory(
+                        config.tls().context(), config.tls().parameters()));
+            }
             SnapshotBroadcaster stream = broadcaster;
             observability.addSnapshotListener(snap -> {
                 try {
@@ -105,7 +127,7 @@ public final class ObserveServer implements AutoCloseable {
             });
             broadcaster.start();
 
-            HttpServer http = HttpServer.create(new InetSocketAddress(config.host(), config.httpPort()), 0);
+            HttpServer http = createHttpServer(config);
             http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
             ObserveCommand.registerRoutes(http, engine, observability, indexHtml, auth);
             http.start();
@@ -115,6 +137,38 @@ public final class ObserveServer implements AutoCloseable {
             observability.close();
             throw e;
         }
+    }
+
+    /**
+     * HTTPS when the config carries a certificate. Plain HTTP is logged at WARN on every start, since
+     * the API key, passwords and the session cookie would then cross the network readable by anyone.
+     */
+    private static HttpServer createHttpServer(Config config) throws IOException {
+        InetSocketAddress address = new InetSocketAddress(config.host(), config.httpPort());
+        if (config.tls() == null) {
+            log.warn(
+                    "Serving plain HTTP on {}:{}: API keys, passwords and session cookies cross the network"
+                            + " unencrypted. Start with --tls-cert and --tls-key (or --keystore), or put a TLS proxy"
+                            + " in front.",
+                    config.host(),
+                    config.httpPort());
+            return HttpServer.create(address, 0);
+        }
+        config.tls().validityWarning(Instant.now()).ifPresent(log::warn);
+        HttpsServer https = HttpsServer.create(address, 0);
+        SSLParameters parameters = config.tls().parameters();
+        https.setHttpsConfigurator(new HttpsConfigurator(config.tls().context()) {
+            @Override
+            public void configure(HttpsParameters params) {
+                params.setSSLParameters(parameters);
+            }
+        });
+        return https;
+    }
+
+    /** Whether the server speaks HTTPS and WSS. */
+    public boolean tlsEnabled() {
+        return config.tls() != null;
     }
 
     public int httpPort() {
