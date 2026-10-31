@@ -28,6 +28,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -103,7 +104,7 @@ class ReplayIntegrationTest {
         assertThat(compensated.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
         awaitState(original.executionId(), ExecutionState.COMPENSATED);
 
-        ExecutionHandle replay = engine.replay(original.executionId());
+        ExecutionHandle replay = awaitReplay(original.executionId());
         replay.result().get(WAIT_SECONDS, TimeUnit.SECONDS);
 
         // reserve was rolled back by compensation, so it must really run again under a new key.
@@ -165,14 +166,7 @@ class ReplayIntegrationTest {
 
         finishRelease.countDown();
         awaitState(original.executionId(), ExecutionState.COMPENSATED);
-        awaitCondition(() -> {
-            try {
-                engine.replay(original.executionId());
-                return true;
-            } catch (ExecutionNotReplayableException stillRunning) {
-                return false;
-            }
-        });
+        awaitReplay(original.executionId());
     }
 
     @Test
@@ -254,6 +248,23 @@ class ReplayIntegrationTest {
                 .map(r -> r.state() != ExecutionState.RUNNING)
                 .orElse(false));
         return store.findById(executionId).orElseThrow();
+    }
+
+    /**
+     * The engine records COMPENSATED and publishes CompensationCompletedEvent a moment before it stops
+     * tracking the run, and replay() refuses a run it still tracks. Retry until that window closes.
+     */
+    private ExecutionHandle awaitReplay(String executionId) throws InterruptedException {
+        AtomicReference<ExecutionHandle> replay = new AtomicReference<>();
+        awaitCondition(() -> {
+            try {
+                replay.set(engine.replay(executionId));
+                return true;
+            } catch (ExecutionNotReplayableException stillRunning) {
+                return false;
+            }
+        });
+        return replay.get();
     }
 
     private void awaitState(String executionId, ExecutionState state) throws InterruptedException {

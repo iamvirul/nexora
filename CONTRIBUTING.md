@@ -3,11 +3,20 @@
 ## Building
 
 ```bash
-mvn verify            # compile, test, and check formatting
+mvn test              # unit tests only
+mvn verify            # unit and integration tests, plus the formatting check
+mvn verify -DskipITs  # everything except integration tests (no Docker needed)
+mvn verify -DskipUTs  # integration tests only
 mvn spotless:apply    # fix formatting (palantir-java-format)
 ```
 
 `mvn verify` fails on unformatted code, and CI runs the same check.
+
+### Integration tests
+
+Integration tests run against real dependencies through Testcontainers, so they need a running Docker daemon. Without one they fail instead of skipping; pass `-DskipITs` to leave them out.
+
+Name the class `*IT` and tag it `@Tag("integration")`. Surefire excludes the tag, so `mvn test` stays fast, and failsafe runs it during `mvn verify`. CI runs them as a separate step with a 3-minute limit. `JdbcExecutionStorePostgresIT` is the reference: it runs the store against PostgreSQL 15, the oldest version Nexora supports.
 
 ## Database migrations
 

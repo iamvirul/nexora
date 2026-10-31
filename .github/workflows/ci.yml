@@ -21,13 +21,20 @@ jobs:
           distribution: temurin
           cache: maven
 
-      - name: Run tests
-        run: mvn verify --no-transfer-progress
+      - name: Run unit tests
+        run: mvn verify -DskipITs --no-transfer-progress
+
+      # Tests tagged "integration" (Testcontainers, e.g. PostgreSQL). Docker is preinstalled on ubuntu-latest.
+      - name: Run integration tests
+        timeout-minutes: 3
+        run: mvn verify -DskipUTs --no-transfer-progress
 
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: surefire-reports
-          path: "**/target/surefire-reports/*.xml"
+          name: test-reports
+          path: |
+            **/target/surefire-reports/*.xml
+            **/target/failsafe-reports/*.xml
           retention-days: 7
