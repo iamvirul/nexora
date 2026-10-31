@@ -4,6 +4,7 @@ import com.nexora.core.context.TraceContext;
 import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.execution.ExecutionResult;
 import com.nexora.core.intent.Intent;
+import com.nexora.core.tenant.TenantId;
 import com.nexora.event.EventHandler;
 import com.nexora.event.ExecutionEvent;
 import com.nexora.event.ExecutionEventBus;
@@ -54,6 +55,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -91,6 +93,7 @@ public final class NexoraEngine implements AutoCloseable {
     private final CronScheduler cronScheduler;
     private final Tracer tracer;
     private final Executor executor;
+    private final String tenantScope; // null = serves every tenant
 
     private NexoraEngine(
             ExecutionEngine engine,
@@ -100,7 +103,8 @@ public final class NexoraEngine implements AutoCloseable {
             CapabilityContractMonitor contractMonitor,
             CronScheduler cronScheduler,
             Tracer tracer,
-            Executor executor) {
+            Executor executor,
+            String tenantScope) {
         this.engine = engine;
         this.pluginManager = pluginManager;
         this.eventBus = eventBus;
@@ -109,10 +113,57 @@ public final class NexoraEngine implements AutoCloseable {
         this.cronScheduler = cronScheduler;
         this.tracer = tracer;
         this.executor = executor;
+        this.tenantScope = tenantScope;
+    }
+
+    /**
+     * The only tenant this engine runs work for, set with {@link Builder#withTenantId(String)}.
+     * Empty for an engine that serves every tenant, taking each intent's own tenant.
+     */
+    public Optional<String> tenantScope() {
+        return Optional.ofNullable(tenantScope);
+    }
+
+    /**
+     * The intent as this engine runs it. A tenant-bound engine gives an intent without a tenant its
+     * own, and refuses an intent for any other tenant rather than run it under the wrong one.
+     */
+    private Intent scoped(Intent intent) {
+        Objects.requireNonNull(intent, "intent must not be null");
+        if (tenantScope == null || tenantScope.equals(intent.getTenantId())) {
+            return intent;
+        }
+        if (TenantId.DEFAULT.equals(intent.getTenantId())) {
+            return intent.withTenantId(tenantScope);
+        }
+        throw new IllegalArgumentException("Intent is for tenant '" + intent.getTenantId()
+                + "' but this engine only runs work for tenant '" + tenantScope + "'");
+    }
+
+    /**
+     * The tenant a tenant-scoped call reads within: {@code requested}, or this engine's own tenant
+     * when none is requested. Empty when the caller asks for a tenant this engine does not serve.
+     * A null value inside means every tenant.
+     */
+    private Optional<TenantFilter> filterFor(String requested) {
+        if (requested != null) {
+            TenantId.requireValid(requested);
+        }
+        if (tenantScope != null && requested != null && !tenantScope.equals(requested)) {
+            return Optional.empty();
+        }
+        return Optional.of(new TenantFilter(requested != null ? requested : tenantScope));
+    }
+
+    /** @param tenantId the only tenant a call may touch; null for every tenant */
+    private record TenantFilter(String tenantId) {
+        boolean allows(String recordTenant) {
+            return tenantId == null || tenantId.equals(recordTenant);
+        }
     }
 
     public CompletableFuture<ExecutionResult> execute(Intent intent) {
-        return engine.execute(intent);
+        return engine.execute(scoped(intent));
     }
 
     /**
@@ -120,7 +171,7 @@ public final class NexoraEngine implements AutoCloseable {
      * (e.g. a {@code traceparent} header) instead of starting a fresh root trace.
      */
     public CompletableFuture<ExecutionResult> execute(Intent intent, TraceContext traceContext) {
-        return engine.execute(intent, traceContext);
+        return engine.execute(scoped(intent), traceContext);
     }
 
     /**
@@ -129,23 +180,23 @@ public final class NexoraEngine implements AutoCloseable {
      * finishes, for example to report it to a client or to {@link #cancel(String)} it.
      */
     public ExecutionHandle submit(Intent intent) {
-        return engine.submit(intent, TraceContext.root());
+        return engine.submit(scoped(intent), TraceContext.root());
     }
 
     /** {@link #submit(Intent)} continuing a trace propagated in from an inbound request. */
     public ExecutionHandle submit(Intent intent, TraceContext traceContext) {
-        return engine.submit(intent, traceContext);
+        return engine.submit(scoped(intent), traceContext);
     }
 
     public CompletableFuture<ExecutionResult> execute(String goal, Map<String, Object> context) {
-        return engine.execute(new Intent(goal, context));
+        return execute(new Intent(goal, context));
     }
 
     /**
      * Convenience: execute with an inline per-call deadline, overriding any engine-wide default.
      */
     public CompletableFuture<ExecutionResult> execute(String goal, Map<String, Object> context, Duration deadline) {
-        return engine.execute(new Intent(goal, context, deadline));
+        return execute(new Intent(goal, context, deadline));
     }
 
     /** Context key a replayed execution carries, holding the id of the execution it replays. */
@@ -175,6 +226,15 @@ public final class NexoraEngine implements AutoCloseable {
      * @throws IllegalStateException            if the engine has no persistence store
      */
     public ExecutionHandle replay(String executionId) {
+        return replay(null, executionId);
+    }
+
+    /**
+     * {@link #replay(String)} limited to one tenant: an execution of any other tenant is reported as
+     * not found. The replay runs for the original's tenant. A {@code null} tenant replays any
+     * execution this engine serves.
+     */
+    public ExecutionHandle replay(String tenantId, String executionId) {
         if (executionId == null || executionId.isBlank()) {
             throw new IllegalArgumentException("executionId must not be blank");
         }
@@ -182,12 +242,16 @@ public final class NexoraEngine implements AutoCloseable {
         if (store == null) {
             throw new IllegalStateException("Replay requires a persistence store");
         }
+        TenantFilter filter = filterFor(tenantId).orElseThrow(() -> new ExecutionNotFoundException(executionId));
+        // Looked up before the running check, so another tenant's live execution reads as not found.
+        ExecutionRecord original = (filter.tenantId() == null
+                        ? store.findById(executionId)
+                        : store.findById(filter.tenantId(), executionId))
+                .orElseThrow(() -> new ExecutionNotFoundException(executionId));
         // Still in terminal handling here, possibly about to compensate: its stored state is not final yet.
         if (engine.isRunning(executionId)) {
             throw new ExecutionNotReplayableException(executionId, ExecutionState.RUNNING);
         }
-        ExecutionRecord original =
-                store.findById(executionId).orElseThrow(() -> new ExecutionNotFoundException(executionId));
         if (!REPLAYABLE_STATES.contains(original.state())) {
             throw new ExecutionNotReplayableException(executionId, original.state());
         }
@@ -197,11 +261,13 @@ public final class NexoraEngine implements AutoCloseable {
         Map<String, String> reusedKeys =
                 original.state() == ExecutionState.COMPENSATED ? Map.of() : completedStepKeys(original);
 
-        ExecutionHandle replay = engine.submit(new Intent(original.goal(), context), TraceContext.root(), reusedKeys);
+        Intent intent = new Intent(original.goal(), context, null, null, null, original.tenantId());
+        ExecutionHandle replay = engine.submit(intent, TraceContext.root(), reusedKeys);
         log.info(
-                "Execution replay started executionId={} replayOf={} originalState={} reusedKeys={}",
+                "Execution replay started executionId={} replayOf={} tenantId={} originalState={} reusedKeys={}",
                 replay.executionId(),
                 executionId,
+                original.tenantId(),
                 original.state(),
                 reusedKeys.size());
         return replay;
@@ -217,7 +283,7 @@ public final class NexoraEngine implements AutoCloseable {
     public ExecutionHandle replayDeadLetter(DeadLetterRecord deadLetter) {
         Objects.requireNonNull(deadLetter, "deadLetter must not be null");
         try {
-            return replay(deadLetter.executionId());
+            return replay(deadLetter.tenantId(), deadLetter.executionId());
         } catch (ExecutionNotFoundException e) {
             Map<String, Object> context = new LinkedHashMap<>(deadLetter.context());
             context.put(REPLAY_OF_CONTEXT_KEY, deadLetter.executionId());
@@ -225,7 +291,8 @@ public final class NexoraEngine implements AutoCloseable {
                     "Dead letter replay without original record deadLetterId={} executionId={}",
                     deadLetter.id(),
                     deadLetter.executionId());
-            return engine.submit(new Intent(deadLetter.goal(), context), TraceContext.root());
+            Intent intent = new Intent(deadLetter.goal(), context, null, null, null, deadLetter.tenantId());
+            return engine.submit(scoped(intent), TraceContext.root());
         }
     }
 
@@ -254,13 +321,30 @@ public final class NexoraEngine implements AutoCloseable {
      * this engine is not running fall back to a single store lookup.
      */
     public CompletableFuture<Boolean> cancel(String executionId) {
+        return cancel(null, executionId);
+    }
+
+    /**
+     * {@link #cancel(String)} limited to one tenant: an execution of any other tenant fails with
+     * {@link ExecutionNotFoundException}, exactly like an unknown id.
+     */
+    public CompletableFuture<Boolean> cancel(String tenantId, String executionId) {
         if (executionId == null || executionId.isBlank()) {
             return CompletableFuture.failedFuture(new IllegalArgumentException("executionId must not be blank"));
+        }
+        Optional<TenantFilter> filter;
+        try {
+            filter = filterFor(tenantId);
+        } catch (IllegalArgumentException e) {
+            return CompletableFuture.failedFuture(e);
+        }
+        if (filter.isEmpty()) {
+            return CompletableFuture.failedFuture(new ExecutionNotFoundException(executionId));
         }
         // Never queue this on the step executor: when every worker is busy running steps (e.g. a
         // single-thread executor), the cancel would wait behind the very step it has to interrupt.
         try {
-            return switch (engine.cancel(executionId)) {
+            return switch (engine.cancel(filter.get().tenantId(), executionId)) {
                 case CANCELLED -> CompletableFuture.completedFuture(true);
                 case ALREADY_TERMINAL -> CompletableFuture.completedFuture(false);
                 case NOT_FOUND -> CompletableFuture.failedFuture(new ExecutionNotFoundException(executionId));
@@ -292,7 +376,14 @@ public final class NexoraEngine implements AutoCloseable {
     }
 
     public List<com.nexora.spi.CapabilityDescriptor> listCapabilities() {
-        return capabilityRegistry.listAll();
+        return tenantScope == null ? capabilityRegistry.listAll() : capabilityRegistry.listFor(tenantScope);
+    }
+
+    /** The capabilities {@code tenantId} may use; empty for a tenant this engine does not serve. */
+    public List<com.nexora.spi.CapabilityDescriptor> listCapabilities(String tenantId) {
+        return filterFor(Objects.requireNonNull(tenantId, "tenantId must not be null"))
+                .map(filter -> capabilityRegistry.listFor(filter.tenantId()))
+                .orElse(List.of());
     }
 
     public List<String> activePluginIds() {
@@ -384,7 +475,7 @@ public final class NexoraEngine implements AutoCloseable {
      */
     public ScheduledExecution schedule(String cronExpression, Intent intent, MissedFirePolicy missedFirePolicy) {
         requireScheduler();
-        return cronScheduler.schedule(cronExpression, intent, missedFirePolicy);
+        return cronScheduler.schedule(cronExpression, scoped(intent), missedFirePolicy);
     }
 
     /** Convenience: schedule with the default {@link MissedFirePolicy#FIRE_ONCE} policy. */
@@ -407,7 +498,41 @@ public final class NexoraEngine implements AutoCloseable {
     /** Cancels a schedule by id. Idempotent. */
     public void cancelSchedule(String scheduleId) {
         requireScheduler();
+        if (tenantScope != null) {
+            // A tenant-bound engine never touches another tenant's schedule, even through the unscoped call.
+            cancelSchedule(null, scheduleId);
+            return;
+        }
         cronScheduler.cancel(scheduleId);
+    }
+
+    /** {@link #listSchedules()} limited to one tenant. */
+    public List<ScheduleRecord> listSchedules(String tenantId) {
+        requireScheduler();
+        return filterFor(tenantId)
+                .map(filter -> cronScheduler.listAll().stream()
+                        .filter(r -> filter.allows(r.tenantId()))
+                        .toList())
+                .orElse(List.of());
+    }
+
+    /**
+     * Cancels the schedule only if it belongs to {@code tenantId}.
+     *
+     * @return false when no schedule with this id belongs to that tenant; nothing is changed
+     */
+    public boolean cancelSchedule(String tenantId, String scheduleId) {
+        requireScheduler();
+        Optional<TenantFilter> filter = filterFor(tenantId);
+        boolean owned = filter.isPresent()
+                && cronScheduler
+                        .find(scheduleId)
+                        .filter(r -> filter.get().allows(r.tenantId()))
+                        .isPresent();
+        if (owned) {
+            cronScheduler.cancel(scheduleId);
+        }
+        return owned;
     }
 
     /**
@@ -473,6 +598,7 @@ public final class NexoraEngine implements AutoCloseable {
         private boolean sagaEnabled = false;
         private String webhookSecret = null;
         private int stepOutputMaxBytes = StepOutput.DEFAULT_MAX_BYTES;
+        private String tenantId = null;
 
         private final List<NexoraPlugin> plugins = new ArrayList<>();
         private final List<Path> pluginJars = new ArrayList<>();
@@ -537,6 +663,22 @@ public final class NexoraEngine implements AutoCloseable {
          */
         public Builder withStepOutputMaxBytes(int maxBytes) {
             this.stepOutputMaxBytes = StepOutput.validateMaxBytes(maxBytes);
+            return this;
+        }
+
+        /**
+         * Binds the engine to one tenant, for library users who run an engine per tenant. Intents
+         * without a tenant run for this one, intents for another tenant are refused, and replay,
+         * cancel and schedule calls only see this tenant's work. Without it the engine serves every
+         * tenant, each intent running for its own ({@link TenantId#DEFAULT} when it names none).
+         *
+         * <p>Engines sharing a store should all be bound, or all unbound: an unbound engine reloads
+         * and fires every tenant's schedules, including those a bound engine already runs.
+         *
+         * @throws IllegalArgumentException if {@code tenantId} is not a valid tenant id
+         */
+        public Builder withTenantId(String tenantId) {
+            this.tenantId = TenantId.requireValid(tenantId);
             return this;
         }
 
@@ -636,7 +778,7 @@ public final class NexoraEngine implements AutoCloseable {
 
             // Cron scheduler (optional — requires a store)
             CronScheduler cronScheduler =
-                    executionStore != null ? new CronScheduler(engine, executionStore, eventBus) : null;
+                    executionStore != null ? new CronScheduler(engine, executionStore, eventBus, tenantId) : null;
 
             return new NexoraEngine(
                     engine,
@@ -646,7 +788,8 @@ public final class NexoraEngine implements AutoCloseable {
                     contractMonitor,
                     cronScheduler,
                     tracer,
-                    executor);
+                    executor,
+                    tenantId);
         }
     }
 }

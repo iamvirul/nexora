@@ -366,7 +366,19 @@ public final class NexoraObservability implements AutoCloseable {
         return nanos / 1_000_000_000.0;
     }
 
-    public record ProcessSnapshot(long generatedAtMs, int activeExecutions, List<ExecutionSnapshot> executions) {}
+    public record ProcessSnapshot(long generatedAtMs, int activeExecutions, List<ExecutionSnapshot> executions) {
+
+        /** Only {@code tenantId}'s executions, with the active count recomputed over them. */
+        public ProcessSnapshot forTenant(String tenantId) {
+            List<ExecutionSnapshot> owned = executions.stream()
+                    .filter(e -> e.tenantId().equals(tenantId))
+                    .toList();
+            int active = (int) owned.stream()
+                    .filter(e -> MutableExecution.STATUS_RUNNING.equals(e.status()))
+                    .count();
+            return new ProcessSnapshot(generatedAtMs, active, owned);
+        }
+    }
 
     public record ExecutionSnapshot(
             String executionId,
@@ -380,7 +392,8 @@ public final class NexoraObservability implements AutoCloseable {
             int failedSteps,
             int skippedSteps,
             List<StepSnapshot> steps,
-            List<TimelineSnapshot> timeline) {}
+            List<TimelineSnapshot> timeline,
+            String tenantId) {}
 
     public record StepSnapshot(
             String stepId,
@@ -413,6 +426,7 @@ public final class NexoraObservability implements AutoCloseable {
             MutableExecution execution = new MutableExecution(
                     event.executionId(),
                     event.traceId(),
+                    event.tenantId(),
                     event.occurredAt().toEpochMilli(),
                     maxTimelineEventsPerExecution);
             executions.put(event.executionId(), execution);
@@ -541,6 +555,7 @@ public final class NexoraObservability implements AutoCloseable {
         private static final String STATUS_CANCELLED = "CANCELLED";
 
         private final String executionId;
+        private final String tenantId;
         private final Deque<TimelineSnapshot> timeline = new ConcurrentLinkedDeque<>();
         private final ConcurrentHashMap<String, MutableStep> steps = new ConcurrentHashMap<>();
         private final int maxTimelineEvents;
@@ -550,8 +565,10 @@ public final class NexoraObservability implements AutoCloseable {
         private volatile long startedAtMs;
         private volatile long finishedAtMs;
 
-        private MutableExecution(String executionId, String traceId, long startedAtMs, int maxTimelineEvents) {
+        private MutableExecution(
+                String executionId, String traceId, String tenantId, long startedAtMs, int maxTimelineEvents) {
             this.executionId = executionId;
+            this.tenantId = tenantId;
             this.traceId = traceId;
             this.startedAtMs = startedAtMs;
             this.maxTimelineEvents = maxTimelineEvents;
@@ -665,7 +682,8 @@ public final class NexoraObservability implements AutoCloseable {
                     failed,
                     skipped,
                     stepSnapshots,
-                    timelineSnapshots);
+                    timelineSnapshots,
+                    tenantId);
         }
     }
 
