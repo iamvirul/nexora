@@ -1,5 +1,6 @@
 package com.nexora.api.auth;
 
+import com.nexora.core.tenant.TenantId;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -20,8 +21,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Dashboard accounts, one {@code username:iterations$salt$hash} line per user in an owner-only
- * file, in the spirit of {@code /etc/shadow}. Passwords themselves are never stored.
+ * Dashboard accounts, one {@code username:iterations$salt$hash[:tenant]} line per user in an
+ * owner-only file, in the spirit of {@code /etc/shadow}. Passwords themselves are never stored.
+ *
+ * <p>Each user belongs to one tenant, and on a multi-tenant server can only reach that tenant's
+ * executions. A line without a tenant belongs to {@link TenantId#DEFAULT}, so files written
+ * before tenants existed keep working, and default-tenant users are still written that way.
  *
  * <p>{@code nexora user} edits the file while {@code nexora observe} may be running. The server
  * notices the change on its next lookup, so adding, removing or re-keying a user takes effect
@@ -46,7 +51,9 @@ public final class UserStore {
      * (device and inode, where the platform has one) changes on every save even when the size and a
      * coarse timestamp do not, as with a password change inside the same second.
      */
-    private record Snapshot(Map<String, PasswordHasher.Hash> users, FileTime modified, long size, Object fileKey) {
+    private record Account(PasswordHasher.Hash hash, String tenantId) {}
+
+    private record Snapshot(Map<String, Account> users, FileTime modified, long size, Object fileKey) {
         static final Snapshot EMPTY = new Snapshot(Map.of(), null, -1, null);
 
         boolean sameVersion(BasicFileAttributes attrs) {
@@ -108,18 +115,46 @@ public final class UserStore {
     }
 
     Optional<PasswordHasher.Hash> find(String username) {
+        return account(username).map(Account::hash);
+    }
+
+    /** The tenant {@code username} belongs to, if the user exists. */
+    public Optional<String> tenantOf(String username) {
+        return account(username).map(Account::tenantId);
+    }
+
+    private Optional<Account> account(String username) {
         return Optional.ofNullable(current().users().get(normalize(username)));
     }
 
-    /** @throws IllegalArgumentException if the user exists, or the username or password is invalid */
+    /** Adds a user of the {@link TenantId#DEFAULT} tenant. */
     public synchronized void add(String username, char[] password) {
+        add(username, password, TenantId.DEFAULT);
+    }
+
+    /** @throws IllegalArgumentException if the user exists, or the username, password or tenant is invalid */
+    public synchronized void add(String username, char[] password, String tenantId) {
         String name = requireValidUsername(username);
         requireAcceptablePassword(name, password);
-        Map<String, PasswordHasher.Hash> users = new TreeMap<>(reloadForWrite().users());
+        TenantId.requireValid(tenantId);
+        Map<String, Account> users = new TreeMap<>(reloadForWrite().users());
         if (users.containsKey(name)) {
             throw new IllegalArgumentException("User '" + name + "' already exists; use passwd to change the password");
         }
-        users.put(name, hasher.hash(password));
+        users.put(name, new Account(hasher.hash(password), tenantId));
+        save(users);
+    }
+
+    /** Moves the user to another tenant; the user's existing sessions stop working. */
+    public synchronized void setTenant(String username, String tenantId) {
+        String name = normalize(username);
+        TenantId.requireValid(tenantId);
+        Map<String, Account> users = new TreeMap<>(reloadForWrite().users());
+        Account existing = users.get(name);
+        if (existing == null) {
+            throw new IllegalArgumentException("No user '" + name + "'");
+        }
+        users.put(name, new Account(existing.hash(), tenantId));
         save(users);
     }
 
@@ -127,18 +162,19 @@ public final class UserStore {
     public synchronized void setPassword(String username, char[] password) {
         String name = normalize(username);
         requireAcceptablePassword(name, password);
-        Map<String, PasswordHasher.Hash> users = new TreeMap<>(reloadForWrite().users());
-        if (!users.containsKey(name)) {
+        Map<String, Account> users = new TreeMap<>(reloadForWrite().users());
+        Account existing = users.get(name);
+        if (existing == null) {
             throw new IllegalArgumentException("No user '" + name + "'");
         }
-        users.put(name, hasher.hash(password));
+        users.put(name, new Account(hasher.hash(password), existing.tenantId()));
         save(users);
     }
 
     /** Deletes the account; the user's existing sessions stop working. */
     public synchronized void remove(String username) {
         String name = normalize(username);
-        Map<String, PasswordHasher.Hash> users = new TreeMap<>(reloadForWrite().users());
+        Map<String, Account> users = new TreeMap<>(reloadForWrite().users());
         if (users.remove(name) == null) {
             throw new IllegalArgumentException("No user '" + name + "'");
         }
@@ -177,11 +213,17 @@ public final class UserStore {
         try {
             BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class);
             List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-            Map<String, PasswordHasher.Hash> users = new TreeMap<>();
+            Map<String, Account> users = new TreeMap<>();
             for (int i = 0; i < lines.size(); i++) {
                 String line = lines.get(i).strip();
                 if (line.isEmpty() || line.startsWith("#")) continue;
-                users.put(parseUsername(line, i + 1), parseHash(line, i + 1));
+                String[] fields = line.split(String.valueOf(SEPARATOR), -1);
+                if (fields.length < 2 || fields.length > 3) {
+                    throw new IllegalStateException("Malformed user entry at " + file + ":" + (i + 1));
+                }
+                users.put(
+                        parseUsername(fields[0], i + 1),
+                        new Account(parseHash(fields[1], i + 1), parseTenant(fields, i + 1)));
             }
             return new Snapshot(
                     Collections.unmodifiableMap(users), attrs.lastModifiedTime(), attrs.size(), attrs.fileKey());
@@ -190,28 +232,39 @@ public final class UserStore {
         }
     }
 
-    private String parseUsername(String line, int lineNumber) {
-        int sep = line.indexOf(SEPARATOR);
-        String name = sep < 0 ? "" : line.substring(0, sep);
+    private String parseUsername(String name, int lineNumber) {
         if (!USERNAME.matcher(name).matches()) {
             throw new IllegalStateException("Malformed user entry at " + file + ":" + lineNumber);
         }
         return name;
     }
 
-    private PasswordHasher.Hash parseHash(String line, int lineNumber) {
+    private PasswordHasher.Hash parseHash(String encoded, int lineNumber) {
         try {
-            return PasswordHasher.Hash.decode(line.substring(line.indexOf(SEPARATOR) + 1));
+            return PasswordHasher.Hash.decode(encoded);
         } catch (IllegalArgumentException e) {
             // The message names only the location: the line itself holds hash material.
             throw new IllegalStateException("Malformed password hash at " + file + ":" + lineNumber);
         }
     }
 
-    private void save(Map<String, PasswordHasher.Hash> users) {
+    private String parseTenant(String[] fields, int lineNumber) {
+        if (fields.length < 3) {
+            return TenantId.DEFAULT;
+        }
+        if (!TenantId.isValid(fields[2])) {
+            throw new IllegalStateException("Malformed tenant at " + file + ":" + lineNumber);
+        }
+        return fields[2];
+    }
+
+    private void save(Map<String, Account> users) {
         List<String> lines = new ArrayList<>();
-        lines.add("# Nexora dashboard users: username:iterations$salt$hash. Manage with `nexora user`.");
-        users.forEach((name, hash) -> lines.add(name + SEPARATOR + hash.encode()));
+        lines.add("# Nexora dashboard users: username:iterations$salt$hash[:tenant]. Manage with `nexora user`.");
+        users.forEach((name, account) -> lines.add(name
+                + SEPARATOR
+                + account.hash().encode()
+                + (TenantId.DEFAULT.equals(account.tenantId()) ? "" : SEPARATOR + account.tenantId())));
         try {
             SecureFiles.writeOwnerOnly(file, String.join(System.lineSeparator(), lines) + System.lineSeparator());
         } catch (IOException e) {
