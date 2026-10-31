@@ -14,7 +14,7 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -30,6 +30,10 @@ import org.slf4j.LoggerFactory;
  * Schedules survive engine restarts: on startup, all active schedules are
  * reloaded from the store and rescheduled, applying the configured
  * {@link MissedFirePolicy} for any windows missed while the engine was down.
+ *
+ * Each schedule belongs to the tenant of the intent it was created with, and every firing runs
+ * for that tenant. A scheduler limited to one tenant reloads, lists and fires only that tenant's
+ * schedules, so per-tenant engines sharing a store never fire each other's schedules.
  */
 public final class CronScheduler implements AutoCloseable {
 
@@ -40,11 +44,18 @@ public final class CronScheduler implements AutoCloseable {
     private final ExecutionEventBus eventBus;
     private final ScheduledExecutorService scheduler;
     private final ConcurrentHashMap<String, ScheduledFuture<?>> activeFutures = new ConcurrentHashMap<>();
+    private final String tenantScope; // null = every tenant's schedules
 
     public CronScheduler(ExecutionEngine engine, ExecutionStore store, ExecutionEventBus eventBus) {
+        this(engine, store, eventBus, null);
+    }
+
+    /** @param tenantScope the only tenant whose schedules this scheduler runs; {@code null} runs every tenant's */
+    public CronScheduler(ExecutionEngine engine, ExecutionStore store, ExecutionEventBus eventBus, String tenantScope) {
         this.engine = engine;
         this.store = store;
         this.eventBus = eventBus;
+        this.tenantScope = tenantScope;
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "nexora-cron-scheduler");
             t.setDaemon(true);
@@ -76,11 +87,17 @@ public final class CronScheduler implements AutoCloseable {
                 null,
                 nextFire.toInstant(),
                 ScheduleStatus.NEVER_RUN,
-                true);
+                true,
+                intent.getTenantId());
         store.createSchedule(record);
         enqueue(record.id(), nextFire);
 
-        log.info("Schedule registered id={} cron='{}' nextFire={}", record.id(), cronExpression, nextFire);
+        log.info(
+                "Schedule registered id={} tenantId={} cron='{}' nextFire={}",
+                record.id(),
+                record.tenantId(),
+                cronExpression,
+                nextFire);
         return new ScheduledExecution(record.id(), cronExpression, nextFire.toInstant(), this);
     }
 
@@ -94,12 +111,27 @@ public final class CronScheduler implements AutoCloseable {
 
     /** Returns all schedules known to the store (active and inactive). */
     public List<ScheduleRecord> listAll() {
-        return store.findAllSchedules();
+        return inScope(store.findAllSchedules());
     }
 
     /** Returns only active schedules. */
     public List<ScheduleRecord> listActive() {
-        return store.findActiveSchedules();
+        return inScope(store.findActiveSchedules());
+    }
+
+    /** The schedule with this id, if it exists and is within this scheduler's tenant scope. */
+    public Optional<ScheduleRecord> find(String scheduleId) {
+        return store.findScheduleById(scheduleId).filter(this::inScope);
+    }
+
+    private List<ScheduleRecord> inScope(List<ScheduleRecord> records) {
+        return tenantScope == null
+                ? records
+                : records.stream().filter(this::inScope).toList();
+    }
+
+    private boolean inScope(ScheduleRecord record) {
+        return tenantScope == null || tenantScope.equals(record.tenantId());
     }
 
     @Override
@@ -110,7 +142,7 @@ public final class CronScheduler implements AutoCloseable {
     // --- internals ---
 
     private void reloadFromStore() {
-        List<ScheduleRecord> active = store.findActiveSchedules();
+        List<ScheduleRecord> active = listActive();
         if (active.isEmpty()) return;
         log.info("Reloading {} active schedule(s) from store", active.size());
         for (ScheduleRecord record : active) {
@@ -143,7 +175,7 @@ public final class CronScheduler implements AutoCloseable {
                             "Schedule id={} missed {} window(s); FIRE_ONCE, firing once now",
                             record.id(),
                             missed.size());
-                    executeAndPublish(record.id(), record.goal(), record.context());
+                    executeAndPublish(record);
                     int extra = missed.size() - 1;
                     if (extra > 0) {
                         eventBus.publish(new ScheduledExecutionMissedEvent(record.id(), extra, from, now.toInstant()));
@@ -156,7 +188,7 @@ public final class CronScheduler implements AutoCloseable {
                             missed.size(),
                             missed.size());
                     for (int i = 0; i < missed.size(); i++) {
-                        executeAndPublish(record.id(), record.goal(), record.context());
+                        executeAndPublish(record);
                     }
                 }
             }
@@ -174,13 +206,13 @@ public final class CronScheduler implements AutoCloseable {
 
     private void onFire(String scheduleId) {
         ScheduleRecord record = store.findScheduleById(scheduleId).orElse(null);
-        if (record == null || !record.active()) {
+        if (record == null || !record.active() || !inScope(record)) {
             activeFutures.remove(scheduleId);
             return;
         }
 
         log.debug("Firing schedule id={} goal='{}'", scheduleId, record.goal());
-        executeAndPublish(scheduleId, record.goal(), record.context());
+        executeAndPublish(record);
 
         ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
         CronExpression cron = CronExpression.parse(record.cronExpression());
@@ -189,8 +221,10 @@ public final class CronScheduler implements AutoCloseable {
         enqueue(scheduleId, nextFire);
     }
 
-    private void executeAndPublish(String scheduleId, String goal, Map<String, Object> context) {
-        engine.execute(new Intent(goal, context)).whenComplete((result, ex) -> {
+    private void executeAndPublish(ScheduleRecord record) {
+        String scheduleId = record.id();
+        Intent intent = new Intent(record.goal(), record.context(), null, null, null, record.tenantId());
+        engine.execute(intent).whenComplete((result, ex) -> {
             if (ex != null) {
                 log.error("Scheduled execution failed scheduleId={}", scheduleId, ex);
                 store.updateScheduleStatus(scheduleId, ScheduleStatus.FAILED);
