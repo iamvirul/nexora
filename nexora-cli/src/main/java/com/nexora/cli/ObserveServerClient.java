@@ -3,6 +3,8 @@ package com.nexora.cli;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexora.api.auth.ApiKeyStore;
+import com.nexora.api.auth.TenantResolver;
+import com.nexora.core.tenant.TenantId;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URI;
@@ -48,7 +50,16 @@ final class ObserveServerClient {
      * {@value ApiKeyStore#ENV_VAR}, else the user API key {@code nexora login} saved for this server.
      * Null sends none.
      */
-    record Server(URI url, String apiKey, boolean allowInsecureHttp, HttpClient client) {
+    /** @param tenantId sent as {@value TenantResolver#HEADER} when not null, for a multi-tenant server */
+    record Server(URI url, String apiKey, boolean allowInsecureHttp, HttpClient client, String tenantId) {
+
+        Server(URI url, String apiKey, boolean allowInsecureHttp, HttpClient client) {
+            this(url, apiKey, allowInsecureHttp, client, null);
+        }
+
+        Server withTenant(String tenant) {
+            return new Server(url, apiKey, allowInsecureHttp, client, tenant);
+        }
 
         static Server of(URI url, String flagKey, Path credentialsFile, boolean allowInsecureHttp, CaCertOption trust) {
             String key = flagKey != null ? flagKey : System.getenv(ApiKeyStore.ENV_VAR);
@@ -110,6 +121,11 @@ final class ObserveServerClient {
             err.println("Error: EXECUTION_ID must not be blank.");
             return EXIT_USAGE;
         }
+        if (target.tenantId() != null && !TenantId.isValid(target.tenantId())) {
+            err.println("Error: --tenant must be 1 to " + TenantId.MAX_LENGTH
+                    + " characters of a-z, 0-9, '-' or '_', starting with a letter or digit.");
+            return EXIT_USAGE;
+        }
         if (!isHttpUrl(server)) {
             err.printf("Error: --server must be an http(s) URL such as http://localhost:9464, got: %s%n", server);
             return EXIT_USAGE;
@@ -133,7 +149,7 @@ final class ObserveServerClient {
         }
         HttpResponse<String> response;
         try {
-            response = send(target.client(), uri, method, target.apiKey());
+            response = send(target, uri, method);
         } catch (IOException e) {
             err.println(unreachable(server, e));
             return EXIT_FAILED;
@@ -165,8 +181,18 @@ final class ObserveServerClient {
     }
 
     /** Pulls the "error" field out of a JSON error body, falling back to the raw body. */
+    /** The error text of a response: {@code {"error": "..."}} or {@code {"error": {"message": "..."}}}. */
     static String errorMessage(String body) {
-        return field(body, "error").orElse(body);
+        return field(body, "error").or(() -> nestedMessage(body)).orElse(body);
+    }
+
+    private static Optional<String> nestedMessage(String body) {
+        try {
+            JsonNode message = JSON.readTree(body).path("error").path("message");
+            return message.isTextual() ? Optional.of(message.asText()) : Optional.empty();
+        } catch (IOException e) {
+            return Optional.empty();
+        }
     }
 
     /** Reads a top-level text field from a JSON body. */
@@ -179,15 +205,18 @@ final class ObserveServerClient {
         }
     }
 
-    private static HttpResponse<String> send(HttpClient client, URI target, String method, String apiKey)
+    private static HttpResponse<String> send(Server target, URI uri, String method)
             throws IOException, InterruptedException {
-        HttpRequest.Builder request = HttpRequest.newBuilder(target)
+        HttpRequest.Builder request = HttpRequest.newBuilder(uri)
                 .timeout(REQUEST_TIMEOUT)
                 .method(method, HttpRequest.BodyPublishers.noBody());
-        if (apiKey != null) {
-            request.header("Authorization", "Bearer " + apiKey);
+        if (target.apiKey() != null) {
+            request.header("Authorization", "Bearer " + target.apiKey());
         }
-        return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+        if (target.tenantId() != null) {
+            request.header(TenantResolver.HEADER, target.tenantId());
+        }
+        return target.client().send(request.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     /**

@@ -14,6 +14,11 @@ info:
     API docs stay public, since probes and scrapers cannot carry credentials. The key travels in
     clear over plain HTTP until TLS lands ([#40](https://github.com/iamvirul/nexora/issues/40)).
 
+    A server started with `--multi-tenant` scopes every execution, history, dead letter, schedule
+    and webhook route, and the live stream, to one tenant (see the `X-Tenant-ID` parameter).
+    Another tenant's resources answer `404`, exactly like unknown ones. Without the flag every
+    caller sees everything and `X-Tenant-ID` is ignored.
+
     This document is maintained by hand. Every route registered by the server must appear here;
     `OpenApiSpecTest` fails the build when a route is added without updating this file.
   license:
@@ -56,6 +61,7 @@ paths:
         Plans and starts the goal asynchronously and returns immediately with the new execution id.
         A W3C `traceparent` header continues the caller's trace.
       parameters:
+        - $ref: '#/components/parameters/TenantId'
         - name: traceparent
           in: header
           required: false
@@ -77,6 +83,8 @@ paths:
                   webhookUrl: https://your-api.example.com/webhooks/nexora
                   webhookEvents: [COMPLETED, FAILED]
       responses:
+        '403':
+          $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '202':
@@ -114,6 +122,7 @@ paths:
         next page; it is `null` on the last page. `total` counts every match, not just this page.
         Keep the same filters when following a cursor. Requires a persistence store.
       parameters:
+        - $ref: '#/components/parameters/TenantId'
         - name: status
           in: query
           description: One or more execution states, comma-separated, case-insensitive.
@@ -152,6 +161,8 @@ paths:
           schema:
             type: string
       responses:
+        '403':
+          $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '200':
@@ -200,7 +211,13 @@ paths:
         Each completed step includes its recorded `output`, up to `persistence.stepOutputMaxBytes`
         (64 KB by default). Outputs can hold business data, so anyone with an API key or a
         dashboard session can read them; set the cap to 0 to record none.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
       responses:
+        '400':
+          $ref: '#/components/responses/TenantRequired'
+        '403':
+          $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '200':
@@ -263,7 +280,13 @@ paths:
         Steps that have not started are never started, running steps are interrupted, and the
         execution finishes as `CANCELLED`. Safe to repeat: a second cancel while it is stopping also
         returns `200`.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
       responses:
+        '400':
+          $ref: '#/components/responses/TenantRequired'
+        '403':
+          $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '200':
@@ -318,7 +341,13 @@ paths:
         Re-runs a `FAILED`, `TIMED_OUT`, `CANCELLED` or `COMPENSATED` execution with the same goal and
         context under a new execution id. The replay's context carries the original id as `_replayOf`.
         Completed steps reuse their idempotency keys unless the original was compensated.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
       responses:
+        '400':
+          $ref: '#/components/responses/TenantRequired'
+        '403':
+          $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '202':
@@ -367,8 +396,15 @@ paths:
       operationId: listWebhookDeliveries
       summary: Webhook delivery attempts for an execution
       parameters:
+        - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/ExecutionId'
       responses:
+        '400':
+          $ref: '#/components/responses/TenantRequired'
+        '403':
+          $ref: '#/components/responses/TenantForbidden'
+        '404':
+          $ref: '#/components/responses/ExecutionNotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '200':
@@ -410,6 +446,7 @@ paths:
       operationId: listDeadLetters
       summary: List dead letters
       parameters:
+        - $ref: '#/components/parameters/TenantId'
         - name: state
           in: query
           description: Review state to filter by, or `ALL`.
@@ -433,6 +470,8 @@ paths:
             maximum: 100
             default: 20
       responses:
+        '403':
+          $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '200':
@@ -481,7 +520,13 @@ paths:
         Replays the original execution (see `POST /api/executions/{executionId}/replay`) and marks
         the dead letter `REPLAYED`. Falls back to the dead letter's own goal and context when the
         original execution record no longer exists.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
       responses:
+        '400':
+          $ref: '#/components/responses/TenantRequired'
+        '403':
+          $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '202':
@@ -530,7 +575,13 @@ paths:
             examples:
               withReason:
                 value: { reason: 'False positive, investigated' }
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
       responses:
+        '400':
+          $ref: '#/components/responses/TenantRequired'
+        '403':
+          $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '200':
@@ -554,7 +605,13 @@ paths:
       tags: [Schedules]
       operationId: listSchedules
       summary: List all cron schedules
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
       responses:
+        '400':
+          $ref: '#/components/responses/TenantRequired'
+        '403':
+          $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '200':
@@ -594,7 +651,11 @@ paths:
             examples:
               nightly:
                 value: { cronExpression: 0 0 * * *, goal: nightly cleanup, missedFirePolicy: SKIP }
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
       responses:
+        '403':
+          $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '201':
@@ -628,6 +689,7 @@ paths:
       operationId: cancelSchedule
       summary: Cancel a cron schedule
       parameters:
+        - $ref: '#/components/parameters/TenantId'
         - name: scheduleId
           in: path
           required: true
@@ -635,6 +697,19 @@ paths:
           schema:
             type: string
       responses:
+        '400':
+          $ref: '#/components/responses/TenantRequired'
+        '403':
+          $ref: '#/components/responses/TenantForbidden'
+        '404':
+          description: Multi-tenant server only. No schedule with this id belongs to the request's tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  value: { error: Schedule not found }
         '401':
           $ref: '#/components/responses/Unauthorized'
         '200':
@@ -681,19 +756,22 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [apiKey, user, expiresAt]
+                required: [apiKey, user, tenantId, expiresAt]
                 properties:
                   apiKey:
                     type: string
                     pattern: '^nxu_[A-Za-z0-9_-]{43}$'
                   user:
                     type: string
+                  tenantId:
+                    type: string
+                    description: The user's tenant; the key reaches only that tenant on a multi-tenant server.
                   expiresAt:
                     type: string
                     format: date-time
               examples:
                 issued:
-                  value: { apiKey: nxu_x8Q2r1kV0bLm7dQe9sTzA4hJcN6wPfY3uGiK5oR0aEw, user: alice, expiresAt: '2026-10-14T22:00:00Z' }
+                  value: { apiKey: nxu_x8Q2r1kV0bLm7dQe9sTzA4hJcN6wPfY3uGiK5oR0aEw, user: alice, tenantId: acme, expiresAt: '2026-10-14T22:00:00Z' }
         '400':
           $ref: '#/components/responses/InvalidLoginBody'
         '401':
@@ -732,9 +810,15 @@ paths:
                   passwordLogin:
                     type: boolean
                     description: Whether this server has dashboard users.
+                  tenantId:
+                    type: [string, 'null']
+                    description: The tenant the credential is bound to; null for the server's own key, which names one per request.
+                  multiTenant:
+                    type: boolean
+                    description: Whether the server scopes requests to tenants (`--multi-tenant`).
               examples:
                 user:
-                  value: { user: alice, credential: SESSION, expiresAt: '2026-10-14T22:00:00Z', passwordLogin: true }
+                  value: { user: alice, tenantId: acme, multiTenant: true, credential: SESSION, expiresAt: '2026-10-14T22:00:00Z', passwordLogin: true }
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
@@ -746,6 +830,8 @@ paths:
         (`Authorization: Bearer`), and sets it as the cookie (`HttpOnly; SameSite=Strict`, 12 hours)
         so page script never sees it. A user key or cookie cannot mint another. Password sign-in
         must be `application/json` and, when the browser sends an `Origin`, come from this server.
+        The session is bound to the user's tenant; on a multi-tenant server a key-holder session is
+        bound to the tenant named in `X-Tenant-ID`, which is then required (`400 TENANT_REQUIRED`).
       security:
         - bearerAuth: []
         - {}
@@ -772,12 +858,15 @@ paths:
                 properties:
                   user:
                     type: [string, 'null']
+                  tenantId:
+                    type: [string, 'null']
+                    description: The tenant the session is bound to; null for a key-holder session on a single-tenant server.
                   expiresAt:
                     type: string
                     format: date-time
               examples:
                 opened:
-                  value: { user: alice, expiresAt: '2026-10-14T22:00:00Z' }
+                  value: { user: alice, tenantId: acme, expiresAt: '2026-10-14T22:00:00Z' }
         '400':
           $ref: '#/components/responses/InvalidLoginBody'
         '401':
@@ -939,7 +1028,13 @@ paths:
       description: |
         In-memory view of recent executions with per-step timelines, as streamed to the dashboard
         over WebSocket. Not persisted; use `/api/executions` for history.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
       responses:
+        '400':
+          $ref: '#/components/responses/TenantRequired'
+        '403':
+          $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '200':
@@ -1089,6 +1184,20 @@ components:
       name: nexora_session
       description: Set by `POST /api/session` for the dashboard.
   parameters:
+    TenantId:
+      name: X-Tenant-ID
+      in: header
+      required: false
+      description: |
+        The tenant the request acts for. Ignored unless the server runs with `--multi-tenant`.
+        There, the server API key must send it (missing: `400 TENANT_REQUIRED`), while a user key or
+        session is bound to the user's tenant and may only repeat it (another tenant:
+        `403 TENANT_FORBIDDEN`). An invalid value is `400 INVALID_TENANT_ID`. Operations that already
+        answer `400` for their own input use the same status for these tenant errors.
+      schema:
+        type: string
+        pattern: '^[a-z0-9][a-z0-9_-]{0,63}$'
+      example: acme
     ExecutionId:
       name: executionId
       in: path
@@ -1107,6 +1216,26 @@ components:
       example: 6d5c4b3a-2f1e-4d0c-9b8a-7f6e5d4c3b2a
 
   responses:
+    TenantRequired:
+      description: Multi-tenant server only. The server API key sent no `X-Tenant-ID`, or the header is not a valid tenant id.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          examples:
+            missing:
+              value: { error: { code: TENANT_REQUIRED, message: 'This server is multi-tenant: send X-Tenant-ID to name the tenant' } }
+            invalid:
+              value: { error: { code: INVALID_TENANT_ID, message: "X-Tenant-ID must be 1 to 64 characters of a-z, 0-9, '-' or '_', starting with a letter or digit" } }
+    TenantForbidden:
+      description: Multi-tenant server only. `X-Tenant-ID` names a tenant other than the one the user key or session is bound to.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          examples:
+            forbidden:
+              value: { error: { code: TENANT_FORBIDDEN, message: This credential cannot act for the requested tenant } }
     InvalidLoginBody:
       description: 'The body is not `{"username": "...", "password": "..."}`, or is over 4 KB.'
       content:
@@ -1449,6 +1578,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/StepRecord'
+        tenantId:
+          type: string
+          description: The tenant this belongs to; `default` on a single-tenant server.
     CancelAccepted:
       type: object
       required: [cancelled, executionId]
@@ -1529,6 +1661,9 @@ components:
           enum: [PENDING, RESOLVED, REPLAYED]
         resolveReason:
           type: [string, 'null']
+        tenantId:
+          type: string
+          description: The tenant this belongs to; `default` on a single-tenant server.
     DeadLetterPage:
       type: object
       required: [items, page, size]
@@ -1592,6 +1727,9 @@ components:
         lastStatus:
           type: string
           enum: [NEVER_RUN, FIRED, FAILED, MISSED, CANCELED]
+        tenantId:
+          type: string
+          description: The tenant this belongs to; `default` on a single-tenant server.
     MissedFirePolicy:
       type: string
       enum: [SKIP, FIRE_ONCE, FIRE_ALL]
@@ -1737,6 +1875,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TimelineEntry'
+        tenantId:
+          type: string
+          description: The tenant this belongs to; `default` on a single-tenant server.
     StepSnapshot:
       type: object
       properties:

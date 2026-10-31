@@ -5,10 +5,13 @@ import com.nexora.api.ExecutionNotOwnedException;
 import com.nexora.api.ExecutionNotReplayableException;
 import com.nexora.api.NexoraEngine;
 import com.nexora.api.auth.ApiAuth;
+import com.nexora.api.auth.TenantResolver;
+import com.nexora.api.auth.TenantScope;
 import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.execution.ExecutionStatus;
 import com.nexora.core.intent.Intent;
 import com.nexora.persistence.ExecutionCursor;
+import com.nexora.persistence.ExecutionFilter;
 import com.nexora.persistence.ExecutionRecord;
 import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.ExecutionStore;
@@ -53,7 +56,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p>History requires a persistence store; without one those routes return {@code 503}.
  *
- * <p>Authentication will be enforced once #30 lands.
+ * <p>Every route acts for the tenant {@link TenantResolver} assigns the request. On a multi-tenant
+ * server, new executions run for that tenant and another tenant's executions answer {@code 404},
+ * exactly like unknown ones.
  */
 final class ExecutionEndpoints {
 
@@ -77,19 +82,28 @@ final class ExecutionEndpoints {
     private static final int STATUS_UNAVAILABLE = 503;
 
     private final NexoraEngine engine;
+    private final TenantResolver tenants;
 
     ExecutionEndpoints(NexoraEngine engine) {
+        this(engine, TenantResolver.singleTenant());
+    }
+
+    ExecutionEndpoints(NexoraEngine engine, TenantResolver tenants) {
         this.engine = Objects.requireNonNull(engine, "engine must not be null");
+        this.tenants = Objects.requireNonNull(tenants, "tenants must not be null");
     }
 
-    /** Every route requires an authenticated caller; {@code auth} answers 401 before any handler runs. */
+    /**
+     * Every route requires an authenticated caller; {@code auth} answers 401 before any handler runs,
+     * and the tenant is resolved (400 or 403 on failure) before the route's own checks.
+     */
     void register(HttpServer server, ApiAuth auth) {
-        server.createContext(EXECUTE_PATH, auth.protect(this::execute));
-        server.createContext(LIST_PATH, auth.protect(this::list));
-        server.createContext(PATH_PREFIX, auth.protect(this::handle));
+        server.createContext(EXECUTE_PATH, auth.protect(ObserveCommand.scoped(tenants, this::execute)));
+        server.createContext(LIST_PATH, auth.protect(ObserveCommand.scoped(tenants, this::list)));
+        server.createContext(PATH_PREFIX, auth.protect(ObserveCommand.scoped(tenants, this::handle)));
     }
 
-    private void list(HttpExchange exchange) throws IOException {
+    private void list(HttpExchange exchange, TenantScope scope) throws IOException {
         if (!LIST_PATH.equals(exchange.getRequestURI().getPath())) {
             ObserveCommand.sendText(exchange, STATUS_NOT_FOUND, "Not Found");
             return;
@@ -114,8 +128,9 @@ final class ExecutionEndpoints {
         }
 
         try {
+            ExecutionFilter filter = query.filter().forTenant(scope.tenantId());
             // The filter asks for one row more than the page so we know whether a next page exists.
-            List<ExecutionRecord> rows = store.findByFilter(query.filter());
+            List<ExecutionRecord> rows = store.findByFilter(filter);
             boolean hasMore = rows.size() > query.pageSize();
             List<ExecutionRecord> page = hasMore ? rows.subList(0, query.pageSize()) : rows;
 
@@ -124,7 +139,7 @@ final class ExecutionEndpoints {
             body.put(
                     "cursor",
                     hasMore ? ExecutionCursor.after(page.get(page.size() - 1)).encode() : null);
-            body.put("total", store.count(query.filter()));
+            body.put("total", store.count(filter));
             ObserveCommand.sendJson(exchange, STATUS_OK, body);
         } catch (RuntimeException e) {
             log.error("Execution history query failed", e);
@@ -132,7 +147,7 @@ final class ExecutionEndpoints {
         }
     }
 
-    private void detail(HttpExchange exchange, String executionId) throws IOException {
+    private void detail(HttpExchange exchange, TenantScope scope, String executionId) throws IOException {
         ExecutionStore store = engine.getStore();
         if (store == null) {
             ObserveCommand.sendJson(exchange, STATUS_UNAVAILABLE, Map.of("error", "Persistence disabled"));
@@ -140,7 +155,9 @@ final class ExecutionEndpoints {
         }
         Optional<ExecutionRecord> record;
         try {
-            record = store.findById(executionId);
+            record = scope.tenantId() == null
+                    ? store.findById(executionId)
+                    : store.findById(scope.tenantId(), executionId);
         } catch (RuntimeException e) {
             log.error("Execution detail query failed executionId={}", executionId, e);
             sendError(exchange, STATUS_INTERNAL_ERROR, executionId, "Execution detail query failed");
@@ -153,7 +170,7 @@ final class ExecutionEndpoints {
         ObserveCommand.sendJson(exchange, STATUS_OK, record.get());
     }
 
-    private void execute(HttpExchange exchange) throws IOException {
+    private void execute(HttpExchange exchange, TenantScope scope) throws IOException {
         if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
             exchange.getResponseHeaders().set("Allow", "POST");
             ObserveCommand.sendText(exchange, STATUS_METHOD_NOT_ALLOWED, "Method Not Allowed");
@@ -181,7 +198,8 @@ final class ExecutionEndpoints {
                 request.context() == null ? Map.of() : request.context(),
                 null,
                 request.webhookUrl(),
-                request.webhookEvents());
+                request.webhookEvents(),
+                scope.tenantId());
         ExecutionHandle handle = W3CTraceparent.parse(
                         exchange.getRequestHeaders().getFirst("traceparent"))
                 .map(parsed -> engine.submit(intent, W3CTraceparent.toTraceContext(parsed)))
@@ -206,10 +224,10 @@ final class ExecutionEndpoints {
                         handle.executionId()));
     }
 
-    private void handle(HttpExchange exchange) throws IOException {
+    private void handle(HttpExchange exchange, TenantScope scope) throws IOException {
         String remainder = exchange.getRequestURI().getPath().substring(PATH_PREFIX.length());
         if (remainder.endsWith(REPLAY_SUFFIX)) {
-            handleReplay(exchange, remainder.substring(0, remainder.length() - REPLAY_SUFFIX.length()));
+            handleReplay(exchange, scope, remainder.substring(0, remainder.length() - REPLAY_SUFFIX.length()));
             return;
         }
         String executionId = remainder;
@@ -218,8 +236,8 @@ final class ExecutionEndpoints {
             return;
         }
         switch (exchange.getRequestMethod().toUpperCase(Locale.ROOT)) {
-            case "GET" -> detail(exchange, executionId);
-            case "DELETE" -> cancel(exchange, executionId);
+            case "GET" -> detail(exchange, scope, executionId);
+            case "DELETE" -> cancel(exchange, scope, executionId);
             default -> {
                 exchange.getResponseHeaders().set("Allow", "GET, DELETE");
                 ObserveCommand.sendText(exchange, STATUS_METHOD_NOT_ALLOWED, "Method Not Allowed");
@@ -227,7 +245,7 @@ final class ExecutionEndpoints {
         }
     }
 
-    private void handleReplay(HttpExchange exchange, String executionId) throws IOException {
+    private void handleReplay(HttpExchange exchange, TenantScope scope, String executionId) throws IOException {
         if (executionId.isBlank() || executionId.contains("/")) {
             ObserveCommand.sendText(exchange, STATUS_NOT_FOUND, "Not Found");
             return;
@@ -242,7 +260,7 @@ final class ExecutionEndpoints {
             return;
         }
         try {
-            ExecutionHandle replay = engine.replay(executionId);
+            ExecutionHandle replay = engine.replay(scope.tenantId(), executionId);
             ObserveCommand.sendJson(
                     exchange,
                     STATUS_ACCEPTED,
@@ -266,9 +284,10 @@ final class ExecutionEndpoints {
         }
     }
 
-    private void cancel(HttpExchange exchange, String executionId) throws IOException {
+    private void cancel(HttpExchange exchange, TenantScope scope, String executionId) throws IOException {
         try {
-            boolean cancelled = engine.cancel(executionId).get(CANCEL_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            boolean cancelled =
+                    engine.cancel(scope.tenantId(), executionId).get(CANCEL_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
             if (cancelled) {
                 ObserveCommand.sendJson(exchange, STATUS_OK, Map.of("cancelled", true, "executionId", executionId));
             } else {

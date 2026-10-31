@@ -8,20 +8,30 @@ Manage the observe dashboard's user accounts.
   iterations, random salt) into ~/.nexora/observe-users, which only you can
   read. Passwords must be 12 to 128 characters and differ from the username.
 
+  Every user belongs to one tenant (default: "default"). On a server started
+  with --multi-tenant, users reach only their own tenant's executions, dead
+  letters and schedules.
+
   Changes reach a running `nexora observe` immediately; no restart is needed.
-  Removing a user or changing a password ends their sessions and keys.
+  Removing a user, changing a password or moving a user to another tenant ends
+  their sessions and keys.
 
   Subcommands
   ───────────
     add <username>       Create a user (prompts for the password twice)
+                         --tenant <id> puts the user in a tenant
     passwd <username>    Change a password
     remove <username>    Delete a user
-    list                 List users
+    tenant <user> <id>   Move a user to another tenant
+    list                 List users (with their tenant, unless "default")
 
   Examples
   ────────
   Add a user interactively:
     nexora user add alice
+
+  Add a user of tenant "acme":
+    nexora user add bob --tenant acme
 
   Add a user from a script (password on the first line of stdin):
     printf '%s\n' "$ALICE_PASSWORD" | nexora user add alice --password-stdin

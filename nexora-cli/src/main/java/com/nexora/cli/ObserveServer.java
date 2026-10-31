@@ -2,6 +2,8 @@ package com.nexora.cli;
 
 import com.nexora.api.NexoraEngine;
 import com.nexora.api.auth.ApiAuth;
+import com.nexora.api.auth.TenantResolver;
+import com.nexora.api.auth.TenantScope;
 import com.nexora.api.observability.NexoraObservability;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
@@ -13,6 +15,8 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import javax.net.ssl.SSLParameters;
@@ -43,8 +47,18 @@ public final class ObserveServer implements AutoCloseable {
      * @param webSocketPort the dashboard expects it at {@code httpPort + 1} unless told otherwise
      * @param tls           the certificate for HTTPS and WSS, or {@code null} to serve plain HTTP and WS
      */
+    /**
+     * @param multiTenant whether every request acts for one tenant (see {@link TenantResolver});
+     *                    false serves every execution to every caller, as before tenants existed
+     */
     public record Config(
-            String host, int httpPort, int webSocketPort, int maxExecutions, int maxEvents, ObserveTls tls) {
+            String host,
+            int httpPort,
+            int webSocketPort,
+            int maxExecutions,
+            int maxEvents,
+            ObserveTls tls,
+            boolean multiTenant) {
 
         public static final int DEFAULT_MAX_EXECUTIONS = 100;
         public static final int DEFAULT_MAX_EVENTS = 200;
@@ -63,7 +77,7 @@ public final class ObserveServer implements AutoCloseable {
 
         /** Plain HTTP and WS. */
         public Config(String host, int httpPort, int webSocketPort, int maxExecutions, int maxEvents) {
-            this(host, httpPort, webSocketPort, maxExecutions, maxEvents, null);
+            this(host, httpPort, webSocketPort, maxExecutions, maxEvents, null, false);
         }
 
         /** HTTP on {@code httpPort}, the WebSocket on the next port, default retention. */
@@ -73,7 +87,16 @@ public final class ObserveServer implements AutoCloseable {
 
         /** The same settings, served over HTTPS and WSS with {@code tls}. */
         public Config withTls(ObserveTls tls) {
-            return new Config(host, httpPort, webSocketPort, maxExecutions, maxEvents, Objects.requireNonNull(tls));
+            return new Config(
+                    host, httpPort, webSocketPort, maxExecutions, maxEvents, Objects.requireNonNull(tls), multiTenant);
+        }
+
+        public Config withMultiTenant(boolean enabled) {
+            return new Config(host, httpPort, webSocketPort, maxExecutions, maxEvents, tls, enabled);
+        }
+
+        TenantResolver tenantResolver() {
+            return multiTenant ? TenantResolver.multiTenant() : TenantResolver.singleTenant();
         }
 
         private static void requirePort(int port, String name) {
@@ -111,8 +134,10 @@ public final class ObserveServer implements AutoCloseable {
                 NexoraObservability.attach(engine, config.maxExecutions(), config.maxEvents());
         SnapshotBroadcaster broadcaster = null;
         try {
-            byte[] indexHtml = loadUiHtml(config.webSocketPort(), auth.passwordLoginEnabled());
-            broadcaster = new SnapshotBroadcaster(config.host(), config.webSocketPort(), auth, config.httpPort());
+            TenantResolver tenants = config.tenantResolver();
+            byte[] indexHtml = loadUiHtml(config.webSocketPort(), auth.passwordLoginEnabled(), config.multiTenant());
+            broadcaster =
+                    new SnapshotBroadcaster(config.host(), config.webSocketPort(), auth, tenants, config.httpPort());
             if (config.tls() != null) {
                 broadcaster.setWebSocketFactory(new SSLParametersWebSocketServerFactory(
                         config.tls().context(), config.tls().parameters()));
@@ -120,7 +145,7 @@ public final class ObserveServer implements AutoCloseable {
             SnapshotBroadcaster stream = broadcaster;
             observability.addSnapshotListener(snap -> {
                 try {
-                    stream.broadcastSnapshot(ObserveCommand.JSON.writeValueAsString(snap));
+                    stream.broadcastSnapshot(snap);
                 } catch (Exception e) {
                     log.warn("Could not broadcast process snapshot", e);
                 }
@@ -129,7 +154,7 @@ public final class ObserveServer implements AutoCloseable {
 
             HttpServer http = createHttpServer(config);
             http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
-            ObserveCommand.registerRoutes(http, engine, observability, indexHtml, auth);
+            ObserveCommand.registerRoutes(http, engine, observability, indexHtml, auth, tenants);
             http.start();
             return new ObserveServer(http, broadcaster, observability, config);
         } catch (IOException | RuntimeException e) {
@@ -179,6 +204,10 @@ public final class ObserveServer implements AutoCloseable {
         return config.webSocketPort();
     }
 
+    public boolean multiTenant() {
+        return config.multiTenant();
+    }
+
     /** Stops accepting requests, closes the stream, and detaches from the engine. The engine itself is the caller's. */
     @Override
     public void close() {
@@ -198,7 +227,7 @@ public final class ObserveServer implements AutoCloseable {
         }
     }
 
-    private static byte[] loadUiHtml(int wsPort, boolean passwordLogin) {
+    private static byte[] loadUiHtml(int wsPort, boolean passwordLogin, boolean multiTenant) {
         String resource = "observe/index.html";
         try (InputStream is = ObserveCommand.class.getClassLoader().getResourceAsStream(resource)) {
             if (is == null) {
@@ -206,7 +235,8 @@ public final class ObserveServer implements AutoCloseable {
             }
             String html = new String(is.readAllBytes(), StandardCharsets.UTF_8);
             html = html.replace("{{WS_PORT}}", String.valueOf(wsPort))
-                    .replace("{{PASSWORD_LOGIN}}", String.valueOf(passwordLogin));
+                    .replace("{{PASSWORD_LOGIN}}", String.valueOf(passwordLogin))
+                    .replace("{{MULTI_TENANT}}", String.valueOf(multiTenant));
             return html.getBytes(StandardCharsets.UTF_8);
         } catch (IOException e) {
             return ("<h1>Failed to load UI resource</h1><pre>" + e.getMessage() + "</pre>")
@@ -214,14 +244,24 @@ public final class ObserveServer implements AutoCloseable {
         }
     }
 
+    /**
+     * Streams process snapshots. Each connection is scoped to a tenant at the handshake, by the same
+     * rules as HTTP requests, and only ever receives that tenant's executions.
+     */
     static final class SnapshotBroadcaster extends WebSocketServer {
 
         private final ApiAuth auth;
+        private final TenantResolver tenants;
         private final int dashboardPort;
 
         SnapshotBroadcaster(String host, int port, ApiAuth auth, int dashboardPort) {
+            this(host, port, auth, TenantResolver.singleTenant(), dashboardPort);
+        }
+
+        SnapshotBroadcaster(String host, int port, ApiAuth auth, TenantResolver tenants, int dashboardPort) {
             super(new InetSocketAddress("0.0.0.0".equals(host) ? "0.0.0.0" : host, port));
             this.auth = Objects.requireNonNull(auth, "auth");
+            this.tenants = Objects.requireNonNull(tenants, "tenants");
             this.dashboardPort = dashboardPort;
             setReuseAddr(true);
         }
@@ -231,14 +271,18 @@ public final class ObserveServer implements AutoCloseable {
         public ServerHandshakeBuilder onWebsocketHandshakeReceivedAsServer(
                 WebSocket conn, Draft draft, ClientHandshake request) throws InvalidDataException {
             ServerHandshakeBuilder response = super.onWebsocketHandshakeReceivedAsServer(conn, draft, request);
-            boolean allowed = auth.allowsWebSocket(
-                    request.getFieldValue("Authorization"),
-                    request.getFieldValue("Cookie"),
-                    request.getFieldValue("Origin"),
-                    request.getFieldValue("Host"),
-                    dashboardPort);
-            if (!allowed) {
-                throw new InvalidDataException(CloseFrame.POLICY_VALIDATION, "Unauthorized");
+            ApiAuth.Caller caller = auth.authenticateWebSocket(
+                            request.getFieldValue("Authorization"),
+                            request.getFieldValue("Cookie"),
+                            request.getFieldValue("Origin"),
+                            request.getFieldValue("Host"),
+                            dashboardPort)
+                    .orElseThrow(() -> new InvalidDataException(CloseFrame.POLICY_VALIDATION, "Unauthorized"));
+            // getFieldValue answers "" for an absent header, which the resolver reads as none sent.
+            switch (tenants.resolve(caller, request.getFieldValue(TenantResolver.HEADER))) {
+                case TenantResolver.Resolution.Scoped scoped -> conn.setAttachment(scoped.scope());
+                case TenantResolver.Resolution.Rejected rejected ->
+                    throw new InvalidDataException(CloseFrame.POLICY_VALIDATION, rejected.code());
             }
             return response;
         }
@@ -258,13 +302,23 @@ public final class ObserveServer implements AutoCloseable {
         @Override
         public void onStart() {}
 
-        void broadcastSnapshot(String json) {
+        void broadcastSnapshot(NexoraObservability.ProcessSnapshot snapshot) throws IOException {
             Collection<WebSocket> connections = getConnections();
             if (connections.isEmpty()) return;
+            // One serialisation per tenant per broadcast, however many sockets each tenant has open.
+            Map<TenantScope, String> payloads = new HashMap<>();
             for (WebSocket ws : connections) {
-                if (ws.isOpen()) {
-                    ws.send(json);
+                if (!ws.isOpen() || !(ws.getAttachment() instanceof TenantScope scope)) {
+                    continue;
                 }
+                String json = payloads.get(scope);
+                if (json == null) {
+                    NexoraObservability.ProcessSnapshot visible =
+                            scope.tenantId() == null ? snapshot : snapshot.forTenant(scope.tenantId());
+                    json = ObserveCommand.JSON.writeValueAsString(visible);
+                    payloads.put(scope, json);
+                }
+                ws.send(json);
             }
         }
     }

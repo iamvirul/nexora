@@ -25,6 +25,15 @@ Start a local observability server for Nexora.
   HttpOnly cookie; `nexora login` saves it for the CLI. Accounts live in
   ~/.nexora/observe-users (see --users-file) and changes apply without a restart.
 
+  Multi-tenancy
+  ─────────────
+  --multi-tenant scopes every /api/* request and the live stream to one
+  tenant. Users reach only the tenant of their account (`nexora user add
+  --tenant`); a request naming another tenant in X-Tenant-ID gets 403. The
+  server API key may act for any tenant, so it must send X-Tenant-ID (missing:
+  400). Another tenant's executions answer 404, exactly like unknown ones.
+  Without the flag the server is single-tenant and X-Tenant-ID is ignored.
+
   HTTPS
   ─────
   --tls-cert and --tls-key serve HTTPS, and WSS for the live stream on the next
@@ -53,6 +62,10 @@ Start a local observability server for Nexora.
 
   Retain more history for UI:
     nexora observe --max-executions 300 --max-events 500
+
+  Serve several tenants from one server:
+    nexora user add alice --tenant acme
+    nexora observe --multi-tenant
 
   Serve HTTPS with a development certificate:
     nexora tls-gen --out ./certs
