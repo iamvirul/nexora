@@ -1,6 +1,7 @@
 package com.nexora.core.intent;
 
 import com.nexora.core.execution.ExecutionStatus;
+import com.nexora.core.tenant.TenantId;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +14,7 @@ public class Intent {
     private final Duration deadline; // null = use engine default (or no deadline)
     private final String webhookUrl;
     private final List<ExecutionStatus> webhookEvents;
+    private final String tenantId;
 
     /**
      * Backward-compatible constructor — no per-intent deadline.
@@ -42,6 +44,23 @@ public class Intent {
             Duration deadline,
             String webhookUrl,
             List<ExecutionStatus> webhookEvents) {
+        this(goal, context, deadline, webhookUrl, webhookEvents, null);
+    }
+
+    /**
+     * Creates an Intent owned by {@code tenantId}.
+     *
+     * @param tenantId the tenant the execution belongs to; {@code null} means {@link TenantId#DEFAULT}
+     * @throws IllegalArgumentException if tenantId is not a valid tenant id
+     */
+    public Intent(
+            String goal,
+            Map<String, Object> context,
+            Duration deadline,
+            String webhookUrl,
+            List<ExecutionStatus> webhookEvents,
+            String tenantId) {
+        this.tenantId = TenantId.orDefault(tenantId);
         this.goal = Objects.requireNonNull(goal, "goal must not be null");
         this.context = context == null ? Map.of() : Map.copyOf(context);
         if (deadline != null && deadline.compareTo(Duration.ZERO) <= 0) {
@@ -79,5 +98,15 @@ public class Intent {
 
     public List<ExecutionStatus> getWebhookEvents() {
         return webhookEvents;
+    }
+
+    /** The tenant this intent runs for; {@link TenantId#DEFAULT} when none was given. Never null. */
+    public String getTenantId() {
+        return tenantId;
+    }
+
+    /** A copy of this intent owned by {@code tenantId}. */
+    public Intent withTenantId(String tenantId) {
+        return new Intent(goal, context, deadline, webhookUrl, webhookEvents, tenantId);
     }
 }

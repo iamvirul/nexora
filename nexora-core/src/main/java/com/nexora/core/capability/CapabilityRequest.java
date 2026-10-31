@@ -1,6 +1,7 @@
 package com.nexora.core.capability;
 
 import com.nexora.core.context.TraceContext;
+import com.nexora.core.tenant.TenantId;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
@@ -14,9 +15,11 @@ public record CapabilityRequest(
         TraceContext traceContext,
         Duration timeout, // null means use engine default
         String executionId,
-        int attemptNumber // 0 for the first attempt; incremented by RetryInterceptor
+        int attemptNumber, // 0 for the first attempt; incremented by RetryInterceptor
+        String tenantId // the tenant the execution belongs to; never null
         ) {
     public CapabilityRequest {
+        tenantId = TenantId.orDefault(tenantId);
         Objects.requireNonNull(capabilityId, "capabilityId must not be null");
         Objects.requireNonNull(stepId, "stepId must not be null");
         Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null");
@@ -36,9 +39,22 @@ public record CapabilityRequest(
         }
     }
 
+    /** A request for the {@link TenantId#DEFAULT} tenant, as before requests carried one. */
+    public CapabilityRequest(
+            String capabilityId,
+            String stepId,
+            String idempotencyKey,
+            Map<String, Object> inputs,
+            TraceContext traceContext,
+            Duration timeout,
+            String executionId,
+            int attemptNumber) {
+        this(capabilityId, stepId, idempotencyKey, inputs, traceContext, timeout, executionId, attemptNumber, null);
+    }
+
     /** Returns a copy of this request with a different attempt number. */
     public CapabilityRequest withAttempt(int attempt) {
         return new CapabilityRequest(
-                capabilityId, stepId, idempotencyKey, inputs, traceContext, timeout, executionId, attempt);
+                capabilityId, stepId, idempotencyKey, inputs, traceContext, timeout, executionId, attempt, tenantId);
     }
 }

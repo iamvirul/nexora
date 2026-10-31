@@ -13,6 +13,7 @@ import com.nexora.spi.CapabilityDescriptor;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -75,6 +76,49 @@ class CapabilityInvokerTest {
         assertEquals("fallback-ok", sixth.output());
         assertEquals(5, primaryCalls.get());
         assertEquals(1, fallbackCalls.get());
+    }
+
+    @Test
+    void capabilityRestrictedToOtherTenantsAnswersLikeAMissingOne() {
+        DefaultCapabilityRegistry registry = new DefaultCapabilityRegistry();
+        AtomicInteger calls = new AtomicInteger();
+        registry.register(descriptor("acme-billing").withTenantIds(Set.of("acme")), request -> {
+            calls.incrementAndGet();
+            return CapabilityResult.success("billed");
+        });
+        CapabilityInvoker invoker = new CapabilityInvoker(registry, new CapabilityContractMonitor());
+
+        CapabilityResult forGlobex = invoker.invoke(request("acme-billing", "globex"));
+        CapabilityResult forMissing = invoker.invoke(request("no-such-capability", "globex"));
+        CapabilityResult forAcme = invoker.invoke(request("acme-billing", "acme"));
+
+        assertFalse(forGlobex.succeeded());
+        assertEquals(forMissing.failureCode(), forGlobex.failureCode());
+        assertTrue(forAcme.succeeded());
+        assertEquals(1, calls.get());
+    }
+
+    @Test
+    void unrestrictedCapabilityServesEveryTenant() {
+        DefaultCapabilityRegistry registry = new DefaultCapabilityRegistry();
+        registry.register(descriptor("shared"), request -> CapabilityResult.success(request.tenantId()));
+        CapabilityInvoker invoker = new CapabilityInvoker(registry, new CapabilityContractMonitor());
+
+        assertEquals("acme", invoker.invoke(request("shared", "acme")).output());
+        assertEquals("globex", invoker.invoke(request("shared", "globex")).output());
+    }
+
+    private static CapabilityRequest request(String capabilityId, String tenantId) {
+        return new CapabilityRequest(
+                capabilityId,
+                "step-1",
+                java.util.UUID.randomUUID().toString(),
+                Map.of(),
+                TraceContext.root(),
+                Duration.ofSeconds(1),
+                "execution-1",
+                0,
+                tenantId);
     }
 
     private static CapabilityRequest request(String capabilityId) {

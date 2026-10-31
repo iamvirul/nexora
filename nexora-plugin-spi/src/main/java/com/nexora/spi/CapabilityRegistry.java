@@ -19,4 +19,14 @@ public interface CapabilityRegistry {
     Optional<CapabilityDescriptor> findDescriptor(String capabilityId);
 
     List<CapabilityDescriptor> listAll();
+
+    /** The capabilities {@code tenantId} may plan with; see {@link CapabilityDescriptor#tenantIds()}. */
+    default List<CapabilityDescriptor> listFor(String tenantId) {
+        return listAll().stream().filter(d -> d.visibleTo(tenantId)).toList();
+    }
+
+    /** Whether {@code capabilityId} is registered and {@code tenantId} may invoke it. */
+    default boolean isVisibleTo(String capabilityId, String tenantId) {
+        return findDescriptor(capabilityId).map(d -> d.visibleTo(tenantId)).orElse(false);
+    }
 }

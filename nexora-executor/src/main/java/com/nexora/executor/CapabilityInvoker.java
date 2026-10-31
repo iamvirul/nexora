@@ -37,7 +37,11 @@ public final class CapabilityInvoker {
         String primaryId = request.capabilityId();
         String targetId = resolveTarget(primaryId);
 
-        Capability capability = registry.find(targetId).orElse(null);
+        // A capability hidden from this tenant answers exactly like a missing one, so tenants cannot
+        // discover each other's capabilities by probing ids.
+        Capability capability = registry.isVisibleTo(targetId, request.tenantId())
+                ? registry.find(targetId).orElse(null)
+                : null;
 
         if (capability == null) {
             monitor.recordFailure(targetId, Duration.ZERO);
