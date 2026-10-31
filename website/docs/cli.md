@@ -26,12 +26,23 @@ nexora [--config <file>] <command>
 | `nexora schedule remove <id>` | Cancel a schedule immediately |
 | `nexora cancel <executionId>` | Cancel an execution running in the observe server |
 | `nexora replay <executionId>` | Replay a failed, timed-out, cancelled or compensated execution through the observe server |
-| `nexora user add <username>` | Create a dashboard user (also `passwd`, `remove`, `list`) |
+| `nexora user add <username>` | Create a dashboard user, `--tenant <id>` to put it in a tenant (also `passwd`, `remove`, `tenant`, `list`) |
 | `nexora login` | Sign in with a username and password; saves a user API key for `cancel` / `replay` |
 | `nexora logout` | Revoke and delete the saved user API key |
 | `nexora tls-gen` | Write a development CA and server certificate for HTTPS on localhost |
 
 Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can reference.
+
+## Tenants for `nexora observe`
+
+| Option | What it does |
+|--------|-------------|
+| `nexora observe --multi-tenant` | Scope every request and the live stream to one tenant. Users reach only their own tenant; the server API key must send `X-Tenant-ID` |
+| `nexora user add <name> --tenant <id>` | Create a user in a tenant (default: `default`) |
+| `nexora user tenant <name> <id>` | Move a user to another tenant; their sessions end |
+| `nexora cancel/replay ... --tenant <id>` | Send `X-Tenant-ID`, needed with the server API key on a multi-tenant server |
+
+See [Multi-tenancy](concepts/multi-tenancy.md).
 
 ## HTTPS for `nexora observe`
 
