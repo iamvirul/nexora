@@ -34,6 +34,14 @@ public interface ExecutionStore extends AutoCloseable {
      */
     Optional<ExecutionRecord> findById(String executionId);
 
+    /**
+     * {@link #findById(String)} limited to one tenant: an execution of any other tenant reads as
+     * absent, exactly like an unknown id, so callers cannot tell the two apart.
+     */
+    default Optional<ExecutionRecord> findById(String tenantId, String executionId) {
+        return findById(executionId).filter(record -> record.tenantId().equals(tenantId));
+    }
+
     List<ExecutionRecord> findRecent(int limit);
 
     /**
@@ -88,6 +96,19 @@ public interface ExecutionStore extends AutoCloseable {
      */
     default List<DeadLetterRecord> findDeadLetters(DeadLetterReviewState state, int offset, int limit) {
         return List.of();
+    }
+
+    /**
+     * {@link #findDeadLetters(DeadLetterReviewState, int, int)} limited to one tenant, paged within
+     * that tenant. A {@code null} tenant pages over every tenant.
+     */
+    default List<DeadLetterRecord> findDeadLetters(
+            String tenantId, DeadLetterReviewState state, int offset, int limit) {
+        if (tenantId == null) {
+            return findDeadLetters(state, offset, limit);
+        }
+        throw new UnsupportedOperationException(
+                "Tenant-scoped dead letters not supported by this store implementation");
     }
 
     /**

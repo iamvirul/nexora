@@ -113,6 +113,9 @@ class JdbcExecutionStorePostgresIT {
             }
             assertTrue(columnExists(conn, "nexora_steps", "output_json"));
             assertTrue(columnExists(conn, "nexora_steps", "output_truncated"));
+            for (String table : NEXORA_TABLES) {
+                assertTrue(columnExists(conn, table, "tenant_id"), table);
+            }
         }
     }
 
@@ -299,6 +302,48 @@ class JdbcExecutionStorePostgresIT {
     }
 
     @Test
+    void tenantScopedReadsNeverReturnAnotherTenantsRows() {
+        store.createExecution(ExecutionRecord.started("a-1", "t", "ship order", Map.of(), T0, "acme"));
+        store.createExecution(ExecutionRecord.started("g-1", "t", "ship order", Map.of(), T0.plusSeconds(1), "globex"));
+        store.createDeadLetter(DeadLetterRecord.pending("dl-a", "a-1", "g", Map.of(), "X", "x", T0, "acme"));
+        store.createDeadLetter(DeadLetterRecord.pending("dl-g", "g-1", "g", Map.of(), "X", "x", T0, "globex"));
+
+        ExecutionFilter acme = ExecutionFilter.all().forTenant("acme");
+
+        assertEquals(
+                List.of("a-1"),
+                store.findByFilter(acme).stream()
+                        .map(ExecutionRecord::executionId)
+                        .toList());
+        assertEquals(1, store.count(acme));
+        assertTrue(store.findById("globex", "a-1").isEmpty());
+        assertEquals(
+                List.of("dl-a"),
+                store.findDeadLetters("acme", null, 0, 10).stream()
+                        .map(DeadLetterRecord::id)
+                        .toList());
+    }
+
+    @Test
+    void stepsAndWebhookDeliveriesCopyTheTenantOfTheirExecution() throws SQLException {
+        store.createExecution(ExecutionRecord.started("a-1", "t", "goal", Map.of(), T0, "acme"));
+        store.upsertStep("a-1", StepRecord.started("charge", "cap", "key-1", T0));
+        store.upsertStep("a-1", StepRecord.started("charge", "cap", null, T0).completed(T0.plusSeconds(1)));
+        store.recordWebhookDelivery(
+                new WebhookDeliveryRecord("d-1", "a-1", "https://example.test/hook", 200, 1, true, T0, null));
+
+        StepRecord step = store.findById("acme", "a-1").orElseThrow().steps().get(0);
+        assertEquals("key-1", step.idempotencyKey());
+        assertEquals(StepState.COMPLETED, step.state());
+        try (Connection conn = directConnection()) {
+            assertEquals("acme", tenantOf(conn, "SELECT tenant_id FROM nexora_steps WHERE execution_id = 'a-1'"));
+            assertEquals(
+                    "acme",
+                    tenantOf(conn, "SELECT tenant_id FROM nexora_webhook_deliveries WHERE delivery_id = 'd-1'"));
+        }
+    }
+
+    @Test
     void tenConcurrentWritersCompleteWithoutDeadlockOrLostWrites() throws Exception {
         ExecutorService workers = Executors.newFixedThreadPool(CONCURRENT_WRITERS);
         try {
@@ -388,6 +433,14 @@ class JdbcExecutionStorePostgresIT {
 
     private static Connection directConnection() throws SQLException {
         return DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    }
+
+    private static String tenantOf(Connection conn, String sql) throws SQLException {
+        try (Statement st = conn.createStatement();
+                ResultSet rs = st.executeQuery(sql)) {
+            assertTrue(rs.next(), sql);
+            return rs.getString(1);
+        }
     }
 
     private static int failedMigrations(Connection conn) throws SQLException {

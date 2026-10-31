@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.nexora.core.tenant.TenantId;
 import com.nexora.persistence.ExecutionRecord;
 import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.MissedFirePolicy;
@@ -30,6 +31,7 @@ class SchemaMigrationTest {
     private static final String BROKEN_LOCATION = "classpath:db/nexora-test/broken";
     private static final String EDITED_LOCATION = "classpath:db/nexora-test/edited";
     private static final String V1_ONLY_LOCATION = "classpath:db/nexora-test/v1-only";
+    private static final String THROUGH_V2_LOCATION = "classpath:db/nexora-test/through-v2";
 
     private JdbcDataSource database;
 
@@ -43,7 +45,7 @@ class SchemaMigrationTest {
     void freshDatabaseIsMigratedToTheLatestVersionOnConstruction() throws SQLException {
         JdbcExecutionStore store = new JdbcExecutionStore(database);
 
-        assertEquals(List.of("1:true", "2:true"), history());
+        assertEquals(List.of("1:true", "2:true", "3:true"), history());
         assertTrue(store.isSchemaCurrent());
     }
 
@@ -52,7 +54,7 @@ class SchemaMigrationTest {
         new JdbcExecutionStore(database);
         JdbcExecutionStore second = new JdbcExecutionStore(database);
 
-        assertEquals(List.of("1:true", "2:true"), history());
+        assertEquals(List.of("1:true", "2:true", "3:true"), history());
         assertTrue(second.isSchemaCurrent());
     }
 
@@ -102,7 +104,7 @@ class SchemaMigrationTest {
         JdbcExecutionStore store = new JdbcExecutionStore(database);
         store.createSchedule(schedule("nightly"));
 
-        assertEquals(List.of("0:true", "1:true", "2:true"), history());
+        assertEquals(List.of("0:true", "1:true", "2:true", "3:true"), history());
         assertEquals(
                 ExecutionState.COMPLETED, store.findById("legacy").orElseThrow().state());
         assertTrue(store.findScheduleById("nightly").isPresent());
@@ -119,11 +121,51 @@ class SchemaMigrationTest {
 
         JdbcExecutionStore store = new JdbcExecutionStore(database);
 
-        assertEquals(List.of("1:true", "2:true"), history());
+        assertEquals(List.of("1:true", "2:true", "3:true"), history());
         StepRecord step = store.findById("old").orElseThrow().steps().get(0);
         assertEquals("key-1", step.idempotencyKey());
         assertEquals(Map.of(), step.output());
         assertFalse(step.outputTruncated());
+    }
+
+    @Test
+    void v2StoreGainsTenantColumnsWithExistingRowsInTheDefaultTenant() throws SQLException {
+        // A store from before tenants: V1 and V2 applied, one row in every table.
+        new JdbcExecutionStore(database, THROUGH_V2_LOCATION);
+        execute("INSERT INTO nexora_executions (execution_id, goal, context_json, state, started_at)"
+                + " VALUES ('old', 'ship order', '{\"orderId\":\"o-1\"}', 'FAILED', TIMESTAMP '2026-01-01 00:00:00')");
+        execute("INSERT INTO nexora_steps (execution_id, step_id, capability_id, idempotency_key, state, duration_ms,"
+                + " output_json) VALUES ('old', 'charge', 'charge_card', 'key-1', 'COMPLETED', 12, '{\"ok\":true}')");
+        execute("INSERT INTO nexora_webhook_deliveries (delivery_id, execution_id, url, status_code, attempt,"
+                + " successful, timestamp) VALUES ('d-1', 'old', 'https://example.test', 200, 1, TRUE,"
+                + " TIMESTAMP '2026-01-01 00:00:01')");
+        execute("INSERT INTO nexora_dead_letters (id, execution_id, goal, context_json, failed_at)"
+                + " VALUES ('dl-1', 'old', 'ship order', '{}', TIMESTAMP '2026-01-01 00:00:02')");
+        execute(
+                "INSERT INTO nexora_schedules (id, cron_expression, goal, created_at, next_fire_at)"
+                        + " VALUES ('s-1', '0 * * * *', 'hourly', TIMESTAMP '2026-01-01 00:00:00', TIMESTAMP '2026-01-01 01:00:00')");
+
+        JdbcExecutionStore store = new JdbcExecutionStore(database);
+
+        assertEquals(List.of("1:true", "2:true", "3:true"), history());
+        ExecutionRecord execution = store.findById("old").orElseThrow();
+        assertEquals(TenantId.DEFAULT, execution.tenantId());
+        assertEquals(Map.of("orderId", "o-1"), execution.context());
+        assertEquals(Map.of("ok", true), execution.steps().get(0).output());
+        assertEquals("key-1", execution.steps().get(0).idempotencyKey());
+        assertEquals(1, store.getWebhookDeliveries("old").size());
+        assertEquals(
+                TenantId.DEFAULT, store.findDeadLetterById("dl-1").orElseThrow().tenantId());
+        assertEquals(
+                TenantId.DEFAULT, store.findScheduleById("s-1").orElseThrow().tenantId());
+        assertEquals(
+                List.of(TenantId.DEFAULT),
+                distinctTenants(
+                        "nexora_executions",
+                        "nexora_steps",
+                        "nexora_webhook_deliveries",
+                        "nexora_dead_letters",
+                        "nexora_schedules"));
     }
 
     @Test
@@ -206,6 +248,24 @@ class SchemaMigrationTest {
             }
         }
         return rows;
+    }
+
+    /** Every tenant id found across {@code tables}, without duplicates. */
+    private List<String> distinctTenants(String... tables) throws SQLException {
+        List<String> tenants = new ArrayList<>();
+        try (Connection conn = database.getConnection();
+                Statement stmt = conn.createStatement()) {
+            for (String table : tables) {
+                try (ResultSet rs = stmt.executeQuery("SELECT DISTINCT tenant_id FROM " + table)) {
+                    while (rs.next()) {
+                        if (!tenants.contains(rs.getString(1))) {
+                            tenants.add(rs.getString(1));
+                        }
+                    }
+                }
+            }
+        }
+        return tenants;
     }
 
     private void execute(String sql) throws SQLException {
