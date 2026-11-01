@@ -3,6 +3,7 @@ package com.nexora.cli;
 import com.nexora.api.ExecutionNotReplayableException;
 import com.nexora.api.NexoraEngine;
 import com.nexora.core.execution.ExecutionResult;
+import com.nexora.core.tenant.TenantId;
 import com.nexora.persistence.DeadLetterRecord;
 import com.nexora.persistence.DeadLetterReviewState;
 import com.nexora.persistence.ExecutionStore;
@@ -12,6 +13,7 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 import picocli.CommandLine.ParentCommand;
+import picocli.CommandLine.ScopeType;
 
 @Command(
         name = "dlq",
@@ -23,10 +25,31 @@ public class DlqCommand implements Callable<Integer> {
     @ParentCommand
     NexoraCli parent;
 
+    @Option(
+            names = {"--tenant"},
+            scope = ScopeType.INHERIT,
+            description = "Only this tenant's dead letters. Default: every tenant.")
+    String tenant;
+
     @Override
     public Integer call() {
         System.out.println("Usage: nexora dlq <list|replay|resolve>");
         return 0;
+    }
+
+    /** False, after printing why, when --tenant is set but not a valid tenant id. */
+    boolean tenantIsValid() {
+        if (tenant == null || TenantId.isValid(tenant)) {
+            return true;
+        }
+        System.err.println("Error: --tenant must be 1 to " + TenantId.MAX_LENGTH
+                + " characters of a-z, 0-9, '-' or '_', starting with a letter or digit.");
+        return false;
+    }
+
+    /** The dead letter with this id, unless --tenant names a different tenant than its own. */
+    java.util.Optional<DeadLetterRecord> find(ExecutionStore store, String id) {
+        return store.findDeadLetterById(id).filter(dl -> tenant == null || tenant.equals(dl.tenantId()));
     }
 
     private static ExecutionStore requireStore(NexoraEngine engine) {
@@ -62,6 +85,7 @@ public class DlqCommand implements Callable<Integer> {
 
         @Override
         public Integer call() {
+            if (!dlq.tenantIsValid()) return 1;
             ExecutionStore store = requireStore(dlq.parent.engine());
             if (store == null) return 1;
 
@@ -82,15 +106,17 @@ public class DlqCommand implements Callable<Integer> {
                 }
             }
 
-            List<DeadLetterRecord> items = store.findDeadLetters(filter, page * size, size);
+            List<DeadLetterRecord> items = store.findDeadLetters(dlq.tenant, filter, page * size, size);
             if (items.isEmpty()) {
                 System.out.println("No dead letters found.");
                 return 0;
             }
-            System.out.printf("%-36s  %-10s  %-20s  %s%n", "ID", "STATE", "FAILED AT", "GOAL");
-            System.out.println("-".repeat(100));
+            System.out.printf("%-36s  %-10s  %-20s  %-16s  %s%n", "ID", "STATE", "FAILED AT", "TENANT", "GOAL");
+            System.out.println("-".repeat(118));
             for (DeadLetterRecord dl : items) {
-                System.out.printf("%-36s  %-10s  %-20s  %s%n", dl.id(), dl.reviewState(), dl.failedAt(), dl.goal());
+                System.out.printf(
+                        "%-36s  %-10s  %-20s  %-16s  %s%n",
+                        dl.id(), dl.reviewState(), dl.failedAt(), dl.tenantId(), dl.goal());
             }
             return 0;
         }
@@ -110,11 +136,12 @@ public class DlqCommand implements Callable<Integer> {
 
         @Override
         public Integer call() throws Exception {
+            if (!dlq.tenantIsValid()) return 1;
             NexoraEngine engine = dlq.parent.engine();
             ExecutionStore store = requireStore(engine);
             if (store == null) return 1;
 
-            var dlOpt = store.findDeadLetterById(id);
+            var dlOpt = dlq.find(store, id);
             if (dlOpt.isEmpty()) {
                 System.err.println("Error: dead letter not found: " + id);
                 return 1;
@@ -156,10 +183,11 @@ public class DlqCommand implements Callable<Integer> {
 
         @Override
         public Integer call() {
+            if (!dlq.tenantIsValid()) return 1;
             ExecutionStore store = requireStore(dlq.parent.engine());
             if (store == null) return 1;
 
-            var dlOpt = store.findDeadLetterById(id);
+            var dlOpt = dlq.find(store, id);
             if (dlOpt.isEmpty()) {
                 System.err.println("Error: dead letter not found: " + id);
                 return 1;

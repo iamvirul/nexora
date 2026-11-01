@@ -41,6 +41,8 @@ Pass `-c '{"key":"value"}'` to `run` to inject context values that steps can ref
 | `nexora user add <name> --tenant <id>` | Create a user in a tenant (default: `default`) |
 | `nexora user tenant <name> <id>` | Move a user to another tenant; their sessions end |
 | `nexora cancel/replay ... --tenant <id>` | Send `X-Tenant-ID`, needed with the server API key on a multi-tenant server |
+| `nexora dlq ... --tenant <id>` | List, replay or resolve only that tenant's dead letters (default: every tenant) |
+| `nexora schedule ... --tenant <id>` | Add schedules for that tenant; list and remove only its schedules (default: every tenant) |
 
 See [Multi-tenancy](concepts/multi-tenancy.md).
 

@@ -2,6 +2,7 @@ package com.nexora.cli;
 
 import com.nexora.api.NexoraEngine;
 import com.nexora.core.intent.Intent;
+import com.nexora.core.tenant.TenantId;
 import com.nexora.persistence.MissedFirePolicy;
 import com.nexora.persistence.ScheduleRecord;
 import com.nexora.runtime.scheduler.ScheduledExecution;
@@ -12,6 +13,7 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 import picocli.CommandLine.ParentCommand;
+import picocli.CommandLine.ScopeType;
 
 @Command(
         name = "schedule",
@@ -27,10 +29,27 @@ public class ScheduleCommand implements Callable<Integer> {
     @ParentCommand
     NexoraCli parent;
 
+    @Option(
+            names = {"--tenant"},
+            scope = ScopeType.INHERIT,
+            description = "Tenant of the schedule: new schedules run for it, and list and remove only see"
+                    + " its schedules. Default: new schedules run for 'default'; list and remove see every tenant.")
+    String tenant;
+
     @Override
     public Integer call() {
         System.out.println("Usage: nexora schedule <add|list|remove>");
         return 0;
+    }
+
+    /** False, after printing why, when --tenant is set but not a valid tenant id. */
+    boolean tenantIsValid() {
+        if (tenant == null || TenantId.isValid(tenant)) {
+            return true;
+        }
+        System.err.println("Error: --tenant must be 1 to " + TenantId.MAX_LENGTH
+                + " characters of a-z, 0-9, '-' or '_', starting with a letter or digit.");
+        return false;
     }
 
     @Command(name = "add", mixinStandardHelpOptions = true, description = "Register a new recurring schedule.")
@@ -59,6 +78,7 @@ public class ScheduleCommand implements Callable<Integer> {
 
         @Override
         public Integer call() {
+            if (!scheduleCmd.tenantIsValid()) return 1;
             MissedFirePolicy missedFirePolicy;
             try {
                 missedFirePolicy = MissedFirePolicy.valueOf(policy.toUpperCase());
@@ -77,7 +97,8 @@ public class ScheduleCommand implements Callable<Integer> {
 
             ScheduledExecution handle;
             try {
-                handle = engine.schedule(cron, new Intent(goal, Map.of()), missedFirePolicy);
+                handle = engine.schedule(
+                        cron, new Intent(goal, Map.of(), null, null, null, scheduleCmd.tenant), missedFirePolicy);
             } catch (IllegalStateException e) {
                 System.err.println("Error: " + e.getMessage());
                 return 1;
@@ -91,6 +112,7 @@ public class ScheduleCommand implements Callable<Integer> {
             System.out.printf("  Cron:      %s%n", handle.cronExpression());
             System.out.printf("  Next fire: %s%n", handle.nextFireTime());
             System.out.printf("  Policy:    %s%n", missedFirePolicy);
+            System.out.printf("  Tenant:    %s%n", TenantId.orDefault(scheduleCmd.tenant));
             return 0;
         }
     }
@@ -108,6 +130,7 @@ public class ScheduleCommand implements Callable<Integer> {
 
         @Override
         public Integer call() {
+            if (!scheduleCmd.tenantIsValid()) return 1;
             NexoraEngine engine;
             try {
                 engine = scheduleCmd.parent.engine();
@@ -118,7 +141,11 @@ public class ScheduleCommand implements Callable<Integer> {
 
             List<ScheduleRecord> records;
             try {
-                records = activeOnly ? engine.listActiveSchedules() : engine.listSchedules();
+                records =
+                        scheduleCmd.tenant == null ? engine.listSchedules() : engine.listSchedules(scheduleCmd.tenant);
+                if (activeOnly) {
+                    records = records.stream().filter(ScheduleRecord::active).toList();
+                }
             } catch (IllegalStateException e) {
                 System.err.println("Error: " + e.getMessage());
                 return 1;
@@ -130,18 +157,19 @@ public class ScheduleCommand implements Callable<Integer> {
             }
 
             System.out.printf(
-                    "%-36s  %-6s  %-20s  %-20s  %-12s  %-12s  %s%n",
-                    "ID", "ACTIVE", "NEXT FIRE", "LAST FIRE", "POLICY", "LAST STATUS", "GOAL");
-            System.out.println("-".repeat(136));
+                    "%-36s  %-6s  %-20s  %-20s  %-12s  %-12s  %-16s  %s%n",
+                    "ID", "ACTIVE", "NEXT FIRE", "LAST FIRE", "POLICY", "LAST STATUS", "TENANT", "GOAL");
+            System.out.println("-".repeat(154));
             for (ScheduleRecord r : records) {
                 System.out.printf(
-                        "%-36s  %-6s  %-20s  %-20s  %-12s  %-12s  %s%n",
+                        "%-36s  %-6s  %-20s  %-20s  %-12s  %-12s  %-16s  %s%n",
                         r.id(),
                         r.active() ? "YES" : "NO",
                         r.nextFireAt(),
                         r.lastFiredAt() != null ? r.lastFiredAt() : "-",
                         r.missedFirePolicy(),
                         r.lastStatus(),
+                        r.tenantId(),
                         r.goal());
             }
             return 0;
@@ -159,6 +187,7 @@ public class ScheduleCommand implements Callable<Integer> {
 
         @Override
         public Integer call() {
+            if (!scheduleCmd.tenantIsValid()) return 1;
             NexoraEngine engine;
             try {
                 engine = scheduleCmd.parent.engine();
@@ -168,7 +197,12 @@ public class ScheduleCommand implements Callable<Integer> {
             }
 
             try {
-                engine.cancelSchedule(id);
+                if (scheduleCmd.tenant == null) {
+                    engine.cancelSchedule(id);
+                } else if (!engine.cancelSchedule(scheduleCmd.tenant, id)) {
+                    System.err.printf("Error: no schedule %s belongs to tenant %s.%n", id, scheduleCmd.tenant);
+                    return 1;
+                }
             } catch (IllegalStateException e) {
                 System.err.println("Error: " + e.getMessage());
                 return 1;
