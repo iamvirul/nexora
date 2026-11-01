@@ -282,6 +282,11 @@ public final class NexoraEngine implements AutoCloseable {
      */
     public ExecutionHandle replayDeadLetter(DeadLetterRecord deadLetter) {
         Objects.requireNonNull(deadLetter, "deadLetter must not be null");
+        // Checked before the fallback below: that path rebuilds the intent from the dead letter, and
+        // scoped() would hand a foreign default-tenant goal to this engine's own tenant.
+        if (filterFor(deadLetter.tenantId()).isEmpty()) {
+            throw new ExecutionNotFoundException(deadLetter.executionId());
+        }
         try {
             return replay(deadLetter.tenantId(), deadLetter.executionId());
         } catch (ExecutionNotFoundException e) {

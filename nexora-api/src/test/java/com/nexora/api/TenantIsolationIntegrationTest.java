@@ -26,6 +26,7 @@ import com.nexora.spi.CapabilityProvider;
 import com.nexora.spi.NexoraPlugin;
 import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +50,8 @@ class TenantIsolationIntegrationTest {
     private static final String GLOBEX = "globex";
     // Long enough for a second, wrongly claimed catch-up execution to have run and been recorded.
     private static final long CATCH_UP_SETTLE_MILLIS = 500;
+    // Yearly, so the schedule's next legitimate firing never lands inside the counting window.
+    private static final String YEARLY_CRON = "0 0 1 1 *";
 
     // executionId -> tenant the capability saw in its request
     private final Map<String, String> tenantSeen = new ConcurrentHashMap<>();
@@ -191,6 +194,21 @@ class TenantIsolationIntegrationTest {
     }
 
     @Test
+    void tenantBoundEngineTreatsAnotherTenantsDeadLetterAsNotFoundAndRunsNothing() {
+        acmeEngine = builder().withTenantId(ACME).build();
+        // Original execution records gone, so only the dead letter's own goal and context remain.
+        DeadLetterRecord defaultTenant = DeadLetterRecord.pending(
+                "dl-default", "gone-1", "whoami", Map.of(), "X", "x", Instant.now(), TenantId.DEFAULT);
+        DeadLetterRecord globex =
+                DeadLetterRecord.pending("dl-globex", "gone-2", "whoami", Map.of(), "X", "x", Instant.now(), GLOBEX);
+
+        assertThatThrownBy(() -> acmeEngine.replayDeadLetter(defaultTenant))
+                .isInstanceOf(ExecutionNotFoundException.class);
+        assertThatThrownBy(() -> acmeEngine.replayDeadLetter(globex)).isInstanceOf(ExecutionNotFoundException.class);
+        assertThat(tenantSeen).isEmpty();
+    }
+
+    @Test
     void schedulesAreListedAndCancelledWithinTheirTenant() {
         ScheduledExecution acmeSchedule = engine.schedule("0 0 * * *", intent("whoami", ACME));
         ScheduledExecution globexSchedule = engine.schedule("0 0 * * *", intent("whoami", GLOBEX));
@@ -242,13 +260,13 @@ class TenantIsolationIntegrationTest {
         Instant now = Instant.now();
         store.createSchedule(new ScheduleRecord(
                 "overdue",
-                "* * * * *",
+                YEARLY_CRON,
                 "whoami",
                 Map.of(),
                 MissedFirePolicy.FIRE_ONCE,
-                now.minusSeconds(180),
+                now.minus(Duration.ofDays(800)),
                 null,
-                now.minusSeconds(120),
+                now.minus(Duration.ofDays(365)),
                 null,
                 true,
                 ACME));
