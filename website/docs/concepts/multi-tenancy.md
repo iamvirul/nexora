@@ -57,7 +57,7 @@ NexoraEngine acme = NexoraEngine.builder()
 
 A tenant-bound engine runs intents without a tenant for `acme`, refuses an intent for any other tenant with `IllegalArgumentException`, and its replay, cancel and schedule calls only reach `acme`'s work. Its cron scheduler reloads and fires only `acme`'s schedules.
 
-Engines sharing one store should be all bound or all unbound. An unbound engine serves every tenant, so it reloads and fires every tenant's schedules, including those a bound engine already runs.
+Bound and unbound engines can share one store. An unbound engine serves every tenant, so it also loads `acme`'s schedules, but every firing is claimed in the store before it runs and exactly one engine wins each slot (see [Cron scheduling](cron-scheduling.md#several-engines-on-one-store)). Whichever engine wins runs the firing for the schedule's own tenant, so every engine sharing the store should have the capabilities that tenant's schedules need.
 
 ### Capabilities for some tenants only
 

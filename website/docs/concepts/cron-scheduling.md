@@ -143,6 +143,12 @@ NexoraEngine.builder()
 
 Without a store, calling `engine.schedule(...)` throws `IllegalStateException`.
 
+### Several engines on one store
+
+Every engine sharing a store loads the same active schedules and wakes for the same slots, whether they are replicas of one service or per-tenant engines next to an unbound one. Before running a firing, an engine claims it with a compare-and-set on `next_fire_at` (`ExecutionStore.claimScheduleFire`): the update only succeeds while the schedule is still due at the slot that engine read. Exactly one engine wins each slot and runs it; the others wait for the next slot the winner moved the schedule to. Missed-fire catch-up after a restart is claimed the same way, so engines restarting together catch up once.
+
+A custom `ExecutionStore` inherits a default `claimScheduleFire` that always succeeds, which is only safe with one engine per store; override it with an atomic compare-and-set to share the store.
+
 ---
 
 ## Observability Dashboard

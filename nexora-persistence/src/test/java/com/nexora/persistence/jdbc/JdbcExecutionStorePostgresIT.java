@@ -344,6 +344,37 @@ class JdbcExecutionStorePostgresIT {
     }
 
     @Test
+    void concurrentClaimsOfAScheduleSlotHaveExactlyOneWinner() throws Exception {
+        Instant slot = T0.plusSeconds(3600);
+        store.createSchedule(new ScheduleRecord(
+                "s-race", "0 * * * *", "hourly", Map.of(), MissedFirePolicy.FIRE_ONCE, T0, null, slot, null, true));
+        ExecutorService workers = Executors.newFixedThreadPool(CONCURRENT_WRITERS);
+        try {
+            CyclicBarrier barrier = new CyclicBarrier(CONCURRENT_WRITERS);
+            List<Future<Boolean>> claims = new ArrayList<>();
+            for (int i = 0; i < CONCURRENT_WRITERS; i++) {
+                claims.add(workers.submit(() -> {
+                    barrier.await();
+                    return store.claimScheduleFire("s-race", slot, slot, slot.plusSeconds(3600));
+                }));
+            }
+            int winners = 0;
+            for (Future<Boolean> claim : claims) {
+                if (claim.get(DEADLOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                    winners++;
+                }
+            }
+
+            assertEquals(1, winners);
+            assertEquals(
+                    slot.plusSeconds(3600),
+                    store.findScheduleById("s-race").orElseThrow().nextFireAt());
+        } finally {
+            workers.shutdownNow();
+        }
+    }
+
+    @Test
     void tenConcurrentWritersCompleteWithoutDeadlockOrLostWrites() throws Exception {
         ExecutorService workers = Executors.newFixedThreadPool(CONCURRENT_WRITERS);
         try {

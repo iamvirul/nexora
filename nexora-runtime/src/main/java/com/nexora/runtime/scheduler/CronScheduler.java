@@ -33,7 +33,11 @@ import org.slf4j.LoggerFactory;
  *
  * Each schedule belongs to the tenant of the intent it was created with, and every firing runs
  * for that tenant. A scheduler limited to one tenant reloads, lists and fires only that tenant's
- * schedules, so per-tenant engines sharing a store never fire each other's schedules.
+ * schedules.
+ *
+ * Engines sharing a store each enqueue the schedules they see, so several may wake for the same
+ * slot. Each firing is claimed in the store first ({@link ExecutionStore#claimScheduleFire}); only
+ * the claimant runs it, so every slot fires once however many engines share the store.
  */
 public final class CronScheduler implements AutoCloseable {
 
@@ -45,6 +49,9 @@ public final class CronScheduler implements AutoCloseable {
     private final ScheduledExecutorService scheduler;
     private final ConcurrentHashMap<String, ScheduledFuture<?>> activeFutures = new ConcurrentHashMap<>();
     private final String tenantScope; // null = every tenant's schedules
+    // A wake-up this close to the stored slot still claims it: the timer and the wall clock drift by
+    // milliseconds, and treating an early wake-up as already fired would only spin until the slot.
+    private static final java.time.Duration DUE_TOLERANCE = java.time.Duration.ofSeconds(1);
 
     public CronScheduler(ExecutionEngine engine, ExecutionStore store, ExecutionEventBus eventBus) {
         this(engine, store, eventBus, null);
@@ -161,49 +168,50 @@ public final class CronScheduler implements AutoCloseable {
         ZonedDateTime fromDt = from.atZone(ZoneOffset.UTC);
 
         List<ZonedDateTime> missed = collectMissedFirings(record.id(), cron, fromDt, now);
+        ZonedDateTime nextFire = cron.next(now);
 
-        if (!missed.isEmpty()) {
-            switch (record.missedFirePolicy()) {
-                case SKIP -> {
-                    log.warn("Schedule id={} missed {} window(s); SKIP policy, not firing", record.id(), missed.size());
-                    store.updateScheduleStatus(record.id(), ScheduleStatus.MISSED);
-                    eventBus.publish(
-                            new ScheduledExecutionMissedEvent(record.id(), missed.size(), from, now.toInstant()));
-                }
-                case FIRE_ONCE -> {
-                    log.info(
-                            "Schedule id={} missed {} window(s); FIRE_ONCE, firing once now",
-                            record.id(),
-                            missed.size());
-                    executeAndPublish(record);
-                    int extra = missed.size() - 1;
-                    if (extra > 0) {
-                        eventBus.publish(new ScheduledExecutionMissedEvent(record.id(), extra, from, now.toInstant()));
-                    }
-                }
-                case FIRE_ALL -> {
-                    log.info(
-                            "Schedule id={} missed {} window(s); FIRE_ALL, firing {} time(s)",
-                            record.id(),
-                            missed.size(),
-                            missed.size());
-                    for (int i = 0; i < missed.size(); i++) {
-                        executeAndPublish(record);
-                    }
-                }
+        if (missed.isEmpty() || record.missedFirePolicy() == MissedFirePolicy.SKIP) {
+            if (!missed.isEmpty()) {
+                log.warn("Schedule id={} missed {} window(s); SKIP policy, not firing", record.id(), missed.size());
+                store.updateScheduleStatus(record.id(), ScheduleStatus.MISSED);
+                eventBus.publish(new ScheduledExecutionMissedEvent(record.id(), missed.size(), from, now.toInstant()));
             }
+            store.updateScheduleNextFire(record.id(), nextFire.toInstant());
+            enqueue(record.id(), nextFire);
+            return;
         }
 
-        ZonedDateTime nextFire = cron.next(now);
-        boolean actuallyFired = !missed.isEmpty() && record.missedFirePolicy() != MissedFirePolicy.SKIP;
-        if (actuallyFired) {
-            store.updateScheduleLastFired(record.id(), now.toInstant(), nextFire.toInstant());
+        // Every engine sharing the store reloads the same overdue schedule; only the claimant catches up.
+        if (!store.claimScheduleFire(record.id(), record.nextFireAt(), now.toInstant(), nextFire.toInstant())) {
+            log.info("Schedule id={} catch-up already claimed by another engine", record.id());
+            enqueueAtStoredNextFire(record.id());
+            return;
+        }
+        if (record.missedFirePolicy() == MissedFirePolicy.FIRE_ONCE) {
+            log.info("Schedule id={} missed {} window(s); FIRE_ONCE, firing once now", record.id(), missed.size());
+            executeAndPublish(record);
+            int extra = missed.size() - 1;
+            if (extra > 0) {
+                eventBus.publish(new ScheduledExecutionMissedEvent(record.id(), extra, from, now.toInstant()));
+            }
         } else {
-            store.updateScheduleNextFire(record.id(), nextFire.toInstant());
+            log.info(
+                    "Schedule id={} missed {} window(s); FIRE_ALL, firing {} time(s)",
+                    record.id(),
+                    missed.size(),
+                    missed.size());
+            for (int i = 0; i < missed.size(); i++) {
+                executeAndPublish(record);
+            }
         }
         enqueue(record.id(), nextFire);
     }
 
+    /**
+     * Claims the due firing before running it. Every engine sharing the store enqueues the same
+     * schedules, so each wakes for the same slot; the store's compare-and-set lets exactly one run
+     * it, and the others wait for the slot that engine moved the schedule on to.
+     */
     private void onFire(String scheduleId) {
         ScheduleRecord record = store.findScheduleById(scheduleId).orElse(null);
         if (record == null || !record.active() || !inScope(record)) {
@@ -211,14 +219,31 @@ public final class CronScheduler implements AutoCloseable {
             return;
         }
 
+        ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
+        if (record.nextFireAt().isAfter(now.toInstant().plus(DUE_TOLERANCE))) {
+            // Another engine already ran this slot and moved the schedule on.
+            enqueue(scheduleId, record.nextFireAt().atZone(ZoneOffset.UTC));
+            return;
+        }
+        ZonedDateTime nextFire = CronExpression.parse(record.cronExpression()).next(now);
+        if (!store.claimScheduleFire(scheduleId, record.nextFireAt(), now.toInstant(), nextFire.toInstant())) {
+            log.debug("Schedule id={} firing claimed by another engine", scheduleId);
+            enqueueAtStoredNextFire(scheduleId);
+            return;
+        }
+
         log.debug("Firing schedule id={} goal='{}'", scheduleId, record.goal());
         executeAndPublish(record);
-
-        ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
-        CronExpression cron = CronExpression.parse(record.cronExpression());
-        ZonedDateTime nextFire = cron.next(now);
-        store.updateScheduleLastFired(scheduleId, now.toInstant(), nextFire.toInstant());
         enqueue(scheduleId, nextFire);
+    }
+
+    /** After losing a claim: wait for the slot the winner moved the schedule to, unless it is gone. */
+    private void enqueueAtStoredNextFire(String scheduleId) {
+        store.findScheduleById(scheduleId)
+                .filter(ScheduleRecord::active)
+                .ifPresentOrElse(
+                        current -> enqueue(scheduleId, current.nextFireAt().atZone(ZoneOffset.UTC)),
+                        () -> activeFutures.remove(scheduleId));
     }
 
     private void executeAndPublish(ScheduleRecord record) {

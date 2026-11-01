@@ -149,6 +149,24 @@ public interface ExecutionStore extends AutoCloseable {
         throw new UnsupportedOperationException("Schedules not supported by this store implementation");
     }
 
+    /**
+     * Claims the firing due at {@code expectedNextFireAt}: records it as fired at {@code firedAt} and
+     * moves the schedule to {@code nextFireAt}, but only while it is still active and still due at
+     * {@code expectedNextFireAt}. Several engines sharing a store all try; exactly one claim succeeds,
+     * so each slot fires once.
+     *
+     * <p>The default is not atomic: it always claims, which is only safe with a single engine per
+     * store. Stores that can be shared should override it with a compare-and-set.
+     *
+     * @return true if this caller claimed the firing and must run it; false if another caller did,
+     *         or the schedule was cancelled or rescheduled meanwhile
+     * @throws IllegalStateException if the claim could not be written
+     */
+    default boolean claimScheduleFire(String id, Instant expectedNextFireAt, Instant firedAt, Instant nextFireAt) {
+        updateScheduleLastFired(id, firedAt, nextFireAt);
+        return true;
+    }
+
     default void deactivateSchedule(String id) {
         throw new UnsupportedOperationException("Schedules not supported by this store implementation");
     }

@@ -550,6 +550,25 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     @Override
+    public boolean claimScheduleFire(String id, Instant expectedNextFireAt, Instant firedAt, Instant nextFireAt) {
+        // Compare-and-set on next_fire_at: one UPDATE is atomic under READ COMMITTED on H2 and
+        // PostgreSQL, so of several engines claiming the same slot exactly one sees a row updated.
+        String sql = "UPDATE nexora_schedules SET last_fired_at = ?, next_fire_at = ?"
+                + " WHERE id = ? AND next_fire_at = ? AND active = TRUE";
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setTimestamp(1, Timestamp.from(firedAt));
+            ps.setTimestamp(2, Timestamp.from(nextFireAt));
+            ps.setString(3, id);
+            ps.setTimestamp(4, Timestamp.from(expectedNextFireAt));
+            return ps.executeUpdate() == 1;
+        } catch (SQLException e) {
+            log.error("Failed to claim schedule firing id={}", id, e);
+            throw new IllegalStateException("Failed to claim schedule firing id=" + id, e);
+        }
+    }
+
+    @Override
     public void updateScheduleLastFired(String id, Instant lastFiredAt, Instant nextFireAt) {
         String sql = "UPDATE nexora_schedules SET last_fired_at = ?, next_fire_at = ? WHERE id = ?";
         try (Connection conn = dataSource.getConnection();

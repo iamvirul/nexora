@@ -14,6 +14,9 @@ import com.nexora.persistence.DeadLetterRecord;
 import com.nexora.persistence.ExecutionFilter;
 import com.nexora.persistence.ExecutionRecord;
 import com.nexora.persistence.ExecutionState;
+import com.nexora.persistence.ExecutionStore;
+import com.nexora.persistence.MissedFirePolicy;
+import com.nexora.persistence.ScheduleRecord;
 import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import com.nexora.planner.model.StepDefinition;
 import com.nexora.runtime.scheduler.ScheduledExecution;
@@ -23,6 +26,7 @@ import com.nexora.spi.CapabilityProvider;
 import com.nexora.spi.NexoraPlugin;
 import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,6 +47,8 @@ class TenantIsolationIntegrationTest {
     private static final long WAIT_SECONDS = 5;
     private static final String ACME = "acme";
     private static final String GLOBEX = "globex";
+    // Long enough for a second, wrongly claimed catch-up execution to have run and been recorded.
+    private static final long CATCH_UP_SETTLE_MILLIS = 500;
 
     // executionId -> tenant the capability saw in its request
     private final Map<String, String> tenantSeen = new ConcurrentHashMap<>();
@@ -232,14 +238,48 @@ class TenantIsolationIntegrationTest {
     }
 
     @Test
+    void overdueScheduleFiresOnceWhenBoundAndUnboundEnginesShareTheStore() throws Exception {
+        Instant now = Instant.now();
+        store.createSchedule(new ScheduleRecord(
+                "overdue",
+                "* * * * *",
+                "whoami",
+                Map.of(),
+                MissedFirePolicy.FIRE_ONCE,
+                now.minusSeconds(180),
+                null,
+                now.minusSeconds(120),
+                null,
+                true,
+                ACME));
+        // Both engines see the schedule as overdue, as when they start together.
+        FlakyExecutionStore shared = new FlakyExecutionStore(store);
+        shared.freezeActiveSchedules();
+
+        acmeEngine = builder(shared).withTenantId(ACME).build();
+        try (NexoraEngine unbound = builder(shared).build()) {
+            awaitCondition(() -> !tenantSeen.isEmpty());
+            Thread.sleep(CATCH_UP_SETTLE_MILLIS);
+
+            assertThat(tenantSeen).hasSize(1);
+            assertThat(tenantSeen.values()).containsExactly(ACME);
+            assertThat(unbound.listSchedules()).hasSize(1);
+        }
+    }
+
+    @Test
     void invalidTenantIsRejectedBeforeAnythingRuns() {
         assertThatThrownBy(() -> builder().withTenantId("Not A Tenant")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> engine.replay("Bad Tenant", "x")).isInstanceOf(IllegalArgumentException.class);
     }
 
     private NexoraEngine.Builder builder() {
+        return builder(store);
+    }
+
+    private NexoraEngine.Builder builder(ExecutionStore executionStore) {
         return NexoraEngine.builder()
-                .withExecutionStore(store)
+                .withExecutionStore(executionStore)
                 .withPlugin(plugin())
                 .withStepDefinition(new StepDefinition("whoami", "whoami", "whoami"::equals))
                 .withStepDefinition(new StepDefinition("flaky", "flaky", "flaky"::equals))

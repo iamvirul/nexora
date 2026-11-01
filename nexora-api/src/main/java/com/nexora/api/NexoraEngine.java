@@ -672,8 +672,8 @@ public final class NexoraEngine implements AutoCloseable {
          * cancel and schedule calls only see this tenant's work. Without it the engine serves every
          * tenant, each intent running for its own ({@link TenantId#DEFAULT} when it names none).
          *
-         * <p>Engines sharing a store should all be bound, or all unbound: an unbound engine reloads
-         * and fires every tenant's schedules, including those a bound engine already runs.
+         * <p>Bound and unbound engines can share a store. An unbound engine also loads this tenant's
+         * schedules, but each firing is claimed in the store first, so it still runs exactly once.
          *
          * @throws IllegalArgumentException if {@code tenantId} is not a valid tenant id
          */
