@@ -100,6 +100,21 @@ class MultiTenantEndpointsTest {
     }
 
     @Test
+    void routeRegisteredWithoutProtectRefusesAnonymousCallersInsteadOfScopingThem() throws Exception {
+        server.createContext(
+                "/unprotected",
+                ObserveCommand.scoped(
+                        TenantResolver.multiTenant(),
+                        (exchange, scope) -> ObserveCommand.sendText(exchange, 200, "scoped to " + scope.tenantId())));
+
+        HttpResponse<String> response = client.send(
+                request("/unprotected").header(TENANT_HEADER, GLOBEX).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(401, response.statusCode());
+    }
+
+    @Test
     void invalidTenantHeaderIsRejectedWith400() throws Exception {
         HttpResponse<String> response = send(get("/api/executions"), "Acme Corp");
 

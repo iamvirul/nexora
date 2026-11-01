@@ -97,6 +97,12 @@ public final class TenantResolver {
      */
     public Optional<TenantScope> scope(HttpExchange exchange) throws IOException {
         ApiAuth.Caller caller = ApiAuth.callerOf(exchange);
+        if (!caller.authenticated()) {
+            // Only reachable from a route registered without ApiAuth.protect: refuse rather than let an
+            // anonymous caller name any tenant, as the server key may.
+            ApiAuth.rejectUnauthorized(exchange);
+            return Optional.empty();
+        }
         return switch (resolve(caller, exchange.getRequestHeaders().getFirst(HEADER))) {
             case Resolution.Scoped scoped -> Optional.of(scoped.scope());
             case Resolution.Rejected rejected -> {
