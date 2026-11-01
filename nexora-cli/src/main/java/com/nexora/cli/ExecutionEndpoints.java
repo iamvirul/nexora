@@ -178,6 +178,11 @@ final class ExecutionEndpoints {
     }
 
     private void execute(HttpExchange exchange, TenantScope scope) throws IOException {
+        // Contexts match by prefix, so /api/execute/ and /api/executeX land here too; only the exact path runs.
+        if (!EXECUTE_PATH.equals(exchange.getRequestURI().getPath())) {
+            ObserveCommand.sendText(exchange, STATUS_NOT_FOUND, "Not Found");
+            return;
+        }
         if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
             exchange.getResponseHeaders().set("Allow", "POST");
             ObserveCommand.sendText(exchange, STATUS_METHOD_NOT_ALLOWED, "Method Not Allowed");

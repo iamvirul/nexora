@@ -17,6 +17,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -58,6 +59,28 @@ class RateLimitEndpointsTest {
         assertEquals("RATE_LIMIT_EXCEEDED", error.get("code").asText());
         assertEquals(retryAfter, error.get("retryAfterSeconds").asLong());
         assertTrue(retryAfter >= 1 && retryAfter <= 60, "Retry-After within the window: " + retryAfter);
+    }
+
+    @Test
+    void pathVariantsOfExecuteCountAgainstTheExecuteLimit() throws Exception {
+        // The JDK server matches contexts by plain prefix, so these all reach the execute route.
+        start(new RateLimitConfig(true, 60, EXECUTE_RPM, Set.of()));
+        for (int i = 0; i < EXECUTE_RPM; i++) {
+            execute(true);
+        }
+
+        for (String variant : List.of("/api/execute/", "/api/execute/x", "/api/executeX")) {
+            assertEquals(429, post(variant).statusCode(), variant);
+        }
+    }
+
+    @Test
+    void pathVariantsOfExecuteStartNothing() throws Exception {
+        start(RateLimitConfig.disabled());
+
+        for (String variant : List.of("/api/execute/", "/api/execute/x", "/api/executeX")) {
+            assertEquals(404, post(variant).statusCode(), variant);
+        }
     }
 
     @Test
@@ -139,6 +162,15 @@ class RateLimitEndpointsTest {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString("{\"goal\":\"anything\"}"));
         return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> post(String path) throws Exception {
+        return client.send(
+                TestAuth.authorized(uri(path))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString("{\"goal\":\"anything\"}"))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
     }
 
     private HttpResponse<String> authorizedGet(String path) throws Exception {

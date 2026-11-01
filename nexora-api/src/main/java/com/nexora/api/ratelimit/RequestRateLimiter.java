@@ -129,9 +129,14 @@ public final class RequestRateLimiter {
         return global.tryConsume(client);
     }
 
+    /**
+     * By the matched context, not the request path: the JDK server matches contexts by plain prefix,
+     * so {@code /api/execute/} and {@code /api/executeX} reach the execute route too and must not
+     * slip past its limit.
+     */
     private static boolean isExecute(HttpExchange exchange) {
         return "POST".equalsIgnoreCase(exchange.getRequestMethod())
-                && EXECUTE_PATH.equals(exchange.getRequestURI().getPath());
+                && EXECUTE_PATH.equals(exchange.getHttpContext().getPath());
     }
 
     private void reject(HttpExchange exchange, String client, Decision decision) throws IOException {
