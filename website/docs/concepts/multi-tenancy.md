@@ -116,7 +116,7 @@ nexora user tenant alice globex
 
 Without `--multi-tenant` the server is single-tenant: every caller sees every execution and `X-Tenant-ID` is ignored.
 
-Prometheus metrics at `/metrics` are not split by tenant.
+Execution metrics at `/metrics` carry a `tenant` label (see [Observability](../observability.md)); `/metrics` itself stays public and unscoped, like every scrape endpoint.
 
 ## Database
 

@@ -76,7 +76,8 @@ class NexoraObservabilityEventOrderTest {
             }
             assertThat(observability.processSnapshot().activeExecutions()).isZero();
             assertThat(observability.scrapePrometheus())
-                    .containsPattern("(?m)^nexora_step_completed_total\\{capability_id=\"charge\",} 25\\.0$");
+                    .containsPattern(
+                            "(?m)^nexora_step_completed_total\\{capability_id=\"charge\",tenant=\"default\",} 25\\.0$");
         }
     }
 

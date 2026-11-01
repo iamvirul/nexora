@@ -3,6 +3,7 @@ package com.nexora.api;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.nexora.api.observability.NexoraObservability;
 import com.nexora.core.capability.CapabilityResult;
 import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.execution.ExecutionResult;
@@ -207,6 +208,27 @@ class TenantIsolationIntegrationTest {
         assertThat(acmeEngine.listSchedules().get(0).tenantId()).isEqualTo(ACME);
         assertThat(store.findScheduleById(globexSchedule.id()).orElseThrow().active())
                 .isTrue();
+    }
+
+    @Test
+    void executionMetricsAreLabelledWithTheTenant() throws Exception {
+        try (NexoraObservability observability = NexoraObservability.attach(engine)) {
+            run(engine, intent("whoami", ACME));
+            run(engine, intent("whoami", ACME));
+            run(engine, intent("whoami", GLOBEX));
+
+            awaitCondition(() -> {
+                String scrape = observability.scrapePrometheus();
+                return scrape.contains("nexora_plan_completed_total{tenant=\"acme\",} 2.0")
+                        && scrape.contains("nexora_plan_completed_total{tenant=\"globex\",} 1.0");
+            });
+            String scrape = observability.scrapePrometheus();
+
+            assertThat(scrape)
+                    .contains("nexora_step_completed_total{capability_id=\"whoami\",tenant=\"acme\",} 2.0")
+                    .contains("nexora_active_executions{tenant=\"acme\",} 0.0")
+                    .contains("nexora_active_executions{tenant=\"globex\",} 0.0");
+        }
     }
 
     @Test

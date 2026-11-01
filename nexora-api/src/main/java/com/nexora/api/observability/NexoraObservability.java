@@ -68,6 +68,10 @@ public final class NexoraObservability implements AutoCloseable {
     private final ReentrantLock broadcastLock = new ReentrantLock();
     private final AtomicBoolean broadcastRequested = new AtomicBoolean();
 
+    static final String TENANT_LABEL = "tenant";
+    // Tenant ids are label-safe already (TenantId); this marks events of executions never seen starting.
+    private static final String UNKNOWN_TENANT = "unknown";
+
     private final Counter planStartedTotal;
     private final Counter planCompletedTotal;
     private final Counter planFailedTotal;
@@ -80,7 +84,8 @@ public final class NexoraObservability implements AutoCloseable {
     private final Histogram stepDurationSeconds;
     private final Gauge activeExecutionsGauge;
     private final Gauge readyGauge;
-    private final AtomicInteger activeExecutions = new AtomicInteger();
+    // executionId -> tenant, from plan start to its one terminal event, so step metrics can carry the tenant.
+    private final ConcurrentHashMap<String, String> runningTenants = new ConcurrentHashMap<>();
     private final NexoraEngine engine;
 
     private NexoraObservability(NexoraEngine engine, int maxExecutions, int maxTimelineEventsPerExecution) {
@@ -97,21 +102,27 @@ public final class NexoraObservability implements AutoCloseable {
         this.processTracker = new ProcessTracker(maxExecutions, maxTimelineEventsPerExecution);
         this.subscriptions = new ArrayList<>();
 
+        // Every execution metric carries the tenant. Its cardinality is the number of tenants, which
+        // operators control; step durations stay per capability only, as buckets multiply each label.
         this.planStartedTotal = Counter.build()
                 .name("nexora_plan_started_total")
+                .labelNames(TENANT_LABEL)
                 .help("Total number of execution plans started.")
                 .register(registry);
         this.planCompletedTotal = Counter.build()
                 .name("nexora_plan_completed_total")
+                .labelNames(TENANT_LABEL)
                 .help("Total number of execution plans completed successfully.")
                 .register(registry);
         this.planFailedTotal = Counter.build()
                 .name("nexora_plan_failed_total")
+                .labelNames(TENANT_LABEL)
                 .help("Total number of execution plans that failed.")
                 .register(registry);
         // Separate from failures: a cancel is a deliberate stop and must not trip failure-rate alerts.
         this.planCancelledTotal = Counter.build()
                 .name("nexora_plan_cancelled_total")
+                .labelNames(TENANT_LABEL)
                 .help("Total number of execution plans cancelled.")
                 .register(registry);
         this.planAmendmentsTotal = Counter.build()
@@ -121,22 +132,22 @@ public final class NexoraObservability implements AutoCloseable {
                 .register(registry);
         this.stepStartedTotal = Counter.build()
                 .name("nexora_step_started_total")
-                .labelNames("capability_id")
-                .help("Total number of started execution steps grouped by capability.")
+                .labelNames("capability_id", TENANT_LABEL)
+                .help("Total number of started execution steps grouped by capability and tenant.")
                 .register(registry);
         this.stepCompletedTotal = Counter.build()
                 .name("nexora_step_completed_total")
-                .labelNames("capability_id")
-                .help("Total number of completed execution steps grouped by capability.")
+                .labelNames("capability_id", TENANT_LABEL)
+                .help("Total number of completed execution steps grouped by capability and tenant.")
                 .register(registry);
         this.stepFailedTotal = Counter.build()
                 .name("nexora_step_failed_total")
-                .labelNames("capability_id", "failure_code")
-                .help("Total number of failed execution steps grouped by capability and failure code.")
+                .labelNames("capability_id", "failure_code", TENANT_LABEL)
+                .help("Total number of failed execution steps grouped by capability, failure code and tenant.")
                 .register(registry);
         this.planDurationSeconds = Histogram.build()
                 .name("nexora_plan_duration_seconds")
-                .labelNames("status")
+                .labelNames("status", TENANT_LABEL)
                 .buckets(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60)
                 .help("Execution plan duration in seconds.")
                 .register(registry);
@@ -148,7 +159,8 @@ public final class NexoraObservability implements AutoCloseable {
                 .register(registry);
         this.activeExecutionsGauge = Gauge.build()
                 .name("nexora_active_executions")
-                .help("Current number of active executions.")
+                .labelNames(TENANT_LABEL)
+                .help("Current number of active executions per tenant.")
                 .register(registry);
         this.readyGauge = Gauge.build()
                 .name("nexora_ready")
@@ -272,37 +284,65 @@ public final class NexoraObservability implements AutoCloseable {
     }
 
     private void onPlanStarted(PlanStartedEvent event) {
-        planStartedTotal.inc();
-        activeExecutionsGauge.set(activeExecutions.incrementAndGet());
+        String tenant = event.tenantId();
+        runningTenants.put(event.executionId(), tenant);
+        planStartedTotal.labels(tenant).inc();
+        activeExecutionsGauge.labels(tenant).inc();
         processTracker.onPlanStarted(event);
     }
 
     private void onPlanCompleted(PlanCompletedEvent event) {
-        planCompletedTotal.inc();
-        planDurationSeconds.labels("completed").observe(seconds(event.elapsed().toNanos()));
-        activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
+        String tenant = finish(event.executionId());
+        planCompletedTotal.labels(tenant).inc();
+        planDurationSeconds
+                .labels("completed", tenant)
+                .observe(seconds(event.elapsed().toNanos()));
         processTracker.onPlanCompleted(event);
     }
 
     private void onPlanFailed(PlanFailedEvent event) {
-        planFailedTotal.inc();
-        planDurationSeconds.labels("failed").observe(seconds(event.elapsed().toNanos()));
-        activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
+        String tenant = finish(event.executionId());
+        planFailedTotal.labels(tenant).inc();
+        planDurationSeconds
+                .labels("failed", tenant)
+                .observe(seconds(event.elapsed().toNanos()));
         processTracker.onPlanFailed(event);
     }
 
     private void onPlanTimedOut(PlanTimedOutEvent event) {
-        planFailedTotal.inc();
-        planDurationSeconds.labels("timed_out").observe(seconds(event.elapsed().toNanos()));
-        activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
+        String tenant = finish(event.executionId());
+        planFailedTotal.labels(tenant).inc();
+        planDurationSeconds
+                .labels("timed_out", tenant)
+                .observe(seconds(event.elapsed().toNanos()));
         processTracker.onPlanTimedOut(event);
     }
 
     private void onPlanCancelled(PlanCancelledEvent event) {
-        planCancelledTotal.inc();
-        planDurationSeconds.labels("cancelled").observe(seconds(event.elapsed().toNanos()));
-        activeExecutionsGauge.set(Math.max(0, activeExecutions.decrementAndGet()));
+        String tenant = finish(event.executionId());
+        planCancelledTotal.labels(tenant).inc();
+        planDurationSeconds
+                .labels("cancelled", tenant)
+                .observe(seconds(event.elapsed().toNanos()));
         processTracker.onPlanCancelled(event);
+    }
+
+    /**
+     * The tenant of an execution reaching its terminal event, which is published exactly once. The
+     * active gauge only drops for an execution it counted, so one started before this collector
+     * attached never drives it below zero.
+     */
+    private String finish(String executionId) {
+        String tenant = runningTenants.remove(executionId);
+        if (tenant == null) {
+            return UNKNOWN_TENANT;
+        }
+        activeExecutionsGauge.labels(tenant).dec();
+        return tenant;
+    }
+
+    private String tenantOf(String executionId) {
+        return runningTenants.getOrDefault(executionId, UNKNOWN_TENANT);
     }
 
     private void onPlanAmended(PlanAmendedEvent event) {
@@ -311,12 +351,16 @@ public final class NexoraObservability implements AutoCloseable {
     }
 
     private void onStepStarted(StepStartedEvent event) {
-        stepStartedTotal.labels(safeLabel(event.capabilityId())).inc();
+        stepStartedTotal
+                .labels(safeLabel(event.capabilityId()), tenantOf(event.executionId()))
+                .inc();
         processTracker.onStepStarted(event);
     }
 
     private void onStepCompleted(StepCompletedEvent event) {
-        stepCompletedTotal.labels(safeLabel(event.capabilityId())).inc();
+        stepCompletedTotal
+                .labels(safeLabel(event.capabilityId()), tenantOf(event.executionId()))
+                .inc();
         stepDurationSeconds
                 .labels(safeLabel(event.capabilityId()), "completed")
                 .observe(seconds(event.elapsed().toNanos()));
@@ -332,7 +376,9 @@ public final class NexoraObservability implements AutoCloseable {
         String capabilityId = safeLabel(event.capabilityId());
         String failureCode = safeLabel(event.failureCode());
         String status = "SKIPPED".equalsIgnoreCase(event.failureCode()) ? "skipped" : "failed";
-        stepFailedTotal.labels(capabilityId, failureCode).inc();
+        stepFailedTotal
+                .labels(capabilityId, failureCode, tenantOf(event.executionId()))
+                .inc();
         stepDurationSeconds
                 .labels(capabilityId, status)
                 .observe(seconds(event.elapsed().toNanos()));

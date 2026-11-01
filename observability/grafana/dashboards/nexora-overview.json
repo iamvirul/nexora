@@ -274,7 +274,8 @@
       },
       "targets": [
         {
-          "expr": "nexora_active_executions",
+          "expr": "sum by (tenant) (nexora_active_executions)",
+          "legendFormat": "{{tenant}}",
           "refId": "A"
         }
       ],
