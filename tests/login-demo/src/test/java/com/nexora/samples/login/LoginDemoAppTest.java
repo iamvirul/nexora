@@ -82,6 +82,7 @@ class LoginDemoAppTest {
         HttpResponse<String> process = client.send(
                 HttpRequest.newBuilder(URI.create(base() + "/api/process"))
                         .header("Authorization", "Bearer " + demo.serverKey())
+                        .header("X-Tenant-ID", "acme")
                         .GET()
                         .build(),
                 HttpResponse.BodyHandlers.ofString());
@@ -95,12 +96,54 @@ class LoginDemoAppTest {
             HttpResponse<String> response = client.send(
                     HttpRequest.newBuilder(URI.create(base() + path))
                             .header("Authorization", "Bearer " + demo.serverKey())
+                            .header("X-Tenant-ID", "acme")
                             .GET()
                             .build(),
                     HttpResponse.BodyHandlers.ofString());
 
             assertEquals(200, response.statusCode(), path);
         }
+    }
+
+    @Test
+    void demoUsersAreInDifferentTenantsAndNeverSeeEachOthersExecutions() throws Exception {
+        String aliceKey = JSON.readTree(login("alice", "alice-demo-password").body())
+                .path("apiKey")
+                .asText();
+        String bobKey = JSON.readTree(login("bob", "bob-demo-password").body())
+                .path("apiKey")
+                .asText();
+
+        HttpResponse<String> started = client.send(
+                HttpRequest.newBuilder(URI.create(base() + "/api/execute"))
+                        .header("Authorization", "Bearer " + aliceKey)
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString("{\"goal\":\"process order\"}"))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        String executionId = JSON.readTree(started.body()).path("executionId").asText();
+
+        assertEquals(202, started.statusCode());
+        assertEquals(404, getStatus("/api/executions/" + executionId, bobKey, null));
+        assertEquals(403, getStatus("/api/executions", bobKey, "acme"));
+        assertEquals(200, getStatus("/api/executions/" + executionId, aliceKey, null));
+    }
+
+    @Test
+    void serverKeyMustNameATenant() throws Exception {
+        assertEquals(400, getStatus("/api/executions", demo.serverKey(), null));
+        assertEquals(200, getStatus("/api/executions", demo.serverKey(), "globex"));
+    }
+
+    /** Status of a GET with {@code key} as the Bearer credential, naming {@code tenant} when not null. */
+    private int getStatus(String path, String key, String tenant) throws Exception {
+        HttpRequest.Builder request =
+                HttpRequest.newBuilder(URI.create(base() + path)).header("Authorization", "Bearer " + key);
+        if (tenant != null) {
+            request.header("X-Tenant-ID", tenant);
+        }
+        return client.send(request.GET().build(), HttpResponse.BodyHandlers.ofString())
+                .statusCode();
     }
 
     @Test
