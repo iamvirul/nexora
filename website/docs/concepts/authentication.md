@@ -129,7 +129,7 @@ Restart with `nexora observe --rotate-api-key`. A new key is printed, the stored
 
 ## Try it: the login demo
 
-`tests/login-demo` runs the real observe server with two demo users, so you can try every flow on this page without setting anything up:
+`tests/login-demo` runs the real observe server, in [multi-tenant](multi-tenancy.md) mode, with two demo users in different tenants, so you can try every flow on this page without setting anything up:
 
 ```bash
 mvn -q install -DskipTests
@@ -139,14 +139,15 @@ java -jar tests/login-demo/target/login-demo.jar
 
 It listens on `http://localhost:9470` (localhost only) and prints the users, a server key for the run, and a guided tour. It runs without TLS, so its console starts with the `Serving plain HTTP` warning every plain-HTTP server logs; that is expected here, since nothing leaves your machine:
 
-| User | Password |
-|---|---|
-| `alice` | `alice-demo-password` |
-| `bob` | `bob-demo-password` |
+| User | Password | Tenant |
+|---|---|---|
+| `alice` | `alice-demo-password` | `acme` |
+| `bob` | `bob-demo-password` | `globex` |
 
 1. **Dashboard sign-in:** sign in as alice and run "process order"; the console logs it as `principal=alice`.
-2. **Lockout:** five wrong passwords for bob, and the sixth attempt is refused for 15 minutes.
-3. **CLI:** the CLI defaults to port 9464, so point every command at the demo with `--server`:
+2. **Tenants:** sign in as bob; alice's execution is not there. The server key reaches any tenant but must send `X-Tenant-ID` (`400` without it), and a user key naming another tenant gets `403`.
+3. **Lockout:** five wrong passwords for bob, and the sixth attempt is refused for 15 minutes.
+4. **CLI:** the CLI defaults to port 9464, so point every command at the demo with `--server`:
 
    ```bash
    nexora login  --server http://localhost:9470 -u bob
@@ -155,8 +156,8 @@ It listens on `http://localhost:9470` (localhost only) and prints the users, a s
    ```
 
    The demo's own console prints these with a `--credentials-file` inside its temp folder, so they leave your real `~/.nexora/credentials` alone.
-4. **curl:** mint a user API key from `POST /api/keys` and use it as a Bearer header.
-5. **Live revocation:** `nexora user remove alice --users-file <path printed by the demo>` while she is signed in, and the dashboard asks her to sign in again.
+5. **curl:** mint a user API key from `POST /api/keys` and use it as a Bearer header.
+6. **Live revocation:** `nexora user remove alice --users-file <path printed by the demo>` while she is signed in, and the dashboard asks her to sign in again.
 
 Every sign-in, rejection and change appears on the demo's console as an `audit` line. The users, their keys and the demo's CLI login file live in a temp folder that is deleted when you stop the demo. The passwords are printed on purpose: never reuse them.
 

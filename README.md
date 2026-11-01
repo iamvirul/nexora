@@ -550,6 +550,22 @@ curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/ap
 curl -H "Authorization: Bearer $NEXORA_API_KEY" -X DELETE http://localhost:9464/api/schedules/<id>
 ```
 
+## Multi-tenancy
+
+Every execution belongs to a tenant, `default` unless the intent names one. History, dead letters, schedules, replays and cancels are scoped by it, capabilities read it from their request, and execution metrics carry a `tenant` label.
+
+```java
+engine.execute(new Intent("process order", Map.of("orderId", "123")).withTenantId("acme"));
+
+// An engine that only ever runs and sees acme's work
+NexoraEngine acme = NexoraEngine.builder()
+        .withExecutionStore(new JdbcExecutionStore(sharedPool))
+        .withTenantId("acme")
+        .build();
+```
+
+`nexora observe --multi-tenant` scopes the API and dashboard: users are bound to a tenant (`nexora user add alice --tenant acme`), and the server key names one with `X-Tenant-ID`. Try the library side with `java -jar tests/multi-tenant-demo/target/multi-tenant-demo.jar` and the server side with the login demo. See the [Multi-tenancy guide](website/docs/concepts/multi-tenancy.md).
+
 ## Observability UI + Prometheus + Grafana
 
 Start Nexora's built-in observability server:
@@ -597,7 +613,7 @@ nexora observe
 curl -H "Authorization: Bearer $NEXORA_API_KEY" http://localhost:9464/api/process
 ```
 
-The payment pipeline demo prints a fresh server key in its console on every start and has no user accounts, so paste that key into its sign-in card. To try username and password sign-in, run the login demo: `java -jar tests/login-demo/target/login-demo.jar` (users `alice` / `bob`, guided tour on its console).
+The payment pipeline demo prints a fresh server key in its console on every start and has no user accounts, so paste that key into its sign-in card. To try username and password sign-in, run the login demo: `java -jar tests/login-demo/target/login-demo.jar` (users `alice` / `bob` in tenants `acme` / `globex`, guided tour on its console).
 
 See the [Authentication guide](website/docs/concepts/authentication.md) for how each sign-in flow works, user management, the demo, and what `401` and `429` mean.
 

@@ -48,10 +48,17 @@ Tenant-scoped lookups treat another tenant's execution exactly like an unknown i
 
 ### One engine per tenant
 
+Engines sharing a database each need their own store, because an engine closes its store when it shuts down. Build every store on one caller-owned pool; a store over a caller's `DataSource` leaves the pool open:
+
 ```java
+HikariDataSource pool = HikariCPDataSourceFactory.create(jdbcUrl, PoolConfig.defaults());
 NexoraEngine acme = NexoraEngine.builder()
-        .withExecutionStore(store)
+        .withExecutionStore(new JdbcExecutionStore(pool))
         .withTenantId("acme")
+        .build();
+NexoraEngine globex = NexoraEngine.builder()
+        .withExecutionStore(new JdbcExecutionStore(pool))
+        .withTenantId("globex")
         .build();
 ```
 
@@ -117,6 +124,18 @@ nexora user tenant alice globex
 Without `--multi-tenant` the server is single-tenant: every caller sees every execution and `X-Tenant-ID` is ignored.
 
 Execution metrics at `/metrics` carry a `tenant` label (see [Observability](../observability.md)); `/metrics` itself stays public and unscoped, like every scrape endpoint.
+
+## Try it
+
+```bash
+mvn -q install -DskipTests
+# Library: tenants on intents, a tenant-only capability, a bound engine, a schedule firing once, metrics
+java -jar tests/multi-tenant-demo/target/multi-tenant-demo.jar
+# Server: alice (acme) and bob (globex) on a --multi-tenant observe server, with a guided tour
+java -jar tests/login-demo/target/login-demo.jar
+```
+
+See [the login demo](authentication.md#try-it-the-login-demo) for the tour.
 
 ## Database
 
