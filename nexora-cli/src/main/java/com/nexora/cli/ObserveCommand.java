@@ -150,6 +150,16 @@ public class ObserveCommand implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
+        // Config before the key, like TLS below: a bad value must not cost a generated or rotated key.
+        RateLimitConfig rateLimit;
+        try {
+            rateLimit = parent.config().rateLimitConfig();
+        } catch (IllegalArgumentException e) {
+            spec.commandLine()
+                    .getErr()
+                    .println("Error: invalid observe.rateLimit in the config file: " + e.getMessage());
+            return EXIT_USAGE;
+        }
         ApiKeyStore.Resolution key;
         UserStore users;
         ObserveTls tls;
@@ -163,16 +173,6 @@ public class ObserveCommand implements Callable<Integer> {
             return EXIT_USAGE;
         }
         ApiAuth auth = new ApiAuth(key.digest(), users);
-        RateLimitConfig rateLimit;
-        try {
-            rateLimit = parent.config().rateLimitConfig();
-        } catch (IllegalArgumentException e) {
-            spec.commandLine()
-                    .getErr()
-                    .println("Error: invalid observe.rateLimit in the config file: " + e.getMessage());
-            return EXIT_USAGE;
-        }
-
         NexoraEngine engine = parent.engine();
         ObserveServer.Config config = new ObserveServer.Config(host, port, port + 1, maxExecutions, maxEvents)
                 .withMultiTenant(multiTenant)
