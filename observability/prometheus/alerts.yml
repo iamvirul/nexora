@@ -23,7 +23,7 @@ groups:
           description: "p95 step latency has been above 2 seconds for at least 5 minutes."
 
       - alert: NexoraExecutionsStuck
-        expr: min_over_time(sum(nexora_active_executions)[10m:]) > 0
+        expr: min_over_time(nexora_active_executions[10m]) > 0
         for: 10m
         labels:
           severity: critical

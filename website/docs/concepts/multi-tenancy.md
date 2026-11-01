@@ -143,7 +143,7 @@ Migration `V3__add_tenant_id.sql` adds a `tenant_id` column (`VARCHAR(64) NOT NU
 
 ### Locking down direct database access (PostgreSQL)
 
-Nexora filters by tenant in every query it runs. People and tools that query the database directly, such as reporting users, are not covered by that. PostgreSQL row-level security can hold them to their own tenant.
+The multi-tenant observe server and the tenant-scoped API above filter by tenant. Code that calls an `ExecutionStore` directly must use those tenant-scoped methods, or check the `tenantId` of what it reads: the by-id lookups (`findById(id)`, `findDeadLetterById`, `findScheduleById`) return any tenant's row. People and tools that query the database directly, such as reporting users, are not covered by Nexora at all. PostgreSQL row-level security can hold them to their own tenant.
 
 Nexora's own database user owns the tables (it runs the migrations), and table owners bypass row-level security, so Nexora itself is unaffected. Do not use `FORCE ROW LEVEL SECURITY`.
 

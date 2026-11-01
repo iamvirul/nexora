@@ -1395,7 +1395,7 @@ components:
           properties:
             code:
               type: string
-              enum: [UNAUTHORIZED, INVALID_CREDENTIALS_FORMAT, UNSUPPORTED_MEDIA_TYPE, TOO_MANY_ATTEMPTS]
+              enum: [UNAUTHORIZED, INVALID_CREDENTIALS_FORMAT, UNSUPPORTED_MEDIA_TYPE, TOO_MANY_ATTEMPTS, TENANT_REQUIRED, INVALID_TENANT_ID, TENANT_FORBIDDEN]
             message:
               type: string
     Error:
