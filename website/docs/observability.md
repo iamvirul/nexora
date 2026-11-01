@@ -242,13 +242,15 @@ curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/ap
 
 ### Metrics exposed include
 
-- `nexora_plan_started_total`, `nexora_plan_completed_total`, `nexora_plan_failed_total`
-- `nexora_plan_duration_seconds`: histogram by status (completed/failed/timed_out/cancelled)
-- `nexora_plan_cancelled_total`: cancelled executions (not counted as failures)
-- `nexora_step_started_total`, `nexora_step_completed_total`, `nexora_step_failed_total`: all by capability ID
+- `nexora_plan_started_total`, `nexora_plan_completed_total`, `nexora_plan_failed_total`: by tenant
+- `nexora_plan_duration_seconds`: histogram by status (completed/failed/timed_out/cancelled) and tenant
+- `nexora_plan_cancelled_total`: cancelled executions by tenant (not counted as failures)
+- `nexora_step_started_total`, `nexora_step_completed_total`, `nexora_step_failed_total`: all by capability ID and tenant
 - `nexora_step_duration_seconds`: histogram by capability ID and terminal status
 - `nexora_plan_amendments_total`: by amendment type (ADD_STEP, SKIP_STEP, MODIFY_INPUT)
-- `nexora_active_executions`: current in-flight count
+- `nexora_active_executions`: current in-flight count by tenant (`sum(nexora_active_executions)` for the total)
+
+The `tenant` label is `default` on a single-tenant deployment, so totals are unchanged; aggregate with `sum(...)` or `sum by (tenant)`. Step durations are not split by tenant, since every label multiplies the histogram buckets.
 - `nexora_ready`: 1 when `/health/ready` reports UP, 0 otherwise
 
 ### Bring up Prometheus, Grafana, and Alertmanager

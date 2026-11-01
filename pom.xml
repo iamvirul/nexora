@@ -47,6 +47,7 @@
         <module>tests/payment-pipeline</module>
         <module>tests/json-config-demo</module>
         <module>tests/login-demo</module>
+        <module>tests/multi-tenant-demo</module>
     </modules>
 
     <properties>

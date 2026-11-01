@@ -658,6 +658,8 @@
          <code>NEXORA_API_KEY</code>. It is exchanged for a session cookie and not stored in this browser.</p>
       <input type="password" id="auth-key" autocomplete="off" spellcheck="false" placeholder="nxk_..."
              aria-label="API key">
+      <input type="text" id="auth-tenant" autocomplete="off" spellcheck="false" placeholder="Tenant"
+             aria-label="Tenant" pattern="[a-z0-9][a-z0-9_\-]{0,63}" hidden>
     </div>
     <div class="auth-error" id="auth-error" role="alert"></div>
     <button type="submit">Sign in</button>
@@ -1456,11 +1458,14 @@ runForm.addEventListener('submit', async e => {
 // POST /api/session. Neither the password nor the key is kept in this page or in browser storage.
 
 const PASSWORD_LOGIN = {{PASSWORD_LOGIN}}; // false when the server has no user store (the demo)
+// On a multi-tenant server a key-holder session is pinned to the tenant named at sign-in.
+const MULTI_TENANT = {{MULTI_TENANT}};
 const authEl = document.getElementById('auth');
 const authForm = document.getElementById('auth-form');
 const authUser = document.getElementById('auth-user');
 const authPass = document.getElementById('auth-pass');
 const authKey = document.getElementById('auth-key');
+const authTenant = document.getElementById('auth-tenant');
 const authError = document.getElementById('auth-error');
 const authSwitch = document.getElementById('auth-switch');
 const passwordFields = document.getElementById('auth-password-fields');
@@ -1477,6 +1482,8 @@ function showMode() {
   authUser.required = !keyMode;
   authPass.required = !keyMode;
   authKey.required = keyMode;
+  authTenant.hidden = !MULTI_TENANT;
+  authTenant.required = keyMode && MULTI_TENANT;
   authError.textContent = '';
   (keyMode ? authKey : authUser).focus();
 }
@@ -1513,13 +1520,16 @@ async function unlock() {
   loadHistory(true);
   try {
     const who = await (await api('/api/session')).json();
-    navUser.textContent = who.user ? who.user : 'API key';
+    const name = who.user ? who.user : 'API key';
+    navUser.textContent = who.multiTenant && who.tenantId ? `${name} · ${who.tenantId}` : name;
   } catch (_) {}
 }
 
 function signInRequest() {
   if (keyMode) {
-    return { method: 'POST', headers: { Authorization: 'Bearer ' + authKey.value.trim() } };
+    const headers = { Authorization: 'Bearer ' + authKey.value.trim() };
+    if (MULTI_TENANT) headers['X-Tenant-ID'] = authTenant.value.trim();
+    return { method: 'POST', headers };
   }
   return {
     method: 'POST',
@@ -1544,6 +1554,11 @@ authForm.addEventListener('submit', async e => {
     if (r.status === 429) {
       const wait = Math.ceil(Number(r.headers.get('Retry-After') || 60) / 60);
       authError.textContent = `Too many attempts. Try again in ${wait} minute${wait === 1 ? '' : 's'}.`;
+      return;
+    }
+    if (r.status === 400 && keyMode && MULTI_TENANT) {
+      authError.textContent = 'Enter the tenant to open (a-z, 0-9, "-" or "_").';
+      authTenant.focus();
       return;
     }
     if (!r.ok) { authError.textContent = `Sign-in failed (HTTP ${r.status}).`; return; }

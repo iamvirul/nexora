@@ -28,6 +28,7 @@ const sidebars = {
         'concepts/cron-scheduling',
         'concepts/authentication',
         'concepts/tls',
+        'concepts/multi-tenancy',
       ],
     },
     {

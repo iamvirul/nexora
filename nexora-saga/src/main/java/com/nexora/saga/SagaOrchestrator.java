@@ -92,7 +92,8 @@ public final class SagaOrchestrator {
                 ctx.getTraceContext().childSpan(),
                 null,
                 ctx.getExecutionId(),
-                0);
+                0,
+                ctx.tenantId());
 
         try {
             CapabilityResult result = pipeline.execute(request);

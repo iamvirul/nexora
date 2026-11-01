@@ -59,7 +59,10 @@ public final class ExecutionEngine {
     private final WebhookDeliveryService webhookDeliveryService;
     private final int stepOutputMaxBytes;
     // Executions currently running on this engine; entries are removed once terminal handling is done.
-    private final ConcurrentHashMap<String, HaltSignal> runningExecutions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, RunningExecution> runningExecutions = new ConcurrentHashMap<>();
+
+    /** An execution this engine is running, with the tenant that owns it for tenant-scoped cancels. */
+    private record RunningExecution(HaltSignal halt, String tenantId) {}
 
     private static final int STATE_WRITE_ATTEMPTS = 3;
     private static final Duration STATE_WRITE_RETRY_DELAY = Duration.ofMillis(100);
@@ -224,7 +227,14 @@ public final class ExecutionEngine {
         if (store == null) return;
         String dlId = UUID.randomUUID().toString();
         DeadLetterRecord dl = DeadLetterRecord.pending(
-                dlId, executionId, intent.getGoal(), intent.getContext(), failureCode, failureMessage, failedAt);
+                dlId,
+                executionId,
+                intent.getGoal(),
+                intent.getContext(),
+                failureCode,
+                failureMessage,
+                failedAt,
+                intent.getTenantId());
         try {
             store.createDeadLetter(dl);
         } catch (Exception e) {
@@ -315,11 +325,24 @@ public final class ExecutionEngine {
      * {@link CancellationOutcome#NOT_FOUND} because nothing remembers them.
      */
     public CancellationOutcome cancel(String executionId) {
+        return cancel(null, executionId);
+    }
+
+    /**
+     * Cancels {@code executionId} only if it belongs to {@code tenantId}; another tenant's execution
+     * reports {@link CancellationOutcome#NOT_FOUND}, exactly like an unknown id. A {@code null}
+     * tenant cancels regardless of owner.
+     */
+    public CancellationOutcome cancel(String tenantId, String executionId) {
         Objects.requireNonNull(executionId, "executionId must not be null");
-        HaltSignal halt = runningExecutions.get(executionId);
-        if (halt == null) {
-            return outcomeForUntrackedExecution(executionId);
+        RunningExecution running = runningExecutions.get(executionId);
+        if (running != null && tenantId != null && !tenantId.equals(running.tenantId())) {
+            return CancellationOutcome.NOT_FOUND;
         }
+        if (running == null) {
+            return outcomeForUntrackedExecution(tenantId, executionId);
+        }
+        HaltSignal halt = running.halt();
         if (halt.halt(HaltSignal.Reason.CANCELLED)) {
             log.info("Execution cancellation requested executionId={}", executionId);
             return CancellationOutcome.CANCELLED;
@@ -335,11 +358,11 @@ public final class ExecutionEngine {
         return runningExecutions.containsKey(executionId);
     }
 
-    private CancellationOutcome outcomeForUntrackedExecution(String executionId) {
+    private CancellationOutcome outcomeForUntrackedExecution(String tenantId, String executionId) {
         if (store == null) {
             return CancellationOutcome.NOT_FOUND;
         }
-        return store.findById(executionId)
+        return (tenantId == null ? store.findById(executionId) : store.findById(tenantId, executionId))
                 .map(record -> record.state() == ExecutionState.RUNNING
                         ? CancellationOutcome.NOT_RUNNING_ON_THIS_ENGINE
                         : CancellationOutcome.ALREADY_TERMINAL)
@@ -374,7 +397,8 @@ public final class ExecutionEngine {
     public ExecutionHandle submit(Intent intent, TraceContext traceContext, Map<String, String> reusedIdempotencyKeys) {
         ExecutionContext ctx = new ExecutionContext(intent, traceContext, reusedIdempotencyKeys);
 
-        PlanningContext planningContext = new DefaultPlanningContext(capabilityRegistry, Map.of());
+        PlanningContext planningContext =
+                new DefaultPlanningContext(capabilityRegistry, Map.of(), intent.getTenantId());
         Plan plan = planner.plan(intent, planningContext);
         Instant planStart = Instant.now();
 
@@ -388,12 +412,13 @@ public final class ExecutionEngine {
         // Shared between the deadline watchdog, cancel(), and the scheduler. Registered before the
         // store record is written so a cancel never sees a RUNNING record it cannot reach.
         HaltSignal halt = new HaltSignal();
-        runningExecutions.put(ctx.getExecutionId(), halt);
+        runningExecutions.put(ctx.getExecutionId(), new RunningExecution(halt, intent.getTenantId()));
 
         log.info(
-                "Starting execution executionId={} traceId={} goal={}",
+                "Starting execution executionId={} traceId={} tenantId={} goal={}",
                 ctx.getExecutionId(),
                 traceContext.traceId(),
+                intent.getTenantId(),
                 intent.getGoal());
 
         if (store != null) {
@@ -403,13 +428,15 @@ public final class ExecutionEngine {
                         traceContext.traceId(),
                         intent.getGoal(),
                         intent.getContext(),
-                        planStart));
+                        planStart,
+                        intent.getTenantId()));
             } catch (Exception e) {
                 log.warn("Persistence: failed to create execution record executionId={}", ctx.getExecutionId(), e);
             }
         }
 
-        eventBus.publish(new PlanStartedEvent(ctx.getExecutionId(), traceContext.traceId(), planStart));
+        eventBus.publish(
+                new PlanStartedEvent(ctx.getExecutionId(), traceContext.traceId(), planStart, intent.getTenantId()));
 
         DagStepScheduler.ScheduleSession session;
         try {

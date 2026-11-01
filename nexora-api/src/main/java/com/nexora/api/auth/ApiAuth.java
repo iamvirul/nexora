@@ -1,5 +1,6 @@
 package com.nexora.api.auth;
 
+import com.nexora.core.tenant.TenantId;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -72,9 +73,17 @@ public final class ApiAuth {
      */
     public static final String USER_KEY_PREFIX = "nxu_";
 
-    /** Who made a request: how they authenticated, and the name the audit log records. */
-    public record Caller(Credential credential, String name) {
-        static final Caller ANONYMOUS = new Caller(Credential.NONE, null);
+    /**
+     * Who made a request: how they authenticated, the name the audit log records, and the tenant
+     * their credential is bound to. {@code tenantId} is null for the server's own API key, which
+     * may act for any tenant, and for a key-holder session opened without one.
+     */
+    public record Caller(Credential credential, String name, String tenantId) {
+        static final Caller ANONYMOUS = new Caller(Credential.NONE, null, null);
+
+        public Caller(Credential credential, String name) {
+            this(credential, name, null);
+        }
 
         public boolean authenticated() {
             return credential != Credential.NONE;
@@ -95,10 +104,16 @@ public final class ApiAuth {
         record Throttled(Duration retryAfter) implements LoginResult {}
     }
 
-    /** A live session as seen by {@code GET /api/session}; {@code user} is null for API key sessions. */
-    public record SessionInfo(String user, Instant expiresAt) {}
+    /**
+     * A live session as seen by {@code GET /api/session}; {@code user} is null for API key sessions,
+     * {@code tenantId} null for a key-holder session bound to no tenant.
+     */
+    public record SessionInfo(String user, Instant expiresAt, String tenantId) {}
 
-    private record SessionEntry(Instant expiresAt, String user, String passwordFingerprint) {}
+    /** Exchange attribute holding the {@link Caller} that {@link #protect} authenticated. */
+    public static final String CALLER_ATTRIBUTE = "nexora.caller";
+
+    private record SessionEntry(Instant expiresAt, String user, String passwordFingerprint, String tenantId) {}
 
     /**
      * The parts of a request that carry credentials. {@code host} is the authority the client
@@ -146,6 +161,11 @@ public final class ApiAuth {
         this(keyDigest, null, Clock.systemUTC());
     }
 
+    /** The tenant of a dashboard account, if this server has users and that user exists. */
+    public Optional<String> tenantOf(String username) {
+        return users.flatMap(store -> store.tenantOf(username));
+    }
+
     /** Whether this server has a user store, and so offers username and password login. */
     public boolean passwordLoginEnabled() {
         return users.isPresent();
@@ -175,8 +195,14 @@ public final class ApiAuth {
                         caller.credential(),
                         exchange.getRemoteAddress());
             }
+            exchange.setAttribute(CALLER_ATTRIBUTE, caller);
             handler.handle(exchange);
         };
+    }
+
+    /** The caller {@link #protect} let through; anonymous when the handler was not wrapped by it. */
+    public static Caller callerOf(HttpExchange exchange) {
+        return exchange.getAttribute(CALLER_ATTRIBUTE) instanceof Caller caller ? caller : Caller.ANONYMOUS;
     }
 
     /** Bearer key first; a session cookie only counts when the Origin rule above is met. */
@@ -189,14 +215,15 @@ public final class ApiAuth {
         Optional<SessionEntry> userKey =
                 bearer.filter(token -> SESSION_TOKEN.matcher(token).matches()).flatMap(this::liveToken);
         if (userKey.isPresent()) {
-            return new Caller(Credential.USER_KEY, principal(userKey.get()));
+            return new Caller(
+                    Credential.USER_KEY, principal(userKey.get()), userKey.get().tenantId());
         }
         boolean needsOrigin = !SAFE_METHODS.contains(request.method().toUpperCase(Locale.ROOT));
         if (needsOrigin && !sameAuthority(request.origin(), request.host())) {
             return Caller.ANONYMOUS;
         }
         return liveSession(request.cookie())
-                .map(entry -> new Caller(Credential.SESSION, principal(entry)))
+                .map(entry -> new Caller(Credential.SESSION, principal(entry), entry.tenantId()))
                 .orElse(Caller.ANONYMOUS);
     }
 
@@ -233,8 +260,14 @@ public final class ApiAuth {
             return new LoginResult.Rejected();
         }
         throttle.recordSuccess(name);
-        Session session = issue(name, stored.get().fingerprint());
-        log.info("Dashboard login user={} client={} expiresAt={}", name, client, session.expiresAt());
+        String tenantId = store.tenantOf(name).orElse(TenantId.DEFAULT);
+        Session session = issue(name, stored.get().fingerprint(), tenantId);
+        log.info(
+                "Dashboard login user={} tenantId={} client={} expiresAt={}",
+                name,
+                tenantId,
+                client,
+                session.expiresAt());
         return new LoginResult.Accepted(session, name);
     }
 
@@ -245,7 +278,7 @@ public final class ApiAuth {
 
     /** The session named by the cookie, if it is still live. */
     public Optional<SessionInfo> currentSession(String cookieHeader) {
-        return liveSession(cookieHeader).map(entry -> new SessionInfo(entry.user(), entry.expiresAt()));
+        return liveSession(cookieHeader).map(ApiAuth::sessionInfo);
     }
 
     /**
@@ -253,14 +286,27 @@ public final class ApiAuth {
      * which lives on {@code dashboardPort} of the host the socket was opened on.
      */
     public boolean allowsWebSocket(String authorization, String cookie, String origin, String host, int dashboardPort) {
+        return authenticateWebSocket(authorization, cookie, origin, host, dashboardPort)
+                .isPresent();
+    }
+
+    /** {@link #allowsWebSocket} returning who opened the socket, for streams scoped to a tenant. */
+    public Optional<Caller> authenticateWebSocket(
+            String authorization, String cookie, String origin, String host, int dashboardPort) {
         Optional<String> bearer = bearerToken(authorization);
-        if (bearer.filter(this::isApiKey).isPresent()
-                || bearer.filter(token -> SESSION_TOKEN.matcher(token).matches())
-                        .flatMap(this::liveToken)
-                        .isPresent()) {
-            return true;
+        if (bearer.filter(this::isApiKey).isPresent()) {
+            return Optional.of(new Caller(Credential.API_KEY, API_KEY_PRINCIPAL));
         }
-        return liveSession(cookie).isPresent() && originIsDashboard(origin, host, dashboardPort);
+        Optional<SessionEntry> userKey =
+                bearer.filter(token -> SESSION_TOKEN.matcher(token).matches()).flatMap(this::liveToken);
+        if (userKey.isPresent()) {
+            return Optional.of(new Caller(
+                    Credential.USER_KEY, principal(userKey.get()), userKey.get().tenantId()));
+        }
+        if (!originIsDashboard(origin, host, dashboardPort)) {
+            return Optional.empty();
+        }
+        return liveSession(cookie).map(entry -> new Caller(Credential.SESSION, principal(entry), entry.tenantId()));
     }
 
     /** Compares digests, not keys: equal-length inputs to {@link MessageDigest#isEqual}, so timing reveals nothing. */
@@ -273,10 +319,18 @@ public final class ApiAuth {
 
     /** Issues a session for the API key holder; the caller sets {@link Session#token()} as the cookie. */
     public Session createSession() {
-        return issue(null, null);
+        return issue(null, null, null);
     }
 
-    private Session issue(String user, String passwordFingerprint) {
+    /**
+     * Issues a key-holder session bound to {@code tenantId}, which then reaches only that tenant,
+     * like a user's session does.
+     */
+    public Session createSession(String tenantId) {
+        return issue(null, null, TenantId.requireValid(tenantId));
+    }
+
+    private Session issue(String user, String passwordFingerprint, String tenantId) {
         Instant now = clock.instant();
         sessions.values().removeIf(entry -> !entry.expiresAt().isAfter(now));
         while (sessions.size() >= MAX_SESSIONS) {
@@ -289,7 +343,7 @@ public final class ApiAuth {
         RANDOM.nextBytes(random);
         String token = USER_KEY_PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(random);
         Instant expiresAt = now.plus(SESSION_TTL);
-        sessions.put(tokenDigest(token), new SessionEntry(expiresAt, user, passwordFingerprint));
+        sessions.put(tokenDigest(token), new SessionEntry(expiresAt, user, passwordFingerprint, tenantId));
         return new Session(token, expiresAt);
     }
 
@@ -310,7 +364,11 @@ public final class ApiAuth {
         return bearerToken(authorization)
                 .filter(token -> SESSION_TOKEN.matcher(token).matches())
                 .flatMap(this::liveToken)
-                .map(entry -> new SessionInfo(entry.user(), entry.expiresAt()));
+                .map(ApiAuth::sessionInfo);
+    }
+
+    private static SessionInfo sessionInfo(SessionEntry entry) {
+        return new SessionInfo(entry.user(), entry.expiresAt(), entry.tenantId());
     }
 
     /** @param secure adds {@code Secure}, so the browser never sends the cookie over plain HTTP */
@@ -352,10 +410,14 @@ public final class ApiAuth {
             return Optional.empty();
         }
         boolean expired = !entry.expiresAt().isAfter(clock.instant());
+        // Moving a user to another tenant also ends their sessions: each one is bound to the old tenant.
         boolean userRevoked = entry.user() != null
-                && !users.flatMap(store -> store.find(entry.user()))
-                        .map(hash -> hash.fingerprint().equals(entry.passwordFingerprint()))
-                        .orElse(false);
+                && (!users.flatMap(store -> store.find(entry.user()))
+                                .map(hash -> hash.fingerprint().equals(entry.passwordFingerprint()))
+                                .orElse(false)
+                        || !users.flatMap(store -> store.tenantOf(entry.user()))
+                                .map(tenant -> tenant.equals(entry.tenantId()))
+                                .orElse(false));
         if (expired || userRevoked) {
             sessions.remove(digest);
             return Optional.empty();

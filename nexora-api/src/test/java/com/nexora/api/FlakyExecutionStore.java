@@ -25,6 +25,7 @@ final class FlakyExecutionStore implements ExecutionStore {
 
     private final ExecutionStore delegate;
     private final Map<ExecutionState, AtomicInteger> failuresLeft = new ConcurrentHashMap<>();
+    private volatile List<ScheduleRecord> frozenActiveSchedules;
 
     FlakyExecutionStore(ExecutionStore delegate) {
         this.delegate = delegate;
@@ -32,6 +33,14 @@ final class FlakyExecutionStore implements ExecutionStore {
 
     void failNextUpdates(ExecutionState state, int times) {
         failuresLeft.put(state, new AtomicInteger(times));
+    }
+
+    /**
+     * From now on, active schedules read as they are at this moment, as two engines starting at once
+     * both read them before either fires anything.
+     */
+    void freezeActiveSchedules() {
+        frozenActiveSchedules = delegate.findActiveSchedules();
     }
 
     @Override
@@ -120,7 +129,8 @@ final class FlakyExecutionStore implements ExecutionStore {
 
     @Override
     public List<ScheduleRecord> findActiveSchedules() {
-        return delegate.findActiveSchedules();
+        List<ScheduleRecord> frozen = frozenActiveSchedules;
+        return frozen != null ? frozen : delegate.findActiveSchedules();
     }
 
     @Override
@@ -136,6 +146,16 @@ final class FlakyExecutionStore implements ExecutionStore {
     @Override
     public void updateScheduleLastFired(String id, Instant lastFiredAt, Instant nextFireAt) {
         delegate.updateScheduleLastFired(id, lastFiredAt, nextFireAt);
+    }
+
+    @Override
+    public boolean claimScheduleFire(String id, Instant expectedNextFireAt, Instant firedAt, Instant nextFireAt) {
+        return delegate.claimScheduleFire(id, expectedNextFireAt, firedAt, nextFireAt);
+    }
+
+    @Override
+    public List<DeadLetterRecord> findDeadLetters(String tenantId, DeadLetterReviewState state, int offset, int limit) {
+        return delegate.findDeadLetters(tenantId, state, offset, limit);
     }
 
     @Override

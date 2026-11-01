@@ -23,6 +23,11 @@ Manage recurring cron-based executions.
   Cancel a schedule by ID:
     nexora schedule remove 4f3a1c2d-...
 
+  Work within one tenant (new schedules run for it; list and remove see only
+  its schedules). Without --tenant, list and remove see every tenant:
+    nexora schedule add --goal "nightly cleanup" --cron "0 0 * * *" --tenant acme
+    nexora schedule list --tenant acme
+
   Missed-fire policies
   ────────────────────
   FIRE_ONCE  Fire once to catch up after downtime (default)

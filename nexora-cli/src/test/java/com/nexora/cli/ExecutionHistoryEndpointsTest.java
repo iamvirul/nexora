@@ -74,6 +74,27 @@ class ExecutionHistoryEndpointsTest {
     }
 
     @Test
+    void singleTenantServerIgnoresTheTenantHeaderAndListsEveryTenant() throws Exception {
+        store.createExecution(
+                new ExecutionRecord("a", "t", "goal", Map.of(), ExecutionState.COMPLETED, T0, null, List.of(), "acme"));
+        store.createExecution(new ExecutionRecord(
+                "g", "t", "goal", Map.of(), ExecutionState.COMPLETED, T0.plusSeconds(1), null, List.of(), "globex"));
+
+        HttpResponse<String> response = send(TestAuth.authorized(uri("/api/executions"))
+                .header("X-Tenant-ID", "acme")
+                .GET()
+                .build());
+        HttpResponse<String> detail = send(TestAuth.authorized(uri("/api/executions/g"))
+                .header("X-Tenant-ID", "acme")
+                .GET()
+                .build());
+
+        assertEquals(200, response.statusCode());
+        assertEquals(2, JSON.readTree(response.body()).get("total").asLong());
+        assertEquals(200, detail.statusCode());
+    }
+
+    @Test
     void listRowsAreSummariesWithIsoTimestampsAndDuration() throws Exception {
         store.createExecution(new ExecutionRecord(
                 "done",

@@ -123,6 +123,11 @@ public final class ExecutionContext {
         return intent;
     }
 
+    /** The tenant this execution belongs to, for capabilities that keep per-tenant state or credentials. */
+    public String tenantId() {
+        return intent.getTenantId();
+    }
+
     public TraceContext getTraceContext() {
         return traceContext;
     }

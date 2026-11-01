@@ -21,9 +21,10 @@ import java.util.stream.Stream;
 /**
  * Try username and password sign-in against the real observe server.
  *
- * <p>Starts {@link ObserveServer}, the same server {@code nexora observe} runs, with two demo users
- * and order-processing capabilities, then prints what to try: the dashboard sign-in, the CLI's
- * {@code nexora login}, minting a user API key with curl, the lockout, and live revocation.
+ * <p>Starts {@link ObserveServer}, the same server {@code nexora observe} runs, in multi-tenant mode
+ * with two demo users in different tenants and order-processing capabilities, then prints what to
+ * try: the dashboard sign-in, tenant isolation, the CLI's {@code nexora login}, minting a user API
+ * key with curl, the lockout, and live revocation.
  * Everything lives in a temp folder that is deleted on exit, and the server listens on localhost
  * only.
  */
@@ -34,11 +35,14 @@ public final class LoginDemoApp {
     static final int WEBSOCKET_PORT = HTTP_PORT + 1;
     private static final int EXIT_USAGE = 2;
 
-    /** Demo-only accounts. The passwords are printed on purpose; never reuse them anywhere real. */
-    static final List<DemoUser> USERS =
-            List.of(new DemoUser("alice", "alice-demo-password"), new DemoUser("bob", "bob-demo-password"));
+    /**
+     * Demo-only accounts, one per tenant, so each sees only its own executions. The passwords are
+     * printed on purpose; never reuse them anywhere real.
+     */
+    static final List<DemoUser> USERS = List.of(
+            new DemoUser("alice", "alice-demo-password", "acme"), new DemoUser("bob", "bob-demo-password", "globex"));
 
-    record DemoUser(String username, String password) {}
+    record DemoUser(String username, String password, String tenant) {}
 
     /**
      * A running demo. {@code serverKey} is null when it came from {@value ApiKeyStore#ENV_VAR}, since
@@ -100,7 +104,7 @@ public final class LoginDemoApp {
         try {
             UserStore users = new UserStore(dir.resolve("users"), new PasswordHasher());
             for (DemoUser user : USERS) {
-                users.add(user.username(), user.password().toCharArray());
+                users.add(user.username(), user.password().toCharArray(), user.tenant());
             }
             // In-memory store so the dead letter, schedule and history panels work; gone on exit like the rest.
             NexoraEngine.Builder builder = NexoraEngine.builder().withExecutionStore(JdbcExecutionStore.h2InMemory());
@@ -110,11 +114,12 @@ public final class LoginDemoApp {
                     engine,
                     new ApiAuth(key.digest(), users),
                     new ObserveServer.Config(
-                            HOST,
-                            httpPort,
-                            webSocketPort,
-                            ObserveServer.Config.DEFAULT_MAX_EXECUTIONS,
-                            ObserveServer.Config.DEFAULT_MAX_EVENTS));
+                                    HOST,
+                                    httpPort,
+                                    webSocketPort,
+                                    ObserveServer.Config.DEFAULT_MAX_EXECUTIONS,
+                                    ObserveServer.Config.DEFAULT_MAX_EVENTS)
+                            .withMultiTenant(true));
             return new Running(server, engine, dir, key.newKey().orElse(null));
         } catch (IOException | RuntimeException e) {
             if (engine != null) {
@@ -139,8 +144,9 @@ public final class LoginDemoApp {
         System.out.println();
         System.out.println("Demo users (in " + demo.dir() + ", deleted when you stop the demo):");
         for (DemoUser user : USERS) {
-            System.out.printf("  %-8s %s%n", user.username(), user.password());
+            System.out.printf("  %-8s %-22s tenant %s%n", user.username(), user.password(), user.tenant());
         }
+        System.out.println("The server is multi-tenant: each user sees only their own tenant's executions.");
         System.out.println(
                 demo.serverKey() != null
                         ? "Server key for this run: " + demo.serverKey()
@@ -153,21 +159,29 @@ public final class LoginDemoApp {
         System.out.println(
                 "   Run \"process order\" from the form. This console logs it as principal=" + alice.username() + ".");
         System.out.println();
-        System.out.println("2. Lockout: sign out, then enter a wrong password for " + bob.username() + " five times.");
+        System.out.println("2. Tenants: sign out and sign in as " + bob.username() + " / " + bob.password() + ".");
+        System.out.println("   " + alice.username() + "'s execution is not there: " + bob.username() + " is in tenant "
+                + bob.tenant() + ", " + alice.username() + " in " + alice.tenant() + ".");
+        System.out.println("   The server key reaches any tenant, but must name one:");
+        System.out.println("   curl -H \"Authorization: Bearer <server key>\" -H \"X-Tenant-ID: " + alice.tenant()
+                + "\" " + base + "/api/executions");
+        System.out.println("   Without X-Tenant-ID the server answers 400; a user key naming another tenant gets 403.");
+        System.out.println();
+        System.out.println("3. Lockout: sign out, then enter a wrong password for " + bob.username() + " five times.");
         System.out.println("   The sixth attempt is refused for 15 minutes. The server key above still works.");
         System.out.println();
-        System.out.println("3. CLI login (from the repository root, after `mvn -q install -DskipTests`):");
+        System.out.println("4. CLI login (from the repository root, after `mvn -q install -DskipTests`):");
         System.out.println("   " + cli + " login --server " + base + " -u " + bob.username() + creds);
         System.out.println("   " + cli + " cancel <executionId> --server " + base + creds);
         System.out.println("   " + cli + " logout --server " + base + creds);
         System.out.println();
-        System.out.println("4. A user API key with curl:");
+        System.out.println("5. A user API key with curl (it carries the user's tenant):");
         System.out.println("   curl -X POST " + base + "/api/keys -H 'Content-Type: application/json' \\");
         System.out.println(
                 "        -d '{\"username\":\"" + alice.username() + "\",\"password\":\"" + alice.password() + "\"}'");
         System.out.println("   curl -H \"Authorization: Bearer <apiKey from above>\" " + base + "/api/process");
         System.out.println();
-        System.out.println("5. Live revocation: while " + alice.username() + " is signed in, run");
+        System.out.println("6. Live revocation: while " + alice.username() + " is signed in, run");
         System.out.println("   " + cli + " user remove " + alice.username() + " --users-file " + demo.usersFile());
         System.out.println("   Her next request is refused and the dashboard asks her to sign in again.");
         System.out.println();

@@ -8,6 +8,8 @@ import com.nexora.api.auth.ApiAuth;
 import com.nexora.api.auth.ApiKeyStore;
 import com.nexora.api.auth.PasswordHasher;
 import com.nexora.api.auth.SessionEndpoints;
+import com.nexora.api.auth.TenantResolver;
+import com.nexora.api.auth.TenantScope;
 import com.nexora.api.auth.UserStore;
 import com.nexora.api.observability.NexoraObservability;
 import com.nexora.core.execution.ExecutionHandle;
@@ -15,6 +17,7 @@ import com.nexora.core.intent.Intent;
 import com.nexora.persistence.MissedFirePolicy;
 import com.nexora.persistence.ScheduleRecord;
 import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.InputStream;
@@ -23,6 +26,7 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.UnaryOperator;
@@ -125,6 +129,12 @@ public class ObserveCommand implements Callable<Integer> {
     private String keystorePassword;
 
     @Option(
+            names = {"--multi-tenant"},
+            description = "Scope every request to one tenant: users reach only their own tenant's executions,"
+                    + " and the server API key must name one in the " + TenantResolver.HEADER + " header.")
+    private boolean multiTenant;
+
+    @Option(
             names = {"--max-executions"},
             defaultValue = "100",
             description = "Number of recent executions retained in UI memory. Default: ${DEFAULT-VALUE}")
@@ -153,7 +163,8 @@ public class ObserveCommand implements Callable<Integer> {
         ApiAuth auth = new ApiAuth(key.digest(), users);
 
         NexoraEngine engine = parent.engine();
-        ObserveServer.Config config = new ObserveServer.Config(host, port, port + 1, maxExecutions, maxEvents);
+        ObserveServer.Config config =
+                new ObserveServer.Config(host, port, port + 1, maxExecutions, maxEvents).withMultiTenant(multiTenant);
         ObserveServer server = ObserveServer.start(engine, auth, tls == null ? config : config.withTls(tls));
         int wsPort = server.webSocketPort();
         String scheme = server.tlsEnabled() ? "https" : "http";
@@ -180,6 +191,7 @@ public class ObserveCommand implements Callable<Integer> {
         System.out.printf("WebSocket: %s://%s:%d/%n", wsScheme, display, wsPort);
         System.out.println();
         printTlsStatus(tls);
+        printTenancyStatus(server.multiTenant());
         printApiKeyStatus(key);
         printUserStatus(users);
         System.out.println();
@@ -195,6 +207,32 @@ public class ObserveCommand implements Callable<Integer> {
      */
     static void registerRoutes(
             HttpServer server, NexoraEngine engine, NexoraObservability observability, byte[] indexHtml, ApiAuth auth) {
+        registerRoutes(server, engine, observability, indexHtml, auth, TenantResolver.singleTenant());
+    }
+
+    /** A handler that runs once the request's tenant is resolved; a rejected tenant never reaches it. */
+    @FunctionalInterface
+    interface ScopedHandler {
+        void handle(HttpExchange exchange, TenantScope scope) throws IOException;
+    }
+
+    /** Resolves the tenant first; must sit inside {@link ApiAuth#protect}, which identifies the caller. */
+    static HttpHandler scoped(TenantResolver tenants, ScopedHandler handler) {
+        return exchange -> {
+            Optional<TenantScope> scope = tenants.scope(exchange);
+            if (scope.isPresent()) {
+                handler.handle(exchange, scope.get());
+            }
+        };
+    }
+
+    static void registerRoutes(
+            HttpServer server,
+            NexoraEngine engine,
+            NexoraObservability observability,
+            byte[] indexHtml,
+            ApiAuth auth,
+            TenantResolver tenants) {
         server.createContext("/metrics", exchange -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 sendText(exchange, 405, "Method Not Allowed");
@@ -207,16 +245,18 @@ public class ObserveCommand implements Callable<Integer> {
                     observability.scrapePrometheus().getBytes(StandardCharsets.UTF_8));
         });
 
-        server.createContext("/api/process", auth.protect(exchange -> {
+        server.createContext("/api/process", auth.protect(scoped(tenants, (exchange, scope) -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 sendText(exchange, 405, "Method Not Allowed");
                 return;
             }
-            byte[] payload = JSON.writeValueAsBytes(observability.processSnapshot());
+            NexoraObservability.ProcessSnapshot snapshot = observability.processSnapshot();
+            byte[] payload =
+                    JSON.writeValueAsBytes(scope.tenantId() == null ? snapshot : snapshot.forTenant(scope.tenantId()));
             send(exchange, 200, "application/json; charset=utf-8", payload);
-        }));
+        })));
 
-        server.createContext("/api/webhook-deliveries/", auth.protect(exchange -> {
+        server.createContext("/api/webhook-deliveries/", auth.protect(scoped(tenants, (exchange, scope) -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 try {
                     sendText(exchange, 405, "Method Not Allowed");
@@ -243,6 +283,12 @@ public class ObserveCommand implements Callable<Integer> {
                 return;
             }
             try {
+                if (scope.tenantId() != null
+                        && store.findById(scope.tenantId(), executionId).isEmpty()) {
+                    // Another tenant's execution answers exactly like an unknown one.
+                    sendJson(exchange, 404, Map.of("error", "Execution not found"));
+                    return;
+                }
                 java.util.List<com.nexora.persistence.WebhookDeliveryRecord> deliveries =
                         store.getWebhookDeliveries(executionId);
                 try {
@@ -255,9 +301,9 @@ public class ObserveCommand implements Callable<Integer> {
                 } catch (Exception ignored) {
                 }
             }
-        }));
+        })));
 
-        server.createContext("/api/dead-letters/", auth.protect(exchange -> {
+        server.createContext("/api/dead-letters/", auth.protect(scoped(tenants, (exchange, scope) -> {
             com.nexora.persistence.ExecutionStore dlqStore = engine.getStore();
             if (dlqStore == null) {
                 try {
@@ -273,7 +319,7 @@ public class ObserveCommand implements Callable<Integer> {
             // POST /api/dead-letters/{id}/replay
             if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && remainder.endsWith("/replay")) {
                 String dlId = remainder.substring(0, remainder.length() - "/replay".length());
-                var dlOpt = dlqStore.findDeadLetterById(dlId);
+                var dlOpt = dlqStore.findDeadLetterById(dlId).filter(dl -> scope.allows(dl.tenantId()));
                 if (dlOpt.isEmpty()) {
                     try {
                         sendJson(exchange, 404, Map.of("error", "Dead letter not found"));
@@ -319,7 +365,7 @@ public class ObserveCommand implements Callable<Integer> {
             // POST /api/dead-letters/{id}/resolve
             if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && remainder.endsWith("/resolve")) {
                 String dlId = remainder.substring(0, remainder.length() - "/resolve".length());
-                var dlOpt = dlqStore.findDeadLetterById(dlId);
+                var dlOpt = dlqStore.findDeadLetterById(dlId).filter(dl -> scope.allows(dl.tenantId()));
                 if (dlOpt.isEmpty()) {
                     try {
                         sendJson(exchange, 404, Map.of("error", "Dead letter not found"));
@@ -350,9 +396,9 @@ public class ObserveCommand implements Callable<Integer> {
                 sendJson(exchange, 405, Map.of("error", "Method Not Allowed"));
             } catch (Exception ignored) {
             }
-        }));
+        })));
 
-        server.createContext("/api/dead-letters", auth.protect(exchange -> {
+        server.createContext("/api/dead-letters", auth.protect(scoped(tenants, (exchange, scope) -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 try {
                     sendText(exchange, 405, "Method Not Allowed");
@@ -416,14 +462,14 @@ public class ObserveCommand implements Callable<Integer> {
                 }
             }
             java.util.List<com.nexora.persistence.DeadLetterRecord> items =
-                    dlqStore.findDeadLetters(stateFilter, page * size, size);
+                    dlqStore.findDeadLetters(scope.tenantId(), stateFilter, page * size, size);
             try {
                 sendJson(exchange, 200, Map.of("items", items, "page", page, "size", size));
             } catch (Exception ignored) {
             }
-        }));
+        })));
 
-        server.createContext("/api/schedules/", auth.protect(exchange -> {
+        server.createContext("/api/schedules/", auth.protect(scoped(tenants, (exchange, scope) -> {
             String path = exchange.getRequestURI().getPath();
             String id = path.substring("/api/schedules/".length());
             if (id.isBlank()) {
@@ -441,7 +487,12 @@ public class ObserveCommand implements Callable<Integer> {
                 return;
             }
             try {
-                engine.cancelSchedule(id);
+                if (scope.tenantId() == null) {
+                    engine.cancelSchedule(id);
+                } else if (!engine.cancelSchedule(scope.tenantId(), id)) {
+                    sendJson(exchange, 404, Map.of("error", "Schedule not found"));
+                    return;
+                }
                 sendJson(exchange, 200, Map.of("cancelled", true, "id", id));
             } catch (IllegalStateException e) {
                 try {
@@ -454,13 +505,14 @@ public class ObserveCommand implements Callable<Integer> {
                 } catch (Exception ignored) {
                 }
             }
-        }));
+        })));
 
-        server.createContext("/api/schedules", auth.protect(exchange -> {
+        server.createContext("/api/schedules", auth.protect(scoped(tenants, (exchange, scope) -> {
             String method = exchange.getRequestMethod();
             if ("GET".equalsIgnoreCase(method)) {
                 try {
-                    java.util.List<ScheduleRecord> records = engine.listSchedules();
+                    java.util.List<ScheduleRecord> records =
+                            scope.tenantId() == null ? engine.listSchedules() : engine.listSchedules(scope.tenantId());
                     java.util.List<Map<String, Object>> payload = records.stream()
                             .map(r -> {
                                 java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
@@ -476,6 +528,7 @@ public class ObserveCommand implements Callable<Integer> {
                                                 ? r.lastFiredAt().toString()
                                                 : null);
                                 m.put("lastStatus", r.lastStatus().name());
+                                m.put("tenantId", r.tenantId());
                                 return (Map<String, Object>) m;
                             })
                             .toList();
@@ -525,7 +578,8 @@ public class ObserveCommand implements Callable<Integer> {
                     return;
                 }
                 try {
-                    var handle = engine.schedule(cron, new Intent(goal, Map.of()), policy);
+                    var handle = engine.schedule(
+                            cron, new Intent(goal, Map.of(), null, null, null, scope.tenantId()), policy);
                     sendJson(
                             exchange,
                             201,
@@ -556,11 +610,11 @@ public class ObserveCommand implements Callable<Integer> {
                 } catch (Exception ignored) {
                 }
             }
-        }));
+        })));
 
         new HealthEndpoints(engine, NEXORA_VERSION).register(server);
-        new ExecutionEndpoints(engine).register(server, auth);
-        new SessionEndpoints(auth).register(server);
+        new ExecutionEndpoints(engine, tenants).register(server, auth);
+        new SessionEndpoints(auth, tenants).register(server);
         ApiDocsEndpoints.load().register(server);
 
         // Unknown /api paths answer 401 before 404, so an unauthenticated caller cannot map the API.
@@ -625,6 +679,16 @@ public class ObserveCommand implements Callable<Integer> {
         System.out.println(
                 "TLS:       " + tls.certificate().getSubjectX500Principal().getName() + ", valid until "
                         + tls.certificate().getNotAfter().toInstant());
+    }
+
+    private static void printTenancyStatus(boolean multiTenant) {
+        if (multiTenant) {
+            System.out.println(
+                    "Tenants:   multi-tenant. Users reach only their own tenant (`nexora user add --tenant`);"
+                            + " the API key must send " + TenantResolver.HEADER);
+        } else {
+            System.out.println("Tenants:   single-tenant; every caller sees every execution (--multi-tenant to scope)");
+        }
     }
 
     /** --rotate-api-key excludes a supplied key: rotating while another key is in force would be a no-op. */

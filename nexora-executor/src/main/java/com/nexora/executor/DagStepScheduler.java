@@ -322,7 +322,8 @@ public final class DagStepScheduler {
                 ctx.getTraceContext().childSpan(),
                 effectiveTimeout,
                 ctx.getExecutionId(),
-                0);
+                0,
+                ctx.tenantId());
 
         eventBus.publish(new StepStartedEvent(
                 ctx.getExecutionId(),

@@ -221,10 +221,11 @@ class CancellationIntegrationTest {
             // Metrics update on the async event bus; wait for the whole handler, not just its first line.
             awaitCondition(() -> {
                 String scrape = observability.scrapePrometheus();
-                return scrape.contains("nexora_plan_cancelled_total 1.0")
-                        && scrape.contains("nexora_active_executions 0.0");
+                return scrape.contains("nexora_plan_cancelled_total{tenant=\"default\",} 1.0")
+                        && scrape.contains("nexora_active_executions{tenant=\"default\",} 0.0");
             });
-            assertThat(observability.scrapePrometheus()).containsPattern("(?m)^nexora_plan_failed_total 0\\.0$");
+            // A cancel never counts as a failure: no failed series exists at all.
+            assertThat(observability.scrapePrometheus()).doesNotContainPattern("(?m)^nexora_plan_failed_total\\{");
         }
     }
 

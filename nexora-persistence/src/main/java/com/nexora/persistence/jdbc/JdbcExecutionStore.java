@@ -120,18 +120,20 @@ public final class JdbcExecutionStore implements ExecutionStore {
 
     @Override
     public void createExecution(ExecutionRecord record) {
+        // A matched row keeps its tenant: an execution never moves between tenants.
         String sql = """
             MERGE INTO nexora_executions AS t
             USING (VALUES (CAST(? AS VARCHAR(36)), CAST(? AS VARCHAR(64)), CAST(? AS TEXT), CAST(? AS TEXT),
-                           CAST(? AS VARCHAR(30)), CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP)))
-                AS s (execution_id, trace_id, goal, context_json, state, started_at, completed_at)
+                           CAST(? AS VARCHAR(30)), CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), CAST(? AS VARCHAR(64))))
+                AS s (execution_id, trace_id, goal, context_json, state, started_at, completed_at, tenant_id)
             ON t.execution_id = s.execution_id
             WHEN MATCHED THEN UPDATE SET
                 trace_id = s.trace_id, goal = s.goal, context_json = s.context_json, state = s.state,
                 started_at = s.started_at, completed_at = s.completed_at
             WHEN NOT MATCHED THEN INSERT
-                (execution_id, trace_id, goal, context_json, state, started_at, completed_at)
-                VALUES (s.execution_id, s.trace_id, s.goal, s.context_json, s.state, s.started_at, s.completed_at)
+                (execution_id, trace_id, goal, context_json, state, started_at, completed_at, tenant_id)
+                VALUES (s.execution_id, s.trace_id, s.goal, s.context_json, s.state, s.started_at, s.completed_at,
+                        s.tenant_id)
         """;
         try (Connection conn = dataSource.getConnection()) {
             String contextJson = JSON.writeValueAsString(record.context());
@@ -143,6 +145,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 ps.setString(5, record.state().name());
                 ps.setTimestamp(6, Timestamp.from(record.startedAt()));
                 ps.setTimestamp(7, record.completedAt() != null ? Timestamp.from(record.completedAt()) : null);
+                ps.setString(8, record.tenantId());
             });
         } catch (Exception e) {
             log.error("Failed to create execution record executionId={}", record.executionId(), e);
@@ -169,16 +172,18 @@ public final class JdbcExecutionStore implements ExecutionStore {
     public void upsertStep(String executionId, StepRecord step) {
         // Completion and failure updates carry no idempotency key. COALESCE keeps the key recorded at
         // step start, which replay needs to avoid repeating side effects. The output is overwritten,
-        // not kept: a restarted step must not show the output of its earlier run.
+        // not kept: a restarted step must not show the output of its earlier run. The tenant is copied
+        // from the execution, so a step can never belong to a different tenant than its execution.
         String sql = """
             MERGE INTO nexora_steps AS t
-            USING (VALUES (CAST(? AS VARCHAR(36)), CAST(? AS VARCHAR(200)), CAST(? AS VARCHAR(200)),
-                           CAST(? AS VARCHAR(36)), CAST(? AS VARCHAR(30)), CAST(? AS VARCHAR(100)), CAST(? AS TEXT),
-                           CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), CAST(? AS BIGINT), CAST(? AS TEXT),
-                           CAST(? AS BOOLEAN)))
-                AS s (execution_id, step_id, capability_id, idempotency_key, state,
-                      failure_code, failure_message, started_at, completed_at, duration_ms,
-                      output_json, output_truncated)
+            USING (SELECT CAST(? AS VARCHAR(36)) AS execution_id, CAST(? AS VARCHAR(200)) AS step_id,
+                          CAST(? AS VARCHAR(200)) AS capability_id, CAST(? AS VARCHAR(36)) AS idempotency_key,
+                          CAST(? AS VARCHAR(30)) AS state, CAST(? AS VARCHAR(100)) AS failure_code,
+                          CAST(? AS TEXT) AS failure_message, CAST(? AS TIMESTAMP) AS started_at,
+                          CAST(? AS TIMESTAMP) AS completed_at, CAST(? AS BIGINT) AS duration_ms,
+                          CAST(? AS TEXT) AS output_json, CAST(? AS BOOLEAN) AS output_truncated,
+                          (SELECT e.tenant_id FROM nexora_executions e
+                           WHERE e.execution_id = CAST(? AS VARCHAR(36))) AS tenant_id) AS s
             ON t.execution_id = s.execution_id AND t.step_id = s.step_id
             WHEN MATCHED THEN UPDATE SET
                 capability_id = s.capability_id,
@@ -189,10 +194,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
             WHEN NOT MATCHED THEN INSERT
                 (execution_id, step_id, capability_id, idempotency_key, state,
                  failure_code, failure_message, started_at, completed_at, duration_ms,
-                 output_json, output_truncated)
+                 output_json, output_truncated, tenant_id)
                 VALUES (s.execution_id, s.step_id, s.capability_id, s.idempotency_key, s.state,
                         s.failure_code, s.failure_message, s.started_at, s.completed_at, s.duration_ms,
-                        s.output_json, s.output_truncated)
+                        s.output_json, s.output_truncated, s.tenant_id)
         """;
         try (Connection conn = dataSource.getConnection()) {
             String outputJson = outputJson(executionId, step);
@@ -209,6 +214,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 ps.setLong(10, step.durationMs());
                 ps.setString(11, outputJson);
                 ps.setBoolean(12, step.outputTruncated());
+                ps.setString(13, executionId);
             });
         } catch (SQLException e) {
             log.error("Failed to upsert step executionId={} stepId={}", executionId, step.stepId(), e);
@@ -251,8 +257,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
         }
         String sql = """
             INSERT INTO nexora_webhook_deliveries
-                (delivery_id, execution_id, url, status_code, attempt, successful, timestamp, error_message)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (delivery_id, execution_id, url, status_code, attempt, successful, timestamp, error_message,
+                 tenant_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?,
+                    (SELECT e.tenant_id FROM nexora_executions e WHERE e.execution_id = ?))
         """;
         try (Connection conn = dataSource.getConnection();
                 PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -264,6 +272,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.setBoolean(6, record.successful());
             ps.setTimestamp(7, Timestamp.from(record.timestamp()));
             ps.setString(8, record.errorMessage());
+            ps.setString(9, record.executionId());
             ps.executeUpdate();
         } catch (SQLException e) {
             log.error("Failed to insert webhook delivery executionId={}", record.executionId(), e);
@@ -335,8 +344,9 @@ public final class JdbcExecutionStore implements ExecutionStore {
     public void createDeadLetter(DeadLetterRecord record) {
         String sql = """
             INSERT INTO nexora_dead_letters
-                (id, execution_id, goal, context_json, failure_code, failure_message, failed_at, review_state, resolve_reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, execution_id, goal, context_json, failure_code, failure_message, failed_at, review_state,
+                 resolve_reason, tenant_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
         try (Connection conn = dataSource.getConnection();
                 PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -349,6 +359,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.setTimestamp(7, Timestamp.from(record.failedAt()));
             ps.setString(8, record.reviewState().name());
             ps.setString(9, record.resolveReason());
+            ps.setString(10, record.tenantId());
             ps.executeUpdate();
         } catch (Exception e) {
             log.error("Failed to create dead letter id={} executionId={}", record.id(), record.executionId(), e);
@@ -373,27 +384,39 @@ public final class JdbcExecutionStore implements ExecutionStore {
 
     @Override
     public List<DeadLetterRecord> findDeadLetters(DeadLetterReviewState state, int offset, int limit) {
-        String sql = state != null
-                ? "SELECT * FROM nexora_dead_letters WHERE review_state = ? ORDER BY failed_at DESC LIMIT ? OFFSET ?"
-                : "SELECT * FROM nexora_dead_letters ORDER BY failed_at DESC LIMIT ? OFFSET ?";
+        return findDeadLetters(null, state, offset, limit);
+    }
+
+    @Override
+    public List<DeadLetterRecord> findDeadLetters(String tenantId, DeadLetterReviewState state, int offset, int limit) {
+        List<String> conditions = new ArrayList<>();
+        List<String> params = new ArrayList<>();
+        if (tenantId != null) {
+            conditions.add("tenant_id = ?");
+            params.add(tenantId);
+        }
+        if (state != null) {
+            conditions.add("review_state = ?");
+            params.add(state.name());
+        }
+        String where = conditions.isEmpty() ? "" : " WHERE " + String.join(" AND ", conditions);
+        String sql = "SELECT * FROM nexora_dead_letters" + where + " ORDER BY failed_at DESC LIMIT ? OFFSET ?";
         List<DeadLetterRecord> results = new ArrayList<>();
         try (Connection conn = dataSource.getConnection();
                 PreparedStatement ps = conn.prepareStatement(sql)) {
-            if (state != null) {
-                ps.setString(1, state.name());
-                ps.setInt(2, limit);
-                ps.setInt(3, offset);
-            } else {
-                ps.setInt(1, limit);
-                ps.setInt(2, offset);
+            int index = 1;
+            for (String param : params) {
+                ps.setString(index++, param);
             }
+            ps.setInt(index++, limit);
+            ps.setInt(index, offset);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     results.add(mapDeadLetter(rs));
                 }
             }
         } catch (Exception e) {
-            log.error("Failed to query dead letters state={}", state, e);
+            log.error("Failed to query dead letters tenantId={} state={}", tenantId, state, e);
         }
         return results;
     }
@@ -436,7 +459,8 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 rs.getString("failure_message"),
                 rs.getTimestamp("failed_at").toInstant(),
                 reviewState,
-                rs.getString("resolve_reason"));
+                rs.getString("resolve_reason"),
+                rs.getString("tenant_id"));
     }
 
     @Override
@@ -444,8 +468,8 @@ public final class JdbcExecutionStore implements ExecutionStore {
         String sql = """
             INSERT INTO nexora_schedules
                 (id, cron_expression, goal, context_json, missed_fire_policy,
-                 created_at, last_fired_at, next_fire_at, last_status, active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 created_at, last_fired_at, next_fire_at, last_status, active, tenant_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
         try (Connection conn = dataSource.getConnection();
                 PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -459,6 +483,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
             ps.setTimestamp(8, Timestamp.from(record.nextFireAt()));
             ps.setString(9, record.lastStatus().name());
             ps.setBoolean(10, record.active());
+            ps.setString(11, record.tenantId());
             ps.executeUpdate();
         } catch (Exception e) {
             log.error("Failed to create schedule id={}", record.id(), e);
@@ -522,6 +547,25 @@ public final class JdbcExecutionStore implements ExecutionStore {
             throw new IllegalStateException("Failed to query schedules", e);
         }
         return results;
+    }
+
+    @Override
+    public boolean claimScheduleFire(String id, Instant expectedNextFireAt, Instant firedAt, Instant nextFireAt) {
+        // Compare-and-set on next_fire_at: one UPDATE is atomic under READ COMMITTED on H2 and
+        // PostgreSQL, so of several engines claiming the same slot exactly one sees a row updated.
+        String sql = "UPDATE nexora_schedules SET last_fired_at = ?, next_fire_at = ?"
+                + " WHERE id = ? AND next_fire_at = ? AND active = TRUE";
+        try (Connection conn = dataSource.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setTimestamp(1, Timestamp.from(firedAt));
+            ps.setTimestamp(2, Timestamp.from(nextFireAt));
+            ps.setString(3, id);
+            ps.setTimestamp(4, Timestamp.from(expectedNextFireAt));
+            return ps.executeUpdate() == 1;
+        } catch (SQLException e) {
+            log.error("Failed to claim schedule firing id={}", id, e);
+            throw new IllegalStateException("Failed to claim schedule firing id=" + id, e);
+        }
     }
 
     @Override
@@ -595,7 +639,8 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 lastFiredAt != null ? lastFiredAt.toInstant() : null,
                 rs.getTimestamp("next_fire_at").toInstant(),
                 parseScheduleStatus(rs.getString("last_status")),
-                rs.getBoolean("active"));
+                rs.getBoolean("active"),
+                rs.getString("tenant_id"));
     }
 
     private static MissedFirePolicy parseMissedFirePolicy(String value) {
@@ -657,7 +702,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     private static final String HISTORY_COLUMNS =
-            "execution_id, trace_id, goal, context_json, state, started_at, completed_at";
+            "execution_id, trace_id, goal, context_json, state, started_at, completed_at, tenant_id";
 
     @Override
     public List<ExecutionRecord> findByFilter(ExecutionFilter filter) {
@@ -707,6 +752,10 @@ public final class JdbcExecutionStore implements ExecutionStore {
         static HistoryQuery from(ExecutionFilter filter, boolean includeCursor) {
             List<String> conditions = new ArrayList<>();
             List<Object> params = new ArrayList<>();
+            if (filter.tenantId() != null) {
+                conditions.add("tenant_id = ?");
+                params.add(filter.tenantId());
+            }
             if (!filter.states().isEmpty()) {
                 conditions.add("state IN ("
                         + String.join(", ", Collections.nCopies(filter.states().size(), "?")) + ")");
@@ -771,7 +820,8 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 ExecutionState.valueOf(rs.getString("state")),
                 rs.getTimestamp("started_at").toInstant(),
                 completedAt != null ? completedAt.toInstant() : null,
-                List.of());
+                List.of(),
+                rs.getString("tenant_id"));
     }
 
     /**
@@ -840,14 +890,6 @@ public final class JdbcExecutionStore implements ExecutionStore {
                 }
             }
         }
-        return new ExecutionRecord(
-                exec.executionId(),
-                exec.traceId(),
-                exec.goal(),
-                exec.context(),
-                exec.state(),
-                exec.startedAt(),
-                exec.completedAt(),
-                steps);
+        return exec.withSteps(steps);
     }
 }

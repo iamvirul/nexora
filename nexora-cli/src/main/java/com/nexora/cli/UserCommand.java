@@ -2,6 +2,7 @@ package com.nexora.cli;
 
 import com.nexora.api.auth.PasswordHasher;
 import com.nexora.api.auth.UserStore;
+import com.nexora.core.tenant.TenantId;
 import java.io.BufferedReader;
 import java.io.Console;
 import java.io.IOException;
@@ -23,7 +24,8 @@ import picocli.CommandLine.Spec;
 
 /**
  * Manages the observe dashboard's user accounts. Changes reach a running {@code nexora observe}
- * on its next request: no restart, and removing a user or changing a password ends their sessions.
+ * on its next request: no restart, and removing a user, changing a password or moving a user to
+ * another tenant ends their sessions.
  */
 @Command(
         name = "user",
@@ -33,6 +35,7 @@ import picocli.CommandLine.Spec;
             UserCommand.Add.class,
             UserCommand.Passwd.class,
             UserCommand.Remove.class,
+            UserCommand.Tenant.class,
             UserCommand.ListUsers.class
         })
 public class UserCommand implements Callable<Integer> {
@@ -130,23 +133,33 @@ public class UserCommand implements Callable<Integer> {
         @Option(names = "--password-stdin", description = "Read the password from the first line of standard input.")
         boolean passwordStdin;
 
+        @Option(
+                names = "--tenant",
+                defaultValue = TenantId.DEFAULT,
+                description = "Tenant the user belongs to; on a multi-tenant server they reach only its"
+                        + " executions. Default: ${DEFAULT-VALUE}")
+        String tenant;
+
         @Override
         public Integer call() {
             return parent.run(() -> {
                 String name = UserStore.requireValidUsername(username);
+                TenantId.requireValid(tenant);
                 UserStore store = parent.store();
                 if (store.usernames().contains(name)) {
                     throw new IllegalStateException("User '" + name + "' already exists; use `nexora user passwd`");
                 }
                 char[] password = parent.readNewPassword(name, passwordStdin);
                 try {
-                    store.add(name, password);
+                    store.add(name, password, tenant);
                 } finally {
                     Arrays.fill(password, '\0');
                 }
                 spec.commandLine()
                         .getOut()
-                        .printf("Added user '%s' to %s. It can log in now; no restart needed.%n", name, store.file());
+                        .printf(
+                                "Added user '%s' (tenant '%s') to %s. It can log in now; no restart needed.%n",
+                                name, tenant, store.file());
                 return EXIT_OK;
             });
         }
@@ -217,6 +230,41 @@ public class UserCommand implements Callable<Integer> {
         }
     }
 
+    @Command(
+            name = "tenant",
+            mixinStandardHelpOptions = true,
+            description = "Move a user to another tenant; their sessions end.")
+    static final class Tenant implements Callable<Integer> {
+        @ParentCommand
+        UserCommand parent;
+
+        @Spec
+        CommandSpec spec;
+
+        @Parameters(index = "0", paramLabel = "USERNAME")
+        String username;
+
+        @Parameters(index = "1", paramLabel = "TENANT", description = "1-64 characters: a-z, 0-9, '-', '_'.")
+        String tenant;
+
+        @Override
+        public Integer call() {
+            return parent.run(() -> {
+                String name = UserStore.normalize(username);
+                TenantId.requireValid(tenant);
+                UserStore store = parent.store();
+                if (!store.usernames().contains(name)) {
+                    throw new IllegalStateException("No user '" + name + "'");
+                }
+                store.setTenant(name, tenant);
+                spec.commandLine()
+                        .getOut()
+                        .printf("Moved '%s' to tenant '%s'. Their open sessions have ended.%n", name, tenant);
+                return EXIT_OK;
+            });
+        }
+    }
+
     @Command(name = "list", mixinStandardHelpOptions = true, description = "List dashboard users.")
     static final class ListUsers implements Callable<Integer> {
         @ParentCommand
@@ -228,12 +276,17 @@ public class UserCommand implements Callable<Integer> {
         @Override
         public Integer call() {
             return parent.run(() -> {
-                List<String> names = parent.store().usernames();
+                UserStore store = parent.store();
+                List<String> names = store.usernames();
                 PrintWriter out = spec.commandLine().getOut();
                 if (names.isEmpty()) {
                     out.println("No dashboard users. Add one with: nexora user add <username>");
                 } else {
-                    names.forEach(out::println);
+                    // Default-tenant users print as bare names, exactly as before tenants existed.
+                    for (String name : names) {
+                        String tenantId = store.tenantOf(name).orElse(TenantId.DEFAULT);
+                        out.println(TenantId.DEFAULT.equals(tenantId) ? name : name + " (tenant: " + tenantId + ")");
+                    }
                 }
                 return EXIT_OK;
             });

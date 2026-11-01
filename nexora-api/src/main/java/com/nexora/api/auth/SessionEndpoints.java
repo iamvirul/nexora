@@ -3,6 +3,7 @@ package com.nexora.api.auth;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nexora.core.tenant.TenantId;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsExchange;
@@ -27,10 +28,14 @@ import org.slf4j.LoggerFactory;
  *       the body, for the CLI ({@code nexora login}) and scripts to send as a Bearer header.
  *   <li>{@code POST /api/session} with the same body gives the browser dashboard the key as an
  *       HttpOnly cookie instead, so page script never sees it. With
- *       {@code Authorization: Bearer <server api key>} it opens a dashboard session for the key holder.
+ *       {@code Authorization: Bearer <server api key>} it opens a dashboard session for the key holder;
+ *       on a multi-tenant server that request must also name the session's tenant in
+ *       {@value TenantResolver#HEADER}.
  *   <li>{@code GET /api/session} reports who the cookie or Bearer user key belongs to;
  *       {@code DELETE /api/session} revokes it (logout).
  * </ul>
+ *
+ * <p>Every key and session is bound to a tenant: a user's to the tenant of their account.
  *
  * <p>A user key or cookie can never mint another key, or one stolen key could renew itself
  * indefinitely. Removing a user or changing their password revokes all of their keys.
@@ -58,9 +63,15 @@ public final class SessionEndpoints {
     private static final int STATUS_TOO_MANY_REQUESTS = 429;
 
     private final ApiAuth auth;
+    private final TenantResolver tenants;
 
     public SessionEndpoints(ApiAuth auth) {
+        this(auth, TenantResolver.singleTenant());
+    }
+
+    public SessionEndpoints(ApiAuth auth, TenantResolver tenants) {
         this.auth = Objects.requireNonNull(auth, "auth");
+        this.tenants = Objects.requireNonNull(tenants, "tenants");
     }
 
     public void register(HttpServer server) {
@@ -89,6 +100,7 @@ public final class SessionEndpoints {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("apiKey", accepted.get().session().token());
             body.put("user", accepted.get().user());
+            body.put("tenantId", tenantOf(accepted.get().user()));
             body.put("expiresAt", accepted.get().session().expiresAt().toString());
             log.info("User API key issued user={} remote={}", accepted.get().user(), exchange.getRemoteAddress());
             Responses.send(exchange, STATUS_CREATED, Responses.JSON, JSON.writeValueAsString(body));
@@ -125,7 +137,11 @@ public final class SessionEndpoints {
         }
         Optional<ApiAuth.LoginResult.Accepted> accepted = passwordLogin(exchange, request);
         if (accepted.isPresent()) {
-            sendSession(exchange, accepted.get().session(), accepted.get().user());
+            sendSession(
+                    exchange,
+                    accepted.get().session(),
+                    accepted.get().user(),
+                    tenantOf(accepted.get().user()));
         }
     }
 
@@ -135,12 +151,31 @@ public final class SessionEndpoints {
             ApiAuth.rejectUnauthorized(exchange);
             return;
         }
-        ApiAuth.Session session = auth.createSession();
+        String tenantId = null;
+        if (tenants.isMultiTenant()) {
+            // The key may act for any tenant; the session it opens is pinned to the one named now.
+            ApiAuth.Caller keyHolder = new ApiAuth.Caller(ApiAuth.Credential.API_KEY, ApiAuth.API_KEY_PRINCIPAL);
+            switch (tenants.resolve(keyHolder, exchange.getRequestHeaders().getFirst(TenantResolver.HEADER))) {
+                case TenantResolver.Resolution.Scoped scoped ->
+                    tenantId = scoped.scope().tenantId();
+                case TenantResolver.Resolution.Rejected rejected -> {
+                    sendError(exchange, rejected.status(), rejected.code(), rejected.message());
+                    return;
+                }
+            }
+        }
+        ApiAuth.Session session = tenantId == null ? auth.createSession() : auth.createSession(tenantId);
         log.info(
-                "Dashboard session opened principal={} remote={}",
+                "Dashboard session opened principal={} tenantId={} remote={}",
                 ApiAuth.API_KEY_PRINCIPAL,
+                tenantId,
                 exchange.getRemoteAddress());
-        sendSession(exchange, session, null);
+        sendSession(exchange, session, null, tenantId);
+    }
+
+    /** The user's tenant as reported to clients; the account was just verified, so it exists. */
+    private String tenantOf(String user) {
+        return auth.tenantOf(user).orElse(TenantId.DEFAULT);
     }
 
     /**
@@ -217,6 +252,8 @@ public final class SessionEndpoints {
             default -> Optional.empty();
         };
         body.put("user", session.map(ApiAuth.SessionInfo::user).orElse(null));
+        body.put("tenantId", caller.tenantId());
+        body.put("multiTenant", tenants.isMultiTenant());
         body.put("credential", caller.credential().name());
         body.put("expiresAt", session.map(info -> info.expiresAt().toString()).orElse(null));
         body.put("passwordLogin", auth.passwordLoginEnabled());
@@ -241,10 +278,12 @@ public final class SessionEndpoints {
         return exchange instanceof HttpsExchange;
     }
 
-    private static void sendSession(HttpExchange exchange, ApiAuth.Session session, String user) throws IOException {
+    private static void sendSession(HttpExchange exchange, ApiAuth.Session session, String user, String tenantId)
+            throws IOException {
         exchange.getResponseHeaders().add("Set-Cookie", ApiAuth.sessionCookie(session.token(), isHttps(exchange)));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("user", user);
+        body.put("tenantId", tenantId);
         body.put("expiresAt", session.expiresAt().toString());
         Responses.send(exchange, STATUS_OK, Responses.JSON, JSON.writeValueAsString(body));
     }

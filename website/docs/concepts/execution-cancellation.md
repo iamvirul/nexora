@@ -127,4 +127,4 @@ The demo protects its API like `nexora observe` does: it prints a key for that r
 
 ## Metrics
 
-Cancelled executions increment `nexora_plan_cancelled_total` and are observed in `nexora_plan_duration_seconds{status="cancelled"}`. They do not count toward `nexora_plan_failed_total`, so cancels never trip failure-rate alerts.
+Cancelled executions increment `nexora_plan_cancelled_total` (labelled with the tenant) and are observed in `nexora_plan_duration_seconds{status="cancelled"}`. They do not count toward `nexora_plan_failed_total`, so cancels never trip failure-rate alerts.

@@ -1,6 +1,7 @@
 package com.nexora.cli;
 
 import com.nexora.api.auth.ApiKeyStore;
+import com.nexora.api.auth.TenantResolver;
 import java.io.PrintWriter;
 import java.net.URI;
 import java.net.http.HttpResponse;
@@ -53,6 +54,12 @@ public class ReplayCommand implements Callable<Integer> {
             description = "Send the key over plain HTTP to another machine anyway (it can be read on the way).")
     private boolean allowInsecureHttp;
 
+    @Option(
+            names = {"--tenant"},
+            description = "Tenant the execution belongs to, sent as " + TenantResolver.HEADER + ". Needed with the"
+                    + " server API key on a multi-tenant server; a user's login key already carries its tenant.")
+    private String tenant;
+
     @Mixin
     private CaCertOption caCert;
 
@@ -60,7 +67,8 @@ public class ReplayCommand implements Callable<Integer> {
     public Integer call() {
         return ObserveServerClient.call(
                 spec,
-                ObserveServerClient.Server.of(server, apiKey, credentialsFile, allowInsecureHttp, caCert),
+                ObserveServerClient.Server.of(server, apiKey, credentialsFile, allowInsecureHttp, caCert)
+                        .withTenant(tenant),
                 executionId,
                 "POST",
                 ExecutionEndpoints.REPLAY_SUFFIX,
