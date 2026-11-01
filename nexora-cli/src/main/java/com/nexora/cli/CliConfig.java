@@ -2,6 +2,7 @@ package com.nexora.cli;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.nexora.api.ratelimit.RateLimitConfig;
 import com.nexora.core.plan.StepCondition;
 import com.nexora.core.plan.condition.And;
 import com.nexora.core.plan.condition.ContextValueEquals;
@@ -12,6 +13,7 @@ import com.nexora.core.plan.condition.StepOutputPresent;
 import com.nexora.persistence.StepOutput;
 import com.nexora.persistence.jdbc.PoolConfig;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /** Deserialize from nexora.json in the working directory, or from --config. */
@@ -25,6 +27,8 @@ public class CliConfig {
     public String executionStore;
 
     public PersistenceConfig persistence = new PersistenceConfig();
+
+    public ObserveConfig observe = new ObserveConfig();
 
     public static class StepConfig {
         public String id;
@@ -53,6 +57,42 @@ public class CliConfig {
          * preview. 0 records none. Unset uses {@link StepOutput#DEFAULT_MAX_BYTES}.
          */
         public Integer stepOutputMaxBytes;
+    }
+
+    /** Settings for {@code nexora observe}. */
+    public static class ObserveConfig {
+        public RateLimitSettings rateLimit = new RateLimitSettings();
+    }
+
+    /**
+     * Keys under {@code observe.rateLimit}. Unset keys take the {@link RateLimitConfig} defaults: on,
+     * 60 requests a minute per client, 10 of them to {@code POST /api/execute}.
+     */
+    public static class RateLimitSettings {
+        /** false turns the built-in limits off entirely, for a reverse proxy that limits instead. */
+        public Boolean enabled;
+
+        public Integer globalRpm;
+        public Integer executeRpm;
+        /** IPs of reverse proxies whose X-Forwarded-For is trusted to name the client. */
+        public List<String> trustedProxies;
+
+        /** @throws IllegalArgumentException if a limit is below 1 or a proxy is not an IP address */
+        public RateLimitConfig toRateLimitConfig() {
+            return new RateLimitConfig(
+                    enabled == null || enabled,
+                    globalRpm != null ? globalRpm : RateLimitConfig.DEFAULT_GLOBAL_RPM,
+                    executeRpm != null ? executeRpm : RateLimitConfig.DEFAULT_EXECUTE_RPM,
+                    trustedProxies == null ? Set.of() : Set.copyOf(trustedProxies));
+        }
+    }
+
+    /** {@code observe.rateLimit}, tolerating an explicit {@code null} for either section. */
+    RateLimitConfig rateLimitConfig() {
+        if (observe == null || observe.rateLimit == null) {
+            return RateLimitConfig.defaults();
+        }
+        return observe.rateLimit.toRateLimitConfig();
     }
 
     /** Connection pool keys under {@code persistence.pool}. Unset keys take the {@link PoolConfig} defaults. */

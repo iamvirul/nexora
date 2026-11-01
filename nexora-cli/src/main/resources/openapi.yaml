@@ -87,6 +87,8 @@ paths:
           $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '202':
           description: Execution accepted and started.
           content:
@@ -165,6 +167,8 @@ paths:
           $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '200':
           description: One page of executions.
           content:
@@ -220,6 +224,8 @@ paths:
           $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '200':
           description: The execution, its context and step records.
           content:
@@ -289,6 +295,8 @@ paths:
           $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '200':
           description: Cancellation requested.
           content:
@@ -350,6 +358,8 @@ paths:
           $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '202':
           description: Replay started.
           content:
@@ -407,6 +417,8 @@ paths:
           $ref: '#/components/responses/ExecutionNotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '200':
           description: Every delivery attempt, possibly empty.
           content:
@@ -474,6 +486,8 @@ paths:
           $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '200':
           description: One page of dead letters.
           content:
@@ -529,6 +543,8 @@ paths:
           $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '202':
           description: Replay started.
           content:
@@ -584,6 +600,8 @@ paths:
           $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '200':
           description: Dead letter marked `RESOLVED`.
           content:
@@ -614,6 +632,8 @@ paths:
           $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '200':
           description: Active and inactive schedules.
           content:
@@ -658,6 +678,8 @@ paths:
           $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '201':
           description: Schedule registered.
           content:
@@ -712,6 +734,8 @@ paths:
                   value: { error: Schedule not found }
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '200':
           description: Schedule cancelled.
           content:
@@ -1037,6 +1061,8 @@ paths:
           $ref: '#/components/responses/TenantForbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
         '200':
           description: Current snapshot.
           content:
@@ -1216,6 +1242,25 @@ components:
       example: 6d5c4b3a-2f1e-4d0c-9b8a-7f6e5d4c3b2a
 
   responses:
+    RateLimitExceeded:
+      description: |
+        This client made more requests this minute than the server allows: 60 to the API by default,
+        10 of them to `POST /api/execute` (`observe.rateLimit` in `nexora.json`). Sent only after
+        authentication, so an unauthenticated request gets `401` instead and spends nothing. Retry
+        after the number of seconds in `Retry-After`.
+      headers:
+        Retry-After:
+          description: Seconds until this client's window refills. Clients sharing an address (behind one NAT) share the window, so another may use the room first.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RateLimitError'
+          examples:
+            limited:
+              value: { error: { code: RATE_LIMIT_EXCEEDED, message: Too many requests; retry after 42 seconds, retryAfterSeconds: 42 } }
     TenantRequired:
       description: Multi-tenant server only. The server API key sent no `X-Tenant-ID`, or the header is not a valid tenant id.
       content:
@@ -1373,6 +1418,23 @@ components:
               value: { error: Failed to persist schedule }
 
   schemas:
+    RateLimitError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, retryAfterSeconds]
+          properties:
+            code:
+              type: string
+              const: RATE_LIMIT_EXCEEDED
+            message:
+              type: string
+            retryAfterSeconds:
+              type: integer
+              minimum: 1
+              description: Same value as the Retry-After header.
     PasswordLogin:
       type: object
       required: [username, password]

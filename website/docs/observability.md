@@ -252,6 +252,7 @@ curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/ap
 
 The `tenant` label is `default` on a single-tenant deployment, so totals are unchanged; aggregate with `sum(...)` or `sum by (tenant)`. Step durations are not split by tenant, since every label multiplies the histogram buckets.
 - `nexora_ready`: 1 when `/health/ready` reports UP, 0 otherwise
+- `nexora_rate_limit_violations_total`: requests refused with `429`, by route and client IP (see [Rate limiting](concepts/rate-limiting.md))
 
 ### Bring up Prometheus, Grafana, and Alertmanager
 

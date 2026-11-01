@@ -12,6 +12,8 @@ import com.nexora.api.auth.TenantResolver;
 import com.nexora.api.auth.TenantScope;
 import com.nexora.api.auth.UserStore;
 import com.nexora.api.observability.NexoraObservability;
+import com.nexora.api.ratelimit.RateLimitConfig;
+import com.nexora.api.ratelimit.RequestRateLimiter;
 import com.nexora.core.execution.ExecutionHandle;
 import com.nexora.core.intent.Intent;
 import com.nexora.persistence.MissedFirePolicy;
@@ -148,6 +150,16 @@ public class ObserveCommand implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
+        // Config before the key, like TLS below: a bad value must not cost a generated or rotated key.
+        RateLimitConfig rateLimit;
+        try {
+            rateLimit = parent.config().rateLimitConfig();
+        } catch (IllegalArgumentException e) {
+            spec.commandLine()
+                    .getErr()
+                    .println("Error: invalid observe.rateLimit in the config file: " + e.getMessage());
+            return EXIT_USAGE;
+        }
         ApiKeyStore.Resolution key;
         UserStore users;
         ObserveTls tls;
@@ -161,10 +173,10 @@ public class ObserveCommand implements Callable<Integer> {
             return EXIT_USAGE;
         }
         ApiAuth auth = new ApiAuth(key.digest(), users);
-
         NexoraEngine engine = parent.engine();
-        ObserveServer.Config config =
-                new ObserveServer.Config(host, port, port + 1, maxExecutions, maxEvents).withMultiTenant(multiTenant);
+        ObserveServer.Config config = new ObserveServer.Config(host, port, port + 1, maxExecutions, maxEvents)
+                .withMultiTenant(multiTenant)
+                .withRateLimit(rateLimit);
         ObserveServer server = ObserveServer.start(engine, auth, tls == null ? config : config.withTls(tls));
         int wsPort = server.webSocketPort();
         String scheme = server.tlsEnabled() ? "https" : "http";
@@ -192,6 +204,7 @@ public class ObserveCommand implements Callable<Integer> {
         System.out.println();
         printTlsStatus(tls);
         printTenancyStatus(server.multiTenant());
+        printRateLimitStatus(rateLimit);
         printApiKeyStatus(key);
         printUserStatus(users);
         System.out.println();
@@ -233,6 +246,31 @@ public class ObserveCommand implements Callable<Integer> {
             byte[] indexHtml,
             ApiAuth auth,
             TenantResolver tenants) {
+        registerRoutes(
+                server,
+                engine,
+                observability,
+                indexHtml,
+                auth,
+                tenants,
+                RequestRateLimiter.create(RateLimitConfig.disabled(), observability.registry()));
+    }
+
+    /**
+     * @param limiter per-client limits on every authenticated {@code /api} route, applied after
+     *                authentication so an unauthenticated request gets 401 without spending tokens.
+     *                Health probes, metrics, the dashboard and the docs are never limited: a throttled
+     *                liveness probe would get the server restarted.
+     */
+    static void registerRoutes(
+            HttpServer server,
+            NexoraEngine engine,
+            NexoraObservability observability,
+            byte[] indexHtml,
+            ApiAuth auth,
+            TenantResolver tenants,
+            RequestRateLimiter limiter) {
+        UnaryOperator<HttpHandler> guard = handler -> auth.protect(limiter.limit(handler));
         server.createContext("/metrics", exchange -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 sendText(exchange, 405, "Method Not Allowed");
@@ -245,7 +283,7 @@ public class ObserveCommand implements Callable<Integer> {
                     observability.scrapePrometheus().getBytes(StandardCharsets.UTF_8));
         });
 
-        server.createContext("/api/process", auth.protect(scoped(tenants, (exchange, scope) -> {
+        server.createContext("/api/process", guard.apply(scoped(tenants, (exchange, scope) -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 sendText(exchange, 405, "Method Not Allowed");
                 return;
@@ -256,7 +294,7 @@ public class ObserveCommand implements Callable<Integer> {
             send(exchange, 200, "application/json; charset=utf-8", payload);
         })));
 
-        server.createContext("/api/webhook-deliveries/", auth.protect(scoped(tenants, (exchange, scope) -> {
+        server.createContext("/api/webhook-deliveries/", guard.apply(scoped(tenants, (exchange, scope) -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 try {
                     sendText(exchange, 405, "Method Not Allowed");
@@ -303,7 +341,7 @@ public class ObserveCommand implements Callable<Integer> {
             }
         })));
 
-        server.createContext("/api/dead-letters/", auth.protect(scoped(tenants, (exchange, scope) -> {
+        server.createContext("/api/dead-letters/", guard.apply(scoped(tenants, (exchange, scope) -> {
             com.nexora.persistence.ExecutionStore dlqStore = engine.getStore();
             if (dlqStore == null) {
                 try {
@@ -398,7 +436,7 @@ public class ObserveCommand implements Callable<Integer> {
             }
         })));
 
-        server.createContext("/api/dead-letters", auth.protect(scoped(tenants, (exchange, scope) -> {
+        server.createContext("/api/dead-letters", guard.apply(scoped(tenants, (exchange, scope) -> {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 try {
                     sendText(exchange, 405, "Method Not Allowed");
@@ -469,7 +507,7 @@ public class ObserveCommand implements Callable<Integer> {
             }
         })));
 
-        server.createContext("/api/schedules/", auth.protect(scoped(tenants, (exchange, scope) -> {
+        server.createContext("/api/schedules/", guard.apply(scoped(tenants, (exchange, scope) -> {
             String path = exchange.getRequestURI().getPath();
             String id = path.substring("/api/schedules/".length());
             if (id.isBlank()) {
@@ -507,7 +545,7 @@ public class ObserveCommand implements Callable<Integer> {
             }
         })));
 
-        server.createContext("/api/schedules", auth.protect(scoped(tenants, (exchange, scope) -> {
+        server.createContext("/api/schedules", guard.apply(scoped(tenants, (exchange, scope) -> {
             String method = exchange.getRequestMethod();
             if ("GET".equalsIgnoreCase(method)) {
                 try {
@@ -613,12 +651,12 @@ public class ObserveCommand implements Callable<Integer> {
         })));
 
         new HealthEndpoints(engine, NEXORA_VERSION).register(server);
-        new ExecutionEndpoints(engine, tenants).register(server, auth);
+        new ExecutionEndpoints(engine, tenants).register(server, guard);
         new SessionEndpoints(auth, tenants).register(server);
         ApiDocsEndpoints.load().register(server);
 
         // Unknown /api paths answer 401 before 404, so an unauthenticated caller cannot map the API.
-        server.createContext(API_PREFIX, auth.protect(exchange -> sendText(exchange, 404, "Not Found")));
+        server.createContext(API_PREFIX, guard.apply(exchange -> sendText(exchange, 404, "Not Found")));
 
         server.createContext("/", exchange -> {
             String path = exchange.getRequestURI().getPath();
@@ -679,6 +717,18 @@ public class ObserveCommand implements Callable<Integer> {
         System.out.println(
                 "TLS:       " + tls.certificate().getSubjectX500Principal().getName() + ", valid until "
                         + tls.certificate().getNotAfter().toInstant());
+    }
+
+    private static void printRateLimitStatus(RateLimitConfig limits) {
+        if (!limits.enabled()) {
+            System.out.println("Limits:    off (observe.rateLimit.enabled=false); rate limit at your proxy instead");
+            return;
+        }
+        System.out.printf(
+                "Limits:    %d requests/min per client, %d/min to POST /api/execute%s%n",
+                limits.globalRpm(),
+                limits.executeRpm(),
+                limits.trustedProxies().isEmpty() ? "" : "; X-Forwarded-For trusted from " + limits.trustedProxies());
     }
 
     private static void printTenancyStatus(boolean multiTenant) {

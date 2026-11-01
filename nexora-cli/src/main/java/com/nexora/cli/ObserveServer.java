@@ -5,6 +5,8 @@ import com.nexora.api.auth.ApiAuth;
 import com.nexora.api.auth.TenantResolver;
 import com.nexora.api.auth.TenantScope;
 import com.nexora.api.observability.NexoraObservability;
+import com.nexora.api.ratelimit.RateLimitConfig;
+import com.nexora.api.ratelimit.RequestRateLimiter;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsParameters;
@@ -50,6 +52,7 @@ public final class ObserveServer implements AutoCloseable {
     /**
      * @param multiTenant whether every request acts for one tenant (see {@link TenantResolver});
      *                    false serves every execution to every caller, as before tenants existed
+     * @param rateLimit   per-client limits on the authenticated API; null means the defaults
      */
     public record Config(
             String host,
@@ -58,7 +61,8 @@ public final class ObserveServer implements AutoCloseable {
             int maxExecutions,
             int maxEvents,
             ObserveTls tls,
-            boolean multiTenant) {
+            boolean multiTenant,
+            RateLimitConfig rateLimit) {
 
         public static final int DEFAULT_MAX_EXECUTIONS = 100;
         public static final int DEFAULT_MAX_EVENTS = 200;
@@ -73,11 +77,12 @@ public final class ObserveServer implements AutoCloseable {
             if (maxExecutions < 1 || maxEvents < 1) {
                 throw new IllegalArgumentException("maxExecutions and maxEvents must be positive");
             }
+            rateLimit = rateLimit == null ? RateLimitConfig.defaults() : rateLimit;
         }
 
         /** Plain HTTP and WS. */
         public Config(String host, int httpPort, int webSocketPort, int maxExecutions, int maxEvents) {
-            this(host, httpPort, webSocketPort, maxExecutions, maxEvents, null, false);
+            this(host, httpPort, webSocketPort, maxExecutions, maxEvents, null, false, null);
         }
 
         /** HTTP on {@code httpPort}, the WebSocket on the next port, default retention. */
@@ -88,11 +93,30 @@ public final class ObserveServer implements AutoCloseable {
         /** The same settings, served over HTTPS and WSS with {@code tls}. */
         public Config withTls(ObserveTls tls) {
             return new Config(
-                    host, httpPort, webSocketPort, maxExecutions, maxEvents, Objects.requireNonNull(tls), multiTenant);
+                    host,
+                    httpPort,
+                    webSocketPort,
+                    maxExecutions,
+                    maxEvents,
+                    Objects.requireNonNull(tls),
+                    multiTenant,
+                    rateLimit);
         }
 
         public Config withMultiTenant(boolean enabled) {
-            return new Config(host, httpPort, webSocketPort, maxExecutions, maxEvents, tls, enabled);
+            return new Config(host, httpPort, webSocketPort, maxExecutions, maxEvents, tls, enabled, rateLimit);
+        }
+
+        public Config withRateLimit(RateLimitConfig limits) {
+            return new Config(
+                    host,
+                    httpPort,
+                    webSocketPort,
+                    maxExecutions,
+                    maxEvents,
+                    tls,
+                    multiTenant,
+                    Objects.requireNonNull(limits, "limits"));
         }
 
         TenantResolver tenantResolver() {
@@ -154,7 +178,14 @@ public final class ObserveServer implements AutoCloseable {
 
             HttpServer http = createHttpServer(config);
             http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
-            ObserveCommand.registerRoutes(http, engine, observability, indexHtml, auth, tenants);
+            ObserveCommand.registerRoutes(
+                    http,
+                    engine,
+                    observability,
+                    indexHtml,
+                    auth,
+                    tenants,
+                    RequestRateLimiter.create(config.rateLimit(), observability.registry()));
             http.start();
             return new ObserveServer(http, broadcaster, observability, config);
         } catch (IOException | RuntimeException e) {

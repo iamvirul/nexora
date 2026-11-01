@@ -48,23 +48,43 @@ class ObserveCommandAuthOptionsTest {
         assertTrue(result.err().contains("--rotate-api-key"), result.err());
     }
 
+    @Test
+    void invalidRateLimitConfigStopsStartupBeforeAKeyIsGenerated() throws Exception {
+        Path config = home.resolve("nexora.json");
+        Files.writeString(config, "{\"observe\": {\"rateLimit\": {\"executeRpm\": 0}}}");
+
+        Result result = run("-c", config.toString(), "observe");
+
+        assertEquals(EXIT_USAGE, result.exitCode());
+        assertTrue(result.err().contains("observe.rateLimit"), result.err());
+        // Had the key come first, its digest would be saved here and the printed key never shown.
+        assertFalse(Files.exists(digestFile()));
+    }
+
     private Path digestFile() {
         return home.resolve("observe-api-key.sha256");
     }
 
     private Result observe(String... options) {
-        // Both credential files live in the temp dir, never the developer's real ~/.nexora.
-        String[] args = new String[options.length + 5];
+        String[] args = new String[options.length + 1];
         args[0] = "observe";
-        args[1] = "--api-key-file";
-        args[2] = digestFile().toString();
-        args[3] = "--users-file";
-        args[4] = home.resolve("users").toString();
-        System.arraycopy(options, 0, args, 5, options.length);
+        System.arraycopy(options, 0, args, 1, options.length);
+        return run(args);
+    }
+
+    /** {@code args} must contain the "observe" subcommand; root options such as -c may come before it. */
+    private Result run(String... args) {
+        // Both credential files live in the temp dir, never the developer's real ~/.nexora.
+        String[] full = new String[args.length + 4];
+        System.arraycopy(args, 0, full, 0, args.length);
+        full[args.length] = "--api-key-file";
+        full[args.length + 1] = digestFile().toString();
+        full[args.length + 2] = "--users-file";
+        full[args.length + 3] = home.resolve("users").toString();
         StringWriter err = new StringWriter();
         CommandLine cmd = new CommandLine(new NexoraCli(), new NoEnvironmentFactory());
         cmd.setErr(new PrintWriter(err));
-        int exitCode = cmd.execute(args);
+        int exitCode = cmd.execute(full);
         return new Result(exitCode, err.toString());
     }
 

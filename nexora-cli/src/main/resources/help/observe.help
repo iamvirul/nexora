@@ -34,6 +34,14 @@ Start a local observability server for Nexora.
   400). Another tenant's executions answer 404, exactly like unknown ones.
   Without the flag the server is single-tenant and X-Tenant-ID is ignored.
 
+  Rate limits
+  ───────────
+  Each client gets 60 API requests a minute, 10 of them to POST /api/execute;
+  more get 429 with Retry-After. Limits apply after authentication and never
+  to /health, /metrics or the dashboard. Configure observe.rateLimit in
+  nexora.json (globalRpm, executeRpm, trustedProxies), or set enabled to false
+  when a reverse proxy rate limits instead.
+
   HTTPS
   ─────
   --tls-cert and --tls-key serve HTTPS, and WSS for the live stream on the next
