@@ -73,15 +73,26 @@ class MultiTenantStreamTest {
     }
 
     @Test
-    void serverKeyWithoutTenantCannotOpenTheStream() {
-        CompletionException error = assertThrows(
-                CompletionException.class,
-                () -> client.newWebSocketBuilder()
-                        .header("Authorization", "Bearer " + TestAuth.KEY)
-                        .buildAsync(uri, new WebSocket.Listener() {})
-                        .join());
+    void serverKeyWithoutTenantCannotOpenTheStream() throws Exception {
+        // The broadcaster binds asynchronously: a refused connection means not up yet, so retry until
+        // the server answers, then expect it to reject the handshake.
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        Throwable cause;
+        while (true) {
+            CompletionException error = assertThrows(
+                    CompletionException.class,
+                    () -> client.newWebSocketBuilder()
+                            .header("Authorization", "Bearer " + TestAuth.KEY)
+                            .buildAsync(uri, new WebSocket.Listener() {})
+                            .join());
+            cause = error.getCause();
+            if (cause instanceof WebSocketHandshakeException || System.nanoTime() > deadline) {
+                break;
+            }
+            Thread.sleep(50);
+        }
 
-        assertTrue(error.getCause() instanceof WebSocketHandshakeException, String.valueOf(error.getCause()));
+        assertTrue(cause instanceof WebSocketHandshakeException, String.valueOf(cause));
     }
 
     /** The broadcaster binds asynchronously; retry until it accepts the authorized connection. */

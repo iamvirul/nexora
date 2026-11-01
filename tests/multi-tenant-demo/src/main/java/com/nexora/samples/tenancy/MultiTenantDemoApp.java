@@ -24,6 +24,7 @@ import com.nexora.spi.PluginContext;
 import com.nexora.spi.PluginDescriptor;
 import com.zaxxer.hikari.HikariDataSource;
 import java.io.PrintStream;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -61,6 +62,8 @@ public final class MultiTenantDemoApp {
     static final Map<String, String> INVOICE_CURRENCY = Map.of(ACME, "EUR", GLOBEX, "USD");
 
     private static final long WAIT_SECONDS = 5;
+    // Yearly, so its next legitimate firing never lands inside the walkthrough's counting window.
+    private static final String YEARLY_CRON = "0 0 1 1 *";
     // Long enough for a wrongly duplicated catch-up firing to have run and been counted.
     private static final long SETTLE_MILLIS = 500;
 
@@ -199,18 +202,18 @@ public final class MultiTenantDemoApp {
         Thread.sleep(SETTLE_MILLIS);
     }
 
-    /** Due two minutes ago, so every engine that loads it at startup wants to catch it up. */
+    /** Overdue by a year, so every engine that loads it at startup wants to catch it up. */
     private static ScheduleRecord overdueReport(String tenantId) {
         Instant now = Instant.now();
         return new ScheduleRecord(
                 "nightly-report",
-                "* * * * *",
+                YEARLY_CRON,
                 "report",
                 Map.of(),
                 MissedFirePolicy.FIRE_ONCE,
-                now.minusSeconds(180),
+                now.minus(Duration.ofDays(800)),
                 null,
-                now.minusSeconds(120),
+                now.minus(Duration.ofDays(365)),
                 null,
                 true,
                 tenantId);
