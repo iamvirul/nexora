@@ -225,7 +225,8 @@ public final class CronScheduler implements AutoCloseable {
             enqueue(scheduleId, record.nextFireAt().atZone(ZoneOffset.UTC));
             return;
         }
-        ZonedDateTime nextFire = CronExpression.parse(record.cronExpression()).next(now);
+        ZonedDateTime nextFire =
+                nextSlotAfterClaim(CronExpression.parse(record.cronExpression()), record.nextFireAt(), now);
         if (!store.claimScheduleFire(scheduleId, record.nextFireAt(), now.toInstant(), nextFire.toInstant())) {
             log.debug("Schedule id={} firing claimed by another engine", scheduleId);
             enqueueAtStoredNextFire(scheduleId);
@@ -235,6 +236,16 @@ public final class CronScheduler implements AutoCloseable {
         log.debug("Firing schedule id={} goal='{}'", scheduleId, record.goal());
         executeAndPublish(record);
         enqueue(scheduleId, nextFire);
+    }
+
+    /**
+     * The slot a claim moves the schedule to: the first after both the claimed slot and now. A wake-up
+     * within the tolerance before the slot would otherwise get that same slot back from {@code
+     * next(now)}, store it unchanged, and run it a second time when it comes round.
+     */
+    static ZonedDateTime nextSlotAfterClaim(CronExpression cron, Instant claimedSlot, ZonedDateTime now) {
+        ZonedDateTime slot = claimedSlot.atZone(ZoneOffset.UTC);
+        return cron.next(slot.isAfter(now) ? slot : now);
     }
 
     /** After losing a claim: wait for the slot the winner moved the schedule to, unless it is gone. */
