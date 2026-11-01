@@ -168,6 +168,14 @@ By default Nexora looks for `nexora.json` in the working directory. Point to a d
       "idleTimeoutMs": 600000
     },
     "stepOutputMaxBytes": 65536
+  },
+  "observe": {
+    "rateLimit": {
+      "enabled": true,
+      "globalRpm": 60,
+      "executeRpm": 10,
+      "trustedProxies": []
+    }
   }
 }
 ```
@@ -175,6 +183,8 @@ By default Nexora looks for `nexora.json` in the working directory. Point to a d
 `persistence.pool` sizes the HikariCP connection pool behind `executionStore`. Every key is optional and the values above are the defaults (`minimumIdle` defaults to 2, or to `maximumPoolSize` if that is smaller). `connectionTimeoutMs` must be at least 250 and `idleTimeoutMs` must be 0 (never retire idle connections) or at least 10000; out-of-range values fail at startup.
 
 `persistence.stepOutputMaxBytes` caps the output stored for each completed step, in UTF-8 JSON bytes (default 65536). A larger output is stored as a truncated `preview` and logged at `WARN`; the step still completes, and later steps still receive the whole output. Values from 1 to 255 fail at startup. Set it to `0` to store no outputs, for example when steps return data that must not be written to the database.
+
+`observe.rateLimit` limits each client of `nexora observe` to `globalRpm` API requests a minute, `executeRpm` of them to `POST /api/execute`; more get `429` with `Retry-After`. Set `enabled` to `false` when a reverse proxy rate limits instead, and list proxies in `trustedProxies` so clients behind them are told apart by `X-Forwarded-For`. See [Rate limiting](website/docs/concepts/rate-limiting.md).
 
 A step is included in the plan when its `matchesGoalContains` string appears in the goal. Dependencies between steps are declared in code using `StepDefinition`'s `dependsOn` set.
 

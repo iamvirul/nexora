@@ -29,6 +29,7 @@ const sidebars = {
         'concepts/authentication',
         'concepts/tls',
         'concepts/multi-tenancy',
+        'concepts/rate-limiting',
       ],
     },
     {
