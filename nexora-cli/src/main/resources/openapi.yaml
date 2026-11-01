@@ -1250,7 +1250,7 @@ components:
         after the number of seconds in `Retry-After`.
       headers:
         Retry-After:
-          description: Seconds until this client's window refills; waiting this long always finds room.
+          description: Seconds until this client's window refills. Clients sharing an address (behind one NAT) share the window, so another may use the room first.
           schema:
             type: integer
             minimum: 1

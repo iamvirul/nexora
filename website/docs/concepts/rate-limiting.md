@@ -26,7 +26,7 @@ Content-Type: application/json; charset=utf-8
 {"error": {"code": "RATE_LIMIT_EXCEEDED", "message": "Too many requests; retry after 42 seconds", "retryAfterSeconds": 42}}
 ```
 
-`Retry-After` is the number of seconds until the client's window refills, rounded up, so a client that waits exactly that long always gets through.
+`Retry-After` is the number of seconds until the client's window refills, rounded up. A client that has its address to itself always gets through after waiting that long; clients sharing an address (see below) share the window, so another of them may use the room first.
 
 Every refusal is:
 
@@ -36,7 +36,7 @@ Every refusal is:
   ```
 - counted in `nexora_rate_limit_violations_total{endpoint, client_ip}`. `endpoint` is the route (`/api/executions/`, not each execution id).
 
-The `client_ip` label adds a Prometheus series for every address that is ever refused, and those series stay until the server restarts. A flood from many addresses therefore grows the server's memory and your Prometheus storage. Aggregate it away in queries (`sum by (endpoint) (rate(nexora_rate_limit_violations_total[5m]))`), drop it at scrape time with `metric_relabel_configs` and a `labeldrop` action if you do not need it, and use the `WARN` log lines to find individual clients.
+The `client_ip` label adds a Prometheus series for every address that is ever refused, and those series stay until the server restarts. A flood from many addresses therefore grows the server's memory and your Prometheus storage. Aggregate it away in queries (`sum by (endpoint) (rate(nexora_rate_limit_violations_total[5m]))`) and use the `WARN` log lines to find individual clients. If the series are too many, drop the whole metric at scrape time (`metric_relabel_configs` with a `drop` action on `__name__`). Do not `labeldrop` only `client_ip`: two clients' series would be left with identical labels, which Prometheus rejects.
 
 ## Configuration
 
@@ -73,7 +73,9 @@ Clients are told apart by IP address. Behind a proxy every request arrives from 
 { "observe": { "rateLimit": { "trustedProxies": ["10.0.0.5", "10.0.0.6"] } } }
 ```
 
-For a request from a listed proxy, the client is the rightmost `X-Forwarded-For` entry that is not itself a listed proxy. Entries further left were written by the client and are ignored, and the header is ignored entirely on requests from anywhere else, so a client cannot claim a new address per request to escape its limit. Entries must be IP addresses; host names are rejected at startup and never looked up.
+For a request from a listed proxy, the client is the rightmost `X-Forwarded-For` entry that is not itself a listed proxy. Entries further left were written by the client and are ignored, and the header is ignored entirely on requests from anywhere else. Entries must be IP addresses; host names are rejected at startup and never looked up.
+
+This only holds if every listed proxy appends the address it actually received the request from, or replaces the header. A proxy that passes a client's `X-Forwarded-For` through unchanged lets the client write the rightmost entry itself, and claim a new address per request to escape its limit. Check each proxy before listing it: nginx's `$proxy_add_x_forwarded_for` appends, while some load balancers can be set to preserve the header as received, which is unsafe here.
 
 Several users behind one NAT or corporate proxy that you do not control share an address, and so share a limit. Raise `globalRpm` if that is your situation. The dashboard itself makes about 8 requests a minute in the background.
 
