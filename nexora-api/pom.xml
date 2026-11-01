@@ -75,6 +75,11 @@
             <artifactId>simpleclient_common</artifactId>
             </dependency>
         <!-- Lets tests assert on WARN logs (StepOutputPersistenceTest). -->
+        <!-- Token buckets for the observe server's per-client rate limits; no transitive dependencies. -->
+        <dependency>
+            <groupId>com.bucket4j</groupId>
+            <artifactId>bucket4j_jdk17-core</artifactId>
+        </dependency>
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
