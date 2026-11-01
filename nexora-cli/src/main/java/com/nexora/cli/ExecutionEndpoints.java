@@ -17,6 +17,7 @@ import com.nexora.persistence.ExecutionState;
 import com.nexora.persistence.ExecutionStore;
 import com.nexora.tracing.otel.W3CTraceparent;
 import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.InputStream;
@@ -31,6 +32,7 @@ import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.UnaryOperator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -98,9 +100,14 @@ final class ExecutionEndpoints {
      * and the tenant is resolved (400 or 403 on failure) before the route's own checks.
      */
     void register(HttpServer server, ApiAuth auth) {
-        server.createContext(EXECUTE_PATH, auth.protect(ObserveCommand.scoped(tenants, this::execute)));
-        server.createContext(LIST_PATH, auth.protect(ObserveCommand.scoped(tenants, this::list)));
-        server.createContext(PATH_PREFIX, auth.protect(ObserveCommand.scoped(tenants, this::handle)));
+        register(server, auth::protect);
+    }
+
+    /** @param guard authentication, then any rate limit, around each route; see {@link ObserveCommand} */
+    void register(HttpServer server, UnaryOperator<HttpHandler> guard) {
+        server.createContext(EXECUTE_PATH, guard.apply(ObserveCommand.scoped(tenants, this::execute)));
+        server.createContext(LIST_PATH, guard.apply(ObserveCommand.scoped(tenants, this::list)));
+        server.createContext(PATH_PREFIX, guard.apply(ObserveCommand.scoped(tenants, this::handle)));
     }
 
     private void list(HttpExchange exchange, TenantScope scope) throws IOException {
