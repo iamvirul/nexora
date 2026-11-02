@@ -7,7 +7,7 @@
     <groupId>com.nexora</groupId>
     <artifactId>nexora</artifactId>
     <description>Nexora is a reactive, intent-based Java execution engine.</description>
-    <version>0.4.0-SNAPSHOT</version>
+    <version>0.5.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <modules>
         <!-- Foundation — no intra-project deps -->
@@ -72,28 +72,28 @@
         <flyway.version>13.11.1</flyway.version>
         
         <!-- Internal Module Versions -->
-        <nexora-core.version>0.4.0-SNAPSHOT</nexora-core.version>
-        <nexora-plugin-spi.version>0.4.0-SNAPSHOT</nexora-plugin-spi.version>
-        <nexora-registry.version>0.4.0-SNAPSHOT</nexora-registry.version>
-        <nexora-tracing.version>0.4.0-SNAPSHOT</nexora-tracing.version>
-        <nexora-tracing-otel.version>0.4.0-SNAPSHOT</nexora-tracing-otel.version>
+        <nexora-core.version>0.5.0-SNAPSHOT</nexora-core.version>
+        <nexora-plugin-spi.version>0.5.0-SNAPSHOT</nexora-plugin-spi.version>
+        <nexora-registry.version>0.5.0-SNAPSHOT</nexora-registry.version>
+        <nexora-tracing.version>0.5.0-SNAPSHOT</nexora-tracing.version>
+        <nexora-tracing-otel.version>0.5.0-SNAPSHOT</nexora-tracing-otel.version>
         <opentelemetry.version>1.67.0</opentelemetry.version>
         <testcontainers.version>1.21.4</testcontainers.version>
         <postgresql.version>42.7.13</postgresql.version>
         <bucket4j.version>8.21.0</bucket4j.version>
         <!-- Set -DskipITs to skip integration tests, -DskipUTs to run only integration tests. -->
         <skipUTs>false</skipUTs>
-        <nexora-retry.version>0.4.0-SNAPSHOT</nexora-retry.version>
-        <nexora-event.version>0.4.0-SNAPSHOT</nexora-event.version>
-        <nexora-executor.version>0.4.0-SNAPSHOT</nexora-executor.version>
-        <nexora-plugin-loader.version>0.4.0-SNAPSHOT</nexora-plugin-loader.version>
-        <nexora-planner.version>0.4.0-SNAPSHOT</nexora-planner.version>
-        <nexora-capabilities.version>0.4.0-SNAPSHOT</nexora-capabilities.version>
-        <nexora-saga.version>0.4.0-SNAPSHOT</nexora-saga.version>
-        <nexora-runtime.version>0.4.0-SNAPSHOT</nexora-runtime.version>
-        <nexora-persistence.version>0.4.0-SNAPSHOT</nexora-persistence.version>
-        <nexora-api.version>0.4.0-SNAPSHOT</nexora-api.version>
-        <nexora-cli.version>0.4.0-SNAPSHOT</nexora-cli.version>
+        <nexora-retry.version>0.5.0-SNAPSHOT</nexora-retry.version>
+        <nexora-event.version>0.5.0-SNAPSHOT</nexora-event.version>
+        <nexora-executor.version>0.5.0-SNAPSHOT</nexora-executor.version>
+        <nexora-plugin-loader.version>0.5.0-SNAPSHOT</nexora-plugin-loader.version>
+        <nexora-planner.version>0.5.0-SNAPSHOT</nexora-planner.version>
+        <nexora-capabilities.version>0.5.0-SNAPSHOT</nexora-capabilities.version>
+        <nexora-saga.version>0.5.0-SNAPSHOT</nexora-saga.version>
+        <nexora-runtime.version>0.5.0-SNAPSHOT</nexora-runtime.version>
+        <nexora-persistence.version>0.5.0-SNAPSHOT</nexora-persistence.version>
+        <nexora-api.version>0.5.0-SNAPSHOT</nexora-api.version>
+        <nexora-cli.version>0.5.0-SNAPSHOT</nexora-cli.version>
 
         <spotless.version>3.10.4</spotless.version>
         <palantir-java-format.version>2.100.0</palantir-java-format.version>
