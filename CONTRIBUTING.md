@@ -55,4 +55,4 @@ V<version>__<description>.sql
 
 ## Pull requests
 
-Use the pull request template. If you add or change an observe server endpoint, update `nexora-cli/src/main/resources/openapi.yaml`. `OpenApiSpecTest` fails the build when the spec and the server disagree.
+Use the pull request template. If you add or change an observe server endpoint, update `nexora-cli/src/main/resources/openapi.yaml`. `OpenApiSpecTest` fails the build when the spec and the server disagree. The spec's `info.version` is the API's own version, separate from the Nexora version: when your change is the first API change since the last release, bump it by the rules in `website/docs/http-api.md` and add the change to the API changelog there. The docs site publishes the spec to GitHub Pages from `main`.

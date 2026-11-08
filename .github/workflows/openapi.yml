@@ -31,3 +31,18 @@ jobs:
         # Redocly CLI validates OpenAPI 3.1 (swagger-cli is archived and does not fully support it).
         # Rules are configured in redocly.yaml at the repository root.
         run: npx --yes @redocly/cli@2.54.3 lint nexora-cli/src/main/resources/openapi.yaml
+
+      - name: Check the API changelog lists this version
+        # info.version is the API contract's own version (see website/docs/http-api.md). Each version
+        # needs a section there, so a bump cannot ship without saying what changed.
+        run: |
+          version=$(sed -n 's/^  version: *\([^ ]*\) *$/\1/p' nexora-cli/src/main/resources/openapi.yaml | head -n 1)
+          if [ -z "$version" ]; then
+            echo "::error file=nexora-cli/src/main/resources/openapi.yaml::No info.version found"
+            exit 1
+          fi
+          if ! grep -qx "### ${version}" website/docs/http-api.md; then
+            echo "::error file=website/docs/http-api.md::API version ${version} has no '### ${version}' section in the API changelog"
+            exit 1
+          fi
+          echo "API version ${version} is in the changelog"
