@@ -121,7 +121,7 @@ final class Der {
     }
 
     private static byte[] tagged(int tag, byte[] content) {
-        ByteArrayOutputStream out = new ByteArrayOutputStream(content.length + 6);
+        ByteArrayOutputStream out = new ByteArrayOutputStream(Math.addExact(content.length, 6));
         out.write(tag);
         writeLength(out, content.length);
         out.writeBytes(content);
