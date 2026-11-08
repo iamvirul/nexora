@@ -1,6 +1,7 @@
 package com.nexora.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -266,6 +267,41 @@ class PluginReloadEndpointsTest {
     }
 
     @Test
+    void reloadCommandWithRejectedKeyDoesNotSuggestLogin() throws Exception {
+        CommandResult result = runCommandWithKey(
+                "nxk_wrong-key-0123456789abcdefghijklmnopq",
+                PLUGIN_ID,
+                "--jar",
+                pluginDir.resolve("x.jar").toString(),
+                "--server",
+                url(server));
+
+        assertEquals(ObserveServerClient.EXIT_FAILED, result.exitCode());
+        assertTrue(result.err().contains("rejected the API key"), result.err());
+        assertTrue(result.err().contains("--api-key"), result.err());
+        assertFalse(result.err().contains("nexora login"), result.err());
+    }
+
+    @Test
+    void unauthorizedWithoutKeyNamesOnlyTheServerKeyWhenLoginKeysDoNotApply() {
+        ObserveServerClient.Server serverKeyOnly =
+                new ObserveServerClient.Server(URI.create(url(server)), null, false, client, null, false);
+
+        String message = ObserveServerClient.unauthorized(serverKeyOnly);
+
+        assertTrue(message.contains("--api-key"), message);
+        assertFalse(message.contains("nexora login"), message);
+    }
+
+    @Test
+    void unauthorizedWithoutKeySuggestsLoginWhenLoginKeysApply() {
+        ObserveServerClient.Server loginAllowed =
+                new ObserveServerClient.Server(URI.create(url(server)), null, false, client);
+
+        assertTrue(ObserveServerClient.unauthorized(loginAllowed).contains("nexora login"));
+    }
+
+    @Test
     void reloadCommandRequiresJarOption() {
         CommandResult result = runCommand(PLUGIN_ID, "--server", url(server));
 
@@ -339,6 +375,10 @@ class PluginReloadEndpointsTest {
     }
 
     private static CommandResult runCommand(String... args) {
+        return runCommandWithKey(TestAuth.KEY, args);
+    }
+
+    private static CommandResult runCommandWithKey(String key, String... args) {
         StringWriter out = new StringWriter();
         StringWriter err = new StringWriter();
         CommandLine cmd = new CommandLine(new PluginsReloadCommand());
@@ -346,7 +386,7 @@ class PluginReloadEndpointsTest {
         cmd.setErr(new PrintWriter(err));
         String[] withKey = java.util.Arrays.copyOf(args, args.length + 2);
         withKey[args.length] = "--api-key";
-        withKey[args.length + 1] = TestAuth.KEY;
+        withKey[args.length + 1] = key;
         int exitCode = cmd.execute(withKey);
         return new CommandResult(exitCode, out.toString(), err.toString());
     }

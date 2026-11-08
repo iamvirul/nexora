@@ -49,29 +49,44 @@ final class ObserveServerClient {
      * Where to send the request and the key to send with it: {@code --api-key}, else
      * {@value ApiKeyStore#ENV_VAR}, else the user API key {@code nexora login} saved for this server.
      * Null sends none.
+     *
+     * @param tenantId       sent as {@value TenantResolver#HEADER} when not null, for a multi-tenant server
+     * @param loginKeysApply whether a {@code nexora login} key can authorise this command, which
+     *                       decides whether a {@code 401} suggests logging in
      */
-    /** @param tenantId sent as {@value TenantResolver#HEADER} when not null, for a multi-tenant server */
-    record Server(URI url, String apiKey, boolean allowInsecureHttp, HttpClient client, String tenantId) {
+    record Server(
+            URI url,
+            String apiKey,
+            boolean allowInsecureHttp,
+            HttpClient client,
+            String tenantId,
+            boolean loginKeysApply) {
 
         Server(URI url, String apiKey, boolean allowInsecureHttp, HttpClient client) {
-            this(url, apiKey, allowInsecureHttp, client, null);
+            this(url, apiKey, allowInsecureHttp, client, null, true);
         }
 
         Server withTenant(String tenant) {
-            return new Server(url, apiKey, allowInsecureHttp, client, tenant);
+            return new Server(url, apiKey, allowInsecureHttp, client, tenant, loginKeysApply);
         }
 
+        /**
+         * @param credentialsFile where {@code nexora login} saved user keys; null for a command that
+         *                        only the server API key may run, so no login key is looked up or suggested
+         */
         static Server of(URI url, String flagKey, Path credentialsFile, boolean allowInsecureHttp, CaCertOption trust) {
             String key = flagKey != null ? flagKey : System.getenv(ApiKeyStore.ENV_VAR);
-            // A null credentials file means saved login keys do not apply to the command.
-            if ((key == null || key.isBlank()) && credentialsFile != null && isHttpUrl(url)) {
+            boolean loginKeysApply = credentialsFile != null;
+            if ((key == null || key.isBlank()) && loginKeysApply && isHttpUrl(url)) {
                 key = new CliCredentials(credentialsFile).keyFor(url).orElse(null);
             }
             return new Server(
                     url,
                     key == null || key.isBlank() ? null : key.strip(),
                     allowInsecureHttp,
-                    trust.client(CONNECT_TIMEOUT));
+                    trust.client(CONNECT_TIMEOUT),
+                    null,
+                    loginKeysApply);
         }
     }
 
@@ -175,16 +190,26 @@ final class ObserveServerClient {
             return EXIT_FAILED;
         }
         if (response.statusCode() == STATUS_UNAUTHORIZED) {
-            err.println(
-                    target.apiKey() == null
-                            ? "Error: the observe server requires an API key. Run `nexora login`, set "
-                                    + ApiKeyStore.ENV_VAR + ", or pass --api-key."
-                            : "Error: the observe server rejected the API key. A login key may have expired or been"
-                                    + " revoked: run `nexora login` again, or check " + ApiKeyStore.ENV_VAR
-                                    + " / --api-key.");
+            err.println(unauthorized(target));
             return EXIT_FAILED;
         }
         return reporter.report(response, out, err);
+    }
+
+    /** What to do about a {@code 401}; logging in is suggested only where a login key would work. */
+    static String unauthorized(Server target) {
+        if (!target.loginKeysApply()) {
+            return target.apiKey() == null
+                    ? "Error: this command needs the observe server's API key. Set " + ApiKeyStore.ENV_VAR
+                            + " or pass --api-key."
+                    : "Error: the observe server rejected the API key. Check " + ApiKeyStore.ENV_VAR
+                            + " / --api-key: this command needs the server's own key.";
+        }
+        return target.apiKey() == null
+                ? "Error: the observe server requires an API key. Run `nexora login`, set " + ApiKeyStore.ENV_VAR
+                        + ", or pass --api-key."
+                : "Error: the observe server rejected the API key. A login key may have expired or been"
+                        + " revoked: run `nexora login` again, or check " + ApiKeyStore.ENV_VAR + " / --api-key.";
     }
 
     /** Plain HTTP to anything but this machine exposes the Bearer key on the network. */
