@@ -59,6 +59,11 @@ const config = {
             label: 'Documentation',
           },
           {
+            to: '/docs/http-api',
+            label: 'HTTP API',
+            position: 'left',
+          },
+          {
             href: 'https://github.com/iamvirul/nexora',
             label: 'GitHub',
             position: 'right',

@@ -1,7 +1,9 @@
 openapi: 3.1.0
 info:
   title: Nexora Observe Server API
-  version: 0.3.0
+  # The version of this API contract, kept separately from the Nexora release version: bump it only
+  # when a route, parameter, body or response changes, and add the change to website/docs/http-api.md.
+  version: 0.5.0
   summary: HTTP API of the `nexora observe` server.
   description: |
     Endpoints served by `nexora observe`: execution control and history, the dead letter queue,
@@ -11,8 +13,8 @@ info:
     key from `POST /api/keys` (username and password). The dashboard gets a user key as a session
     cookie from `POST /api/session` instead. A cookie-authenticated request that changes state must
     also send an `Origin` matching this server. Health probes, metrics, the dashboard page and the
-    API docs stay public, since probes and scrapers cannot carry credentials. The key travels in
-    clear over plain HTTP until TLS lands ([#40](https://github.com/iamvirul/nexora/issues/40)).
+    API docs stay public, since probes and scrapers cannot carry credentials. Start the server with
+    `--tls-cert` and `--tls-key` (or `--keystore`) so the key does not travel in clear.
 
     A server started with `--multi-tenant` scopes every execution, history, dead letter, schedule
     and webhook route, and the live stream, to one tenant (see the `X-Tenant-ID` parameter).
@@ -21,6 +23,10 @@ info:
 
     This document is maintained by hand. Every route registered by the server must appear here;
     `OpenApiSpecTest` fails the build when a route is added without updating this file.
+
+    `info.version` is the version of this API contract, not of Nexora: it changes only when the
+    API does. The changes in each version, and the Nexora release that first serves it, are listed
+    at https://iamvirul.github.io/nexora/docs/http-api.
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -42,6 +48,8 @@ tags:
     description: Recurring cron-based executions. Requires a persistence store.
   - name: Webhooks
     description: Audit log of webhook delivery attempts.
+  - name: Plugins
+    description: Swap plugin JARs on the running engine. Server API key only.
   - name: Session
     description: Login. A username and password mint a user API key; the dashboard gets it as an HttpOnly cookie.
   - name: Health
@@ -399,6 +407,136 @@ paths:
                   value: { error: Replay request failed, executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c }
         '503':
           $ref: '#/components/responses/PersistenceDisabled'
+
+  /api/plugins/{pluginId}/reload:
+    parameters:
+      - name: pluginId
+        in: path
+        required: true
+        description: Id of an active plugin, as `nexora plugins` lists it.
+        schema:
+          type: string
+        example: payments
+    post:
+      tags: [Plugins]
+      operationId: reloadPlugin
+      summary: Swap a plugin for a new JAR without restarting
+      description: |
+        Loads the JAR at `jar` under a fresh class loader, initialises it, and swaps its capabilities
+        and planners in for the active version's. New executions use the new version at once; steps
+        already running finish on the old one, which is shut down when the last of them returns.
+        If the new version fails, nothing is swapped and the old one keeps serving (`422`).
+
+        Runs code from the JAR inside the server, so only the server's own API key may call it, on
+        any server: user keys and dashboard sessions get `403`. `X-Tenant-ID` is ignored, since a
+        plugin serves every tenant. `jar` is an absolute path on the server, to a `.jar` file in the
+        same directory as the plugin's current JAR (symlinks resolved). Requires a persistence store.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jar]
+              properties:
+                jar:
+                  type: string
+                  description: Absolute path on the server to the new plugin JAR.
+            example: { jar: /opt/nexora/plugins/payments-1.3.0.jar }
+      responses:
+        '200':
+          description: The new version is active.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reloaded, pluginId, previousVersion, newVersion]
+                properties:
+                  reloaded:
+                    type: boolean
+                    const: true
+                  pluginId:
+                    type: string
+                  previousVersion:
+                    type: string
+                  newVersion:
+                    type: string
+              examples:
+                reloaded:
+                  value: { reloaded: true, pluginId: payments, previousVersion: 1.2.0, newVersion: 1.3.0 }
+        '400':
+          description: 'The body is not `{"jar": "..."}`, or the path is not an absolute path to a `.jar` file in the plugin''s directory.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginError'
+              examples:
+                missingJar:
+                  value: { error: { code: INVALID_REQUEST, message: "Field 'jar' is required: the new JAR's path on the server" } }
+                outsideDirectory:
+                  value: { error: { code: JAR_NOT_ALLOWED, message: "The new jar must be in the same directory as the plugin's current jar (/opt/nexora/plugins)" } }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: The caller authenticated with a user key or dashboard session, not the server API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginError'
+              examples:
+                forbidden:
+                  value: { error: { code: FORBIDDEN, message: 'Reloading a plugin requires the server API key; user keys and sessions cannot do it' } }
+        '404':
+          description: No active plugin has this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginError'
+              examples:
+                notFound:
+                  value: { error: { code: PLUGIN_NOT_FOUND, message: No active plugin with id payments } }
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedText'
+        '409':
+          description: The plugin was registered in code rather than loaded from a JAR.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginError'
+              examples:
+                inline:
+                  value: { error: { code: PLUGIN_NOT_RELOADABLE, message: 'Plugin payments was registered in code, not loaded from a JAR; restart to change it' } }
+        '422':
+          description: The new version failed to load or initialise. The previous version is still active and serving.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginError'
+              examples:
+                rolledBack:
+                  value: { error: { code: PLUGIN_RELOAD_FAILED, message: "Reload of plugin 'payments' failed; version 1.2.0 is still active: Plugin initialization failed: payments: connection refused" } }
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+        '500':
+          description: The reload failed unexpectedly.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginError'
+              examples:
+                failed:
+                  value: { error: { code: INTERNAL_ERROR, message: Plugin reload failed } }
+        '503':
+          description: The server runs without a persistence store.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginError'
+              examples:
+                noStore:
+                  value: { error: { code: PERSISTENCE_DISABLED, message: Plugin hot reload requires a persistence store; set executionStore in nexora.json } }
 
   /api/webhook-deliveries/{executionId}:
     get:
@@ -997,7 +1135,7 @@ paths:
                 up:
                   value:
                     status: UP
-                    version: 0.3.0
+                    version: 0.4.0
                     checks: { persistence: UP, migrations: UP, plugins: UP, executor: UP }
                     capabilities:
                       - capabilityId: charge_card
@@ -1460,6 +1598,19 @@ components:
               enum: [UNAUTHORIZED, INVALID_CREDENTIALS_FORMAT, UNSUPPORTED_MEDIA_TYPE, TOO_MANY_ATTEMPTS, TENANT_REQUIRED, INVALID_TENANT_ID, TENANT_FORBIDDEN]
             message:
               type: string
+    PluginError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [INVALID_REQUEST, INVALID_JAR_PATH, JAR_NOT_ALLOWED, FORBIDDEN, PLUGIN_NOT_FOUND, PLUGIN_NOT_RELOADABLE, PLUGIN_RELOAD_FAILED, INTERNAL_ERROR, PERSISTENCE_DISABLED]
+            message:
+              type: string
     Error:
       type: object
       required: [error]
@@ -1884,6 +2035,7 @@ components:
           $ref: '#/components/schemas/HealthStatus'
         version:
           type: string
+          description: The Nexora release the server runs (from its jar), not this document's `info.version`; `unknown` when run from unpackaged classes.
         checks:
           $ref: '#/components/schemas/ReadinessChecks'
         capabilities:

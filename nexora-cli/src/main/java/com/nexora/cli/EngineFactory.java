@@ -5,7 +5,9 @@ import com.nexora.persistence.jdbc.JdbcExecutionStore;
 import com.nexora.planner.model.StepDefinition;
 import com.nexora.retry.ExponentialBackoffPolicy;
 import com.nexora.tracing.otel.OtelTracer;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 
 final class EngineFactory {
 
@@ -36,6 +38,13 @@ final class EngineFactory {
                 .multiplier(config.retry.multiplier)
                 .maxDelay(Duration.ofMillis(config.retry.maxDelayMs))
                 .build());
+
+        for (String jar : config.plugins == null ? List.<String>of() : config.plugins) {
+            if (jar == null || jar.isBlank()) {
+                throw new IllegalArgumentException("plugins in nexora.json must not contain a blank path");
+            }
+            builder.withPluginJar(Path.of(jar).toAbsolutePath().normalize());
+        }
 
         for (CliConfig.StepConfig sc : config.steps) {
             String match = sc.matchesGoalContains;

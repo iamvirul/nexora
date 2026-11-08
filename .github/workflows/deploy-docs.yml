@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'website/**'
+      # The site publishes the observe server's OpenAPI document (website/scripts/copy-openapi.mjs).
+      - 'nexora-cli/src/main/resources/openapi.yaml'
       - '.github/workflows/deploy-docs.yml'
 
   # Allows you to run this workflow manually from the Actions tab

@@ -68,6 +68,11 @@ const sidebars = {
       id: 'cli',
       label: 'CLI Reference',
     },
+    {
+      type: 'doc',
+      id: 'http-api',
+      label: 'HTTP API',
+    },
   ],
 };
 

@@ -16,6 +16,7 @@ nexora [--config <file>] <command>
 | `nexora plan -g "<goal>"` | Dry run: show the DAG without executing anything |
 | `nexora caps` | List all registered capabilities |
 | `nexora plugins` | List active plugins |
+| `nexora plugins reload <pluginId> --jar <path>` | Swap a plugin for a new JAR inside the observe server, without a restart |
 | `nexora observe` | Start UI/API/metrics server for live process observability |
 | `nexora demo` | Run the built-in feature demo |
 | `nexora dlq list` | List dead letter queue entries (default: PENDING) |
@@ -63,6 +64,7 @@ By default Nexora looks for `nexora.json` in the working directory. Point to a d
 ```json
 {
   "executionStore": "./nexora-data",
+  "plugins": ["/opt/nexora/plugins/payments-1.2.0.jar"],
   "steps": [
     {
       "id": "validate_order",
@@ -97,7 +99,29 @@ By default Nexora looks for `nexora.json` in the working directory. Point to a d
 
 `persistence.stepOutputMaxBytes` caps the output stored for each completed step, in UTF-8 JSON bytes (default 65536). A larger output is stored as a truncated `preview` and logged at `WARN`; the step still completes, and later steps still receive the whole output. Values from 1 to 255 fail at startup. Set it to `0` to store no outputs, for example when steps return data that must not be written to the database.
 
+`plugins` lists plugin JARs to load and activate at startup, in order: put a plugin's required plugins before it. Relative paths resolve against the working directory. A JAR that fails to load stops startup.
+
 A step is included in the plan when its `matchesGoalContains` string appears in the goal. Dependencies between steps are declared in code using `StepDefinition`'s `dependsOn` set.
+
+## `nexora plugins reload`: Hot Reload
+
+Swaps a plugin for a new version inside a running `nexora observe` server, without dropping executions:
+
+```bash
+export NEXORA_API_KEY=nxk_...
+nexora plugins reload payments --jar /opt/nexora/plugins/payments-1.3.0.jar
+# Reloaded plugin payments: 1.2.0 -> 1.3.0.
+```
+
+New executions use the new version as soon as the command returns. Steps already running on the old version finish on it, and the old version is shut down when the last of them returns. If the new JAR fails to load or initialise, nothing changes: the old version keeps serving and the command exits with code 1 and the reason.
+
+The command calls `POST /api/plugins/{pluginId}/reload` with `{"jar": "<path>"}`. Because a reload runs code from the JAR inside the server:
+
+- Only the server API key may reload (`--api-key` or `NEXORA_API_KEY`). User keys from `nexora login` and dashboard sessions get `403`, on single and multi-tenant servers alike, since a plugin serves every tenant.
+- The path is read on the server. The command makes a relative path absolute against its own working directory, which only matches when both run on the same machine.
+- The new JAR must be a `.jar` file in the same directory as the plugin's current JAR, after resolving symlinks. Copy the new version next to the old one, under a new file name, before reloading.
+- The server must run with an `executionStore`; without one the route answers `503`.
+- Only plugins loaded from a JAR (`plugins` in `nexora.json`) can be reloaded; a plugin registered in code answers `409`.
 
 ## `nexora schedule`: Cron Scheduling
 

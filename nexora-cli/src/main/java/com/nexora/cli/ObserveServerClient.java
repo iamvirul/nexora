@@ -23,7 +23,7 @@ import picocli.CommandLine.Model.CommandSpec;
 
 /**
  * Shared plumbing for CLI commands that act on executions inside a running {@code nexora observe}
- * server ({@code cancel}, {@code replay}): argument validation, the HTTP call, and turning
+ * server ({@code cancel}, {@code replay}, {@code plugins reload}): argument validation, the HTTP call, and turning
  * connection failures into readable errors. Each command only decides how to report the response.
  */
 final class ObserveServerClient {
@@ -49,28 +49,44 @@ final class ObserveServerClient {
      * Where to send the request and the key to send with it: {@code --api-key}, else
      * {@value ApiKeyStore#ENV_VAR}, else the user API key {@code nexora login} saved for this server.
      * Null sends none.
+     *
+     * @param tenantId       sent as {@value TenantResolver#HEADER} when not null, for a multi-tenant server
+     * @param loginKeysApply whether a {@code nexora login} key can authorise this command, which
+     *                       decides whether a {@code 401} suggests logging in
      */
-    /** @param tenantId sent as {@value TenantResolver#HEADER} when not null, for a multi-tenant server */
-    record Server(URI url, String apiKey, boolean allowInsecureHttp, HttpClient client, String tenantId) {
+    record Server(
+            URI url,
+            String apiKey,
+            boolean allowInsecureHttp,
+            HttpClient client,
+            String tenantId,
+            boolean loginKeysApply) {
 
         Server(URI url, String apiKey, boolean allowInsecureHttp, HttpClient client) {
-            this(url, apiKey, allowInsecureHttp, client, null);
+            this(url, apiKey, allowInsecureHttp, client, null, true);
         }
 
         Server withTenant(String tenant) {
-            return new Server(url, apiKey, allowInsecureHttp, client, tenant);
+            return new Server(url, apiKey, allowInsecureHttp, client, tenant, loginKeysApply);
         }
 
+        /**
+         * @param credentialsFile where {@code nexora login} saved user keys; null for a command that
+         *                        only the server API key may run, so no login key is looked up or suggested
+         */
         static Server of(URI url, String flagKey, Path credentialsFile, boolean allowInsecureHttp, CaCertOption trust) {
             String key = flagKey != null ? flagKey : System.getenv(ApiKeyStore.ENV_VAR);
-            if ((key == null || key.isBlank()) && isHttpUrl(url)) {
+            boolean loginKeysApply = credentialsFile != null;
+            if ((key == null || key.isBlank()) && loginKeysApply && isHttpUrl(url)) {
                 key = new CliCredentials(credentialsFile).keyFor(url).orElse(null);
             }
             return new Server(
                     url,
                     key == null || key.isBlank() ? null : key.strip(),
                     allowInsecureHttp,
-                    trust.client(CONNECT_TIMEOUT));
+                    trust.client(CONNECT_TIMEOUT),
+                    null,
+                    loginKeysApply);
         }
     }
 
@@ -113,14 +129,32 @@ final class ObserveServerClient {
             String method,
             String pathSuffix,
             ResponseReporter reporter) {
+        if (executionId.isBlank()) {
+            spec.commandLine().getErr().println("Error: EXECUTION_ID must not be blank.");
+            return EXIT_USAGE;
+        }
+        return request(
+                spec,
+                target,
+                ExecutionEndpoints.PATH_PREFIX + encodePathSegment(executionId) + pathSuffix,
+                method,
+                null,
+                reporter);
+    }
+
+    /**
+     * Sends {@code method} to {@code path} on {@code target}, with {@code jsonBody} when not null.
+     *
+     * @param path already-encoded path starting with {@code /}
+     * @return the exit code from {@code reporter}, or {@link #EXIT_USAGE} / {@link #EXIT_FAILED} when
+     *         the arguments are invalid or the server cannot be reached
+     */
+    static int request(
+            CommandSpec spec, Server target, String path, String method, String jsonBody, ResponseReporter reporter) {
         PrintWriter out = spec.commandLine().getOut();
         PrintWriter err = spec.commandLine().getErr();
         URI server = target.url();
 
-        if (executionId.isBlank()) {
-            err.println("Error: EXECUTION_ID must not be blank.");
-            return EXIT_USAGE;
-        }
         if (target.tenantId() != null && !TenantId.isValid(target.tenantId())) {
             err.println("Error: --tenant must be 1 to " + TenantId.MAX_LENGTH
                     + " characters of a-z, 0-9, '-' or '_', starting with a letter or digit.");
@@ -131,10 +165,7 @@ final class ObserveServerClient {
             return EXIT_USAGE;
         }
 
-        URI uri = URI.create(stripTrailingSlash(server.toString())
-                + ExecutionEndpoints.PATH_PREFIX
-                + encodePathSegment(executionId)
-                + pathSuffix);
+        URI uri = URI.create(stripTrailingSlash(server.toString()) + path);
         if (target.apiKey() != null) {
             Optional<String> refusal = refuseCleartext(server, "API key", target.allowInsecureHttp());
             if (refusal.isPresent()) {
@@ -149,7 +180,7 @@ final class ObserveServerClient {
         }
         HttpResponse<String> response;
         try {
-            response = send(target, uri, method);
+            response = send(target, uri, method, jsonBody);
         } catch (IOException e) {
             err.println(unreachable(server, e));
             return EXIT_FAILED;
@@ -159,16 +190,26 @@ final class ObserveServerClient {
             return EXIT_FAILED;
         }
         if (response.statusCode() == STATUS_UNAUTHORIZED) {
-            err.println(
-                    target.apiKey() == null
-                            ? "Error: the observe server requires an API key. Run `nexora login`, set "
-                                    + ApiKeyStore.ENV_VAR + ", or pass --api-key."
-                            : "Error: the observe server rejected the API key. A login key may have expired or been"
-                                    + " revoked: run `nexora login` again, or check " + ApiKeyStore.ENV_VAR
-                                    + " / --api-key.");
+            err.println(unauthorized(target));
             return EXIT_FAILED;
         }
         return reporter.report(response, out, err);
+    }
+
+    /** What to do about a {@code 401}; logging in is suggested only where a login key would work. */
+    static String unauthorized(Server target) {
+        if (!target.loginKeysApply()) {
+            return target.apiKey() == null
+                    ? "Error: this command needs the observe server's API key. Set " + ApiKeyStore.ENV_VAR
+                            + " or pass --api-key."
+                    : "Error: the observe server rejected the API key. Check " + ApiKeyStore.ENV_VAR
+                            + " / --api-key: this command needs the server's own key.";
+        }
+        return target.apiKey() == null
+                ? "Error: the observe server requires an API key. Run `nexora login`, set " + ApiKeyStore.ENV_VAR
+                        + ", or pass --api-key."
+                : "Error: the observe server rejected the API key. A login key may have expired or been"
+                        + " revoked: run `nexora login` again, or check " + ApiKeyStore.ENV_VAR + " / --api-key.";
     }
 
     /** Plain HTTP to anything but this machine exposes the Bearer key on the network. */
@@ -205,11 +246,18 @@ final class ObserveServerClient {
         }
     }
 
-    private static HttpResponse<String> send(Server target, URI uri, String method)
+    private static HttpResponse<String> send(Server target, URI uri, String method, String jsonBody)
             throws IOException, InterruptedException {
         HttpRequest.Builder request = HttpRequest.newBuilder(uri)
                 .timeout(REQUEST_TIMEOUT)
-                .method(method, HttpRequest.BodyPublishers.noBody());
+                .method(
+                        method,
+                        jsonBody == null
+                                ? HttpRequest.BodyPublishers.noBody()
+                                : HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8));
+        if (jsonBody != null) {
+            request.header("Content-Type", "application/json");
+        }
         if (target.apiKey() != null) {
             request.header("Authorization", "Bearer " + target.apiKey());
         }
@@ -241,7 +289,7 @@ final class ObserveServerClient {
         return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
 
-    private static String encodePathSegment(String value) {
+    static String encodePathSegment(String value) {
         // URLEncoder targets form encoding; a path segment needs %20 for spaces, not '+'.
         return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }

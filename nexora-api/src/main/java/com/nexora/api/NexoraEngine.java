@@ -19,6 +19,7 @@ import com.nexora.executor.interceptor.RetryInterceptor;
 import com.nexora.executor.interceptor.TimeoutInterceptor;
 import com.nexora.executor.interceptor.TracingInterceptor;
 import com.nexora.loader.PluginManager;
+import com.nexora.loader.PluginReloadResult;
 import com.nexora.persistence.DeadLetterRecord;
 import com.nexora.persistence.ExecutionRecord;
 import com.nexora.persistence.ExecutionState;
@@ -380,6 +381,36 @@ public final class NexoraEngine implements AutoCloseable {
         pluginManager.activatePlugin(pluginId);
     }
 
+    /**
+     * Swaps an active JAR plugin for the version in {@code newJar} without stopping the engine.
+     *
+     * <p>New executions use the new version's capabilities and planners as soon as this returns.
+     * Steps already running on the old version finish on it; the old version is shut down and its
+     * class loader closed when the last of them returns. If the new JAR cannot replace the old one,
+     * the old version stays active, a {@link com.nexora.event.PluginReloadFailedEvent} is published
+     * and {@link com.nexora.spi.PluginInitializationException} is thrown; on success a
+     * {@link com.nexora.event.PluginReloadedEvent} carries both versions.
+     *
+     * <p>Requires an {@link ExecutionStore}: without one, executions interrupted around a reload
+     * leave no record to inspect or {@link #replay(String) replay}.
+     *
+     * @throws IllegalStateException if no execution store is configured, or the plugin is not an
+     *                               active JAR plugin
+     * @see PluginManager#reloadPlugin(String, Path)
+     */
+    public PluginReloadResult reloadPlugin(String pluginId, Path newJar) {
+        if (pluginId == null || pluginId.isBlank()) {
+            throw new IllegalArgumentException("pluginId must not be blank");
+        }
+        Objects.requireNonNull(newJar, "newJar must not be null");
+        if (engine.getStore() == null) {
+            throw new IllegalStateException("Plugin hot reload requires an ExecutionStore so executions running"
+                    + " across the swap stay recorded; configure one with builder.withExecutionStore(...),"
+                    + " or restart the engine to pick up the new plugin version.");
+        }
+        return pluginManager.reloadPlugin(pluginId, newJar);
+    }
+
     public List<com.nexora.spi.CapabilityDescriptor> listCapabilities() {
         return tenantScope == null ? capabilityRegistry.listAll() : capabilityRegistry.listFor(tenantScope);
     }
@@ -389,6 +420,14 @@ public final class NexoraEngine implements AutoCloseable {
         return filterFor(Objects.requireNonNull(tenantId, "tenantId must not be null"))
                 .map(filter -> capabilityRegistry.listFor(filter.tenantId()))
                 .orElse(List.of());
+    }
+
+    /**
+     * The JAR the active version of {@code pluginId} was loaded from. Empty for a plugin that is not
+     * loaded or was registered in code with {@link Builder#withPlugin(NexoraPlugin)}.
+     */
+    public Optional<Path> pluginJar(String pluginId) {
+        return pluginManager.jar(pluginId);
     }
 
     public List<String> activePluginIds() {
@@ -760,10 +799,9 @@ public final class NexoraEngine implements AutoCloseable {
             PlannerEngine plannerEngine = new PlannerEngine(planRegistry);
             RulePlanner rulePlanner = new RulePlanner(plannerEngine);
 
-            List<Planner> allPlanners = new ArrayList<>();
-            allPlanners.addAll(extraPlanners);
-            allPlanners.addAll(pluginManager.registeredPlanners());
-            CompositePlanner compositePlanner = new CompositePlanner(allPlanners, rulePlanner);
+            // Plugin planners are read live so plugins reloaded at runtime plan new intents at once.
+            CompositePlanner compositePlanner =
+                    new CompositePlanner(extraPlanners, pluginManager::registeredPlanners, rulePlanner);
 
             // Saga orchestrator (optional)
             SagaOrchestrator sagaOrchestrator = sagaEnabled ? new SagaOrchestrator(pipeline, eventBus, executor) : null;

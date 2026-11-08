@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 /**
  * Delegates planning to the highest-priority registered planner that accepts the intent.
@@ -17,21 +18,36 @@ import java.util.Objects;
  * Plugin planners are sorted by PlannerDescriptor.priority (descending) and tried in order.
  * The built-in RulePlanner is always appended last as the fallback — it always returns
  * canPlan()=true, so at least one planner will always match.
+ *
+ * <p>Planners can be fixed at construction or read live from a supplier, so plugins activated or
+ * reloaded on a running engine take part in planning at once. The supplier must return the same
+ * list instance until its contents change; the priority order is recomputed only when it does not.
  */
 public final class CompositePlanner implements Planner {
 
     private static final PlannerDescriptor DESCRIPTOR =
             new PlannerDescriptor("composite-planner", "Priority-ordered composite planner");
 
-    private final List<Planner> planners;
+    private final List<Planner> fixedPlanners;
+    private final Supplier<List<Planner>> livePlanners;
+    private final RulePlanner fallback;
+    private volatile Ordering ordering;
+
+    /** The live list a given ordering was computed from, compared by identity. */
+    private record Ordering(List<Planner> source, List<Planner> ordered) {}
 
     public CompositePlanner(List<Planner> pluginPlanners, RulePlanner fallback) {
-        Objects.requireNonNull(pluginPlanners);
-        Objects.requireNonNull(fallback);
-        List<Planner> ordered = new ArrayList<>(pluginPlanners);
-        ordered.sort(Comparator.comparingInt(p -> -p.descriptor().priority()));
-        ordered.add(fallback);
-        this.planners = List.copyOf(ordered);
+        this(pluginPlanners, List::of, fallback);
+    }
+
+    /**
+     * @param fixedPlanners planners that never change, such as those passed to the engine builder
+     * @param livePlanners  planners read on every plan, such as those of the currently active plugins
+     */
+    public CompositePlanner(List<Planner> fixedPlanners, Supplier<List<Planner>> livePlanners, RulePlanner fallback) {
+        this.fixedPlanners = List.copyOf(Objects.requireNonNull(fixedPlanners));
+        this.livePlanners = Objects.requireNonNull(livePlanners);
+        this.fallback = Objects.requireNonNull(fallback);
     }
 
     @Override
@@ -46,7 +62,7 @@ public final class CompositePlanner implements Planner {
 
     @Override
     public Plan plan(Intent intent, PlanningContext context) {
-        for (Planner planner : planners) {
+        for (Planner planner : planners()) {
             if (planner.canPlan(intent, context)) {
                 return planner.plan(intent, context);
             }
@@ -54,7 +70,20 @@ public final class CompositePlanner implements Planner {
         throw new PlanningException("No planner could handle intent: " + intent.getGoal());
     }
 
+    /** The planners in the order they are tried, ending with the fallback. */
     public List<Planner> planners() {
-        return planners;
+        List<Planner> live = Objects.requireNonNull(livePlanners.get(), "livePlanners supplied null");
+        Ordering current = ordering;
+        if (current != null && current.source() == live) {
+            return current.ordered();
+        }
+        List<Planner> ordered = new ArrayList<>(fixedPlanners.size() + live.size() + 1);
+        ordered.addAll(fixedPlanners);
+        ordered.addAll(live);
+        ordered.sort(Comparator.comparingInt(p -> -p.descriptor().priority()));
+        ordered.add(fallback);
+        Ordering computed = new Ordering(live, List.copyOf(ordered));
+        ordering = computed;
+        return computed.ordered();
     }
 }

@@ -4,10 +4,17 @@ List all plugins that are currently active in the engine.
   one or more capabilities when it activates. If no plugins are active,
   the capability registry will be empty and no steps can execute.
 
-  Plugins are loaded from JAR files via nexora.loadPlugin() or wired
-  programmatically in your application code.
+  Plugins are loaded from the JAR files listed under "plugins" in
+  nexora.json, via engine.loadPlugin(), or wired programmatically in
+  your application code.
+
+  Subcommands
+  ───────────
+    reload    Swap a plugin for a new JAR inside a running
+              `nexora observe` server, without a restart.
 
   Examples
   ────────
     nexora plugins
     nexora --config /etc/nexora/prod.json plugins
+    nexora plugins reload payments --jar /opt/nexora/plugins/payments-1.3.0.jar

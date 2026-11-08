@@ -45,6 +45,8 @@ All events extend `ExecutionEvent`.
 |---|---|
 | `PluginActivatedEvent` | A plugin successfully initializes |
 | `PluginDeactivatedEvent` | A plugin shuts down |
+| `PluginReloadedEvent` | A plugin was swapped for a new JAR; carries `previousVersion` and `newVersion` |
+| `PluginReloadFailedEvent` | A reload failed; carries the `activeVersion` still serving and the `reason` |
 
 ### Cron scheduling
 

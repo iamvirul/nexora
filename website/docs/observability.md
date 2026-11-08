@@ -12,7 +12,7 @@ Start Nexora's built-in observability server:
 java -jar nexora-cli/target/nexora.jar observe --port 9464
 ```
 
-The server's full HTTP API is described by an OpenAPI 3.1 document at `GET /openapi.yaml`, browsable with Swagger UI at [`/docs`](http://localhost:9464/docs) (served from bundled assets, no external requests).
+The server's full HTTP API is described by an OpenAPI 3.1 document at `GET /openapi.yaml`, browsable with Swagger UI at [`/docs`](http://localhost:9464/docs) (served from bundled assets, no external requests). The document's `info.version` is the API's own version, separate from the Nexora release; the [HTTP API](./http-api) page lists what changed in each version and renders the current reference.
 
 It exposes these endpoints with no external dependencies:
 
