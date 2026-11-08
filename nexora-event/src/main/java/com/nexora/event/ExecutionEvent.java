@@ -20,6 +20,8 @@ public sealed interface ExecutionEvent
                 CompensationFailedEvent,
                 PluginActivatedEvent,
                 PluginDeactivatedEvent,
+                PluginReloadedEvent,
+                PluginReloadFailedEvent,
                 CapabilityCircuitOpenedEvent,
                 CapabilityCircuitClosedEvent,
                 ExecutionDeadLetteredEvent,
