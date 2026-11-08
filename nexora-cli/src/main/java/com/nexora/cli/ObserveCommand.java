@@ -652,6 +652,7 @@ public class ObserveCommand implements Callable<Integer> {
 
         new HealthEndpoints(engine, NEXORA_VERSION).register(server);
         new ExecutionEndpoints(engine, tenants).register(server, guard);
+        new PluginEndpoints(engine).register(server, guard);
         new SessionEndpoints(auth, tenants).register(server);
         ApiDocsEndpoints.load().register(server);
 

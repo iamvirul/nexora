@@ -26,6 +26,13 @@ public class CliConfig {
     /** File path for the H2 embedded store (e.g. "./nexora-data"). Omit for no persistence. */
     public String executionStore;
 
+    /**
+     * Plugin JARs to load and activate at startup, in order (a plugin's required plugins first).
+     * Relative paths resolve against the working directory. {@code nexora plugins reload} accepts
+     * a replacement only from the directory its plugin's JAR was loaded from.
+     */
+    public List<String> plugins = List.of();
+
     public PersistenceConfig persistence = new PersistenceConfig();
 
     public ObserveConfig observe = new ObserveConfig();

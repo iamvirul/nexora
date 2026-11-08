@@ -5,7 +5,10 @@ import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.ParentCommand;
 
-@Command(name = "plugins", mixinStandardHelpOptions = true)
+@Command(
+        name = "plugins",
+        mixinStandardHelpOptions = true,
+        subcommands = {PluginsReloadCommand.class})
 public class PluginsCommand implements Callable<Integer> {
 
     @ParentCommand
