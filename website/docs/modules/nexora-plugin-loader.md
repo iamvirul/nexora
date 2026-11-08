@@ -14,6 +14,8 @@ Manages the full lifecycle: load → activate → deactivate → unload.
 
 ```
 LOADED → activate() → ACTIVE → deactivate() → INACTIVE
+                        ↑  │
+                        └──┘ reloadPlugin(): ACTIVE (new version)
 ```
 
 ### Loading a plugin from a JAR
@@ -32,9 +34,37 @@ On a running engine, `loadPlugin` loads the JAR and activates the plugin with th
 engine.loadPlugin(Path.of("/opt/plugins/fraud-plugin-2.0.0.jar"), "fraud-plugin");
 ```
 
+### Hot reload
+
+A JAR plugin can be swapped for a new version on a running engine, without a restart:
+
+```java
+PluginReloadResult result =
+    engine.reloadPlugin("payments", Path.of("/opt/nexora/plugins/payments-1.3.0.jar"));
+// result.previousVersion() = "1.2.0", result.newVersion() = "1.3.0"
+```
+
+The new JAR is loaded under a fresh `PluginClassLoader` and fully initialised (`initialize()`, then every capability and planner provider) before anything changes, so for a moment both versions are initialised side by side. Its capabilities and planners then replace the old ones, capabilities the new version no longer provides are removed, and every new invocation uses the new version.
+
+Steps already running on the old version finish on it. Every capability and planner from a JAR plugin is registered behind a lease on its version; the old version's `shutdown()` runs, and its class loader closes, when the last invocation holding a lease returns. An invocation that looked a capability up just before the swap but reaches it after the old version was released is handed to the version registered under the same id now.
+
+The reload is refused, and nothing changes, when the new JAR:
+
+- cannot be read or contains no `NexoraPlugin`,
+- declares a different plugin id,
+- needs a required plugin that is not `ACTIVE`,
+- fails in `initialize()` or in a provider (its `shutdown()` is then called and its class loader closed),
+- provides a capability id another plugin already registered.
+
+The old version keeps serving, a `PluginReloadFailedEvent` is published with the reason, and `PluginInitializationException` is thrown. On success a `PluginReloadedEvent` carries both version strings.
+
+`engine.reloadPlugin` requires an `ExecutionStore` and throws `IllegalStateException` without one, as it does for a plugin that is not `ACTIVE` or was registered in code with `withPlugin()`. The `nexora plugins reload` command does the same through a running observe server; see [CLI](../cli).
+
+Write each new version to a new file. The old version may still load classes from its JAR until it is released, so overwriting that file in place can break the steps still running on it.
+
 ### Deactivation
 
-All active plugins are deactivated when the engine shuts down (`engine.shutdown()` or `close()`). For each plugin, its capabilities and planners are removed from the registry, `shutdown()` is called, and its class loader is closed. There is no public `NexoraEngine` API to deactivate a single plugin at runtime.
+All active plugins are deactivated when the engine shuts down (`engine.shutdown()` or `close()`). For each plugin, its capabilities and planners are removed from the registry. A JAR plugin's `shutdown()` runs and its class loader closes once the invocations still running on it return; a plugin registered in code is shut down at once. There is no public `NexoraEngine` API to deactivate a single plugin at runtime.
 
 ---
 

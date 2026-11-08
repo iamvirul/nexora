@@ -9,6 +9,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 ### Added
 
+#### Plugins
+- **Plugin hot reload** - `NexoraEngine.reloadPlugin(pluginId, jar)` (`PluginManager.reloadPlugin`) swaps an active JAR plugin for a new version without stopping the engine. The new JAR is loaded under a fresh `PluginClassLoader` and fully initialised before anything changes; then its capabilities and planners replace the old ones and new executions use them at once. Steps already running on the old version finish on it: every capability and planner from a JAR plugin is registered behind a ref-counted lease on its version, and the old version's `shutdown()` and class loader close run when the last lease is returned. If the new JAR cannot be read, declares another id, needs an inactive plugin, fails to initialise or takes another plugin's capability id, nothing is swapped, the old version keeps serving, `PluginReloadFailedEvent` is published and `PluginInitializationException` is thrown; on success `PluginReloadedEvent` carries the old and new versions. Reload requires an `ExecutionStore` (`IllegalStateException` otherwise) and is refused for plugins registered in code. `nexora plugins reload <pluginId> --jar <path>` calls the new `POST /api/plugins/{pluginId}/reload` route on a running observe server, which accepts only the server API key and only a `.jar` in the same directory as the plugin's current JAR. `plugins` in `nexora.json` lists JARs to load at startup. `NexoraEngine.pluginJar(pluginId)` returns the JAR a plugin's active version came from ([#43](https://github.com/iamvirul/nexora/issues/43))
+
+#### Documentation
+- **HTTP API reference on GitHub Pages** - The docs site publishes the observe server's `openapi.yaml` at `/nexora/api/openapi.yaml` with a rendered reference at `/nexora/api/`, copied from `nexora-cli` on every site build (`website/scripts/copy-openapi.mjs`), so the server and the site never drift. The new HTTP API page holds the versioning rules and an API changelog. The site redeploys when `openapi.yaml` changes.
+
+### Changed
+- **The OpenAPI document has its own version** - `info.version` in `openapi.yaml` is now the version of the API contract, separate from the Nexora release version, and changes only when the API does (it had stayed at `0.3.0` through the 0.4.0 release). CI fails when the current `info.version` has no section in the API changelog. The `version` field of `GET /health` is still the Nexora release.
+- **Plugin planners are read live** - `CompositePlanner` takes a `Supplier<List<Planner>>` (new constructor) and the engine passes the active plugins' planners through it, so plugins activated or reloaded after `build()` plan new intents. `PluginManager.registeredPlanners()` now returns an immutable snapshot that is replaced on every change. A JAR plugin's capabilities are registered wrapped, so `CapabilityRegistry.find` returns a wrapper rather than the plugin's own instance. A capability or planner provider that throws during activation now leaves the plugin `FAILED` with nothing registered, instead of stuck in `INITIALIZING` with some capabilities registered ([#43](https://github.com/iamvirul/nexora/issues/43))
+
+---
+
+## [0.4.0] - 2026-11-01
+### Added
+
 #### Persistence
 - **Schema migrations with Flyway** - `JdbcExecutionStore` applies versioned migrations from `db/nexora/migration` during construction, before any query, and records them in `nexora_schema_history`. The location and table are namespaced so an application's own Flyway on the same database never picks them up. `V1__initial_schema.sql` holds the previous DDL. A failed or edited migration makes construction throw `IllegalStateException` naming the script. Stores created by earlier releases are baselined at version 0 and adopted in place, keeping their data. Migrations run over separate connections when the store owns its pool; a caller-supplied `DataSource` must allow at least two connections. Naming and authoring rules are in `CONTRIBUTING.md` ([#29](https://github.com/iamvirul/nexora/issues/29))
 - **Step outputs are stored** - Each completed step's output is saved with its step record and returned by `ExecutionStore.findById()` as `StepRecord.output()`, a `Map<String, Object>` that is empty when the step returned nothing. A map output is kept as its JSON form and any other value goes under `value`; `java.time` values become ISO-8601 strings. Migration `V2__add_step_output.sql` adds `output_json` and `output_truncated` to `nexora_steps`. Outputs larger than `persistence.stepOutputMaxBytes` in `nexora.json` (`NexoraEngine.Builder.withStepOutputMaxBytes`, default 64 KB) are kept as a truncated `preview`, flagged by `StepRecord.outputTruncated()` and logged at `WARN`, never rejected, and later steps still get the whole value. `0` stores no outputs. An output that cannot be written as JSON is logged and stored as empty, and the step still completes. `GET /api/executions/{id}`, the `/api/process` snapshot (4 KB per step) and both dashboards show the outputs ([#32](https://github.com/iamvirul/nexora/issues/32))
@@ -177,8 +192,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-[Unreleased]: https://github.com/iamvirul/nexora/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/iamvirul/nexora/compare/v0.4.0...HEAD
 [0.1.0]: https://github.com/iamvirul/nexora/releases/tag/v0.1.0
 [0.2.0]: https://github.com/iamvirul/nexora/releases/tag/v0.2.0
 [0.2.1]: https://github.com/iamvirul/nexora/releases/tag/0.2.1
 [0.3.0]: https://github.com/iamvirul/nexora/releases/tag/v0.3.0
+[0.4.0]: https://github.com/iamvirul/nexora/releases/tag/v0.4.0
