@@ -49,6 +49,7 @@
         <module>tests/json-config-demo</module>
         <module>tests/login-demo</module>
         <module>tests/multi-tenant-demo</module>
+        <module>tests/llm-planner-demo</module>
     </modules>
 
     <properties>
