@@ -13,6 +13,8 @@ import com.nexora.spi.CapabilityDescriptor;
 import com.nexora.spi.Planner;
 import com.nexora.spi.PlannerDescriptor;
 import com.nexora.spi.PlanningContext;
+import com.nexora.spi.PlanningDeclinedException;
+import com.nexora.spi.PlanningException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -74,6 +76,69 @@ class CompositePlannerTest {
         CompositePlanner composite = new CompositePlanner(List.of(), () -> null, fallback);
 
         assertThatThrownBy(composite::planners).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void declinedPlannerFallsThroughToTheNextPlanner() {
+        Planner declining = new DecliningPlanner();
+        Planner next = new NamedPlanner("next", 10, true);
+
+        CompositePlanner composite = new CompositePlanner(List.of(declining, next), fallback);
+
+        assertThat(composite.plan(new Intent("goal", Map.of()), CONTEXT).getSteps())
+                .isEmpty();
+    }
+
+    @Test
+    void declinedPlannerFallsBackToRulePlanner() {
+        CompositePlanner composite = new CompositePlanner(List.of(new DecliningPlanner()), fallback);
+
+        assertThat(composite.plan(new Intent("goal", Map.of()), CONTEXT).getSteps())
+                .isEmpty();
+    }
+
+    @Test
+    void otherPlanningFailuresStillPropagate() {
+        CompositePlanner composite = new CompositePlanner(List.of(new FailingPlanner()), fallback);
+
+        assertThatThrownBy(() -> composite.plan(new Intent("goal", Map.of()), CONTEXT))
+                .isInstanceOf(PlanningException.class)
+                .isNotInstanceOf(PlanningDeclinedException.class)
+                .hasMessage("broken");
+    }
+
+    private static final class DecliningPlanner implements Planner {
+        @Override
+        public PlannerDescriptor descriptor() {
+            return new PlannerDescriptor("declining", "declines", 100);
+        }
+
+        @Override
+        public boolean canPlan(Intent intent, PlanningContext context) {
+            return true;
+        }
+
+        @Override
+        public Plan plan(Intent intent, PlanningContext context) {
+            throw new PlanningDeclinedException("model returned an invalid plan");
+        }
+    }
+
+    private static final class FailingPlanner implements Planner {
+        @Override
+        public PlannerDescriptor descriptor() {
+            return new PlannerDescriptor("failing", "fails", 100);
+        }
+
+        @Override
+        public boolean canPlan(Intent intent, PlanningContext context) {
+            return true;
+        }
+
+        @Override
+        public Plan plan(Intent intent, PlanningContext context) {
+            throw new PlanningException("broken");
+        }
     }
 
     private record NamedPlanner(String id, int priority, boolean accepts) implements Planner {

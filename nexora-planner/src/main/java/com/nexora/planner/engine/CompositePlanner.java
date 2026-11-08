@@ -5,12 +5,15 @@ import com.nexora.core.plan.Plan;
 import com.nexora.spi.Planner;
 import com.nexora.spi.PlannerDescriptor;
 import com.nexora.spi.PlanningContext;
+import com.nexora.spi.PlanningDeclinedException;
 import com.nexora.spi.PlanningException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Delegates planning to the highest-priority registered planner that accepts the intent.
@@ -24,6 +27,8 @@ import java.util.function.Supplier;
  * list instance until its contents change; the priority order is recomputed only when it does not.
  */
 public final class CompositePlanner implements Planner {
+
+    private static final Logger log = LoggerFactory.getLogger(CompositePlanner.class);
 
     private static final PlannerDescriptor DESCRIPTOR =
             new PlannerDescriptor("composite-planner", "Priority-ordered composite planner");
@@ -60,11 +65,24 @@ public final class CompositePlanner implements Planner {
         return true;
     }
 
+    /**
+     * Plans with the first planner that accepts the intent. A planner that accepts it but then
+     * throws {@link PlanningDeclinedException} is skipped and the next one is tried, so the fallback
+     * planner still runs; any other exception fails planning.
+     */
     @Override
     public Plan plan(Intent intent, PlanningContext context) {
         for (Planner planner : planners()) {
-            if (planner.canPlan(intent, context)) {
+            if (!planner.canPlan(intent, context)) {
+                continue;
+            }
+            try {
                 return planner.plan(intent, context);
+            } catch (PlanningDeclinedException e) {
+                log.info(
+                        "Planner declined, trying the next one plannerId={} reason={}",
+                        planner.descriptor().id(),
+                        e.getMessage());
             }
         }
         throw new PlanningException("No planner could handle intent: " + intent.getGoal());
