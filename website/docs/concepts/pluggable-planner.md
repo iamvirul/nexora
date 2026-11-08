@@ -38,3 +38,22 @@ NexoraEngine.builder()
     .withPlanner(new MySmartPlanner())
     .build();
 ```
+
+## Declining after `canPlan()`
+
+A planner that accepted an intent but then cannot produce a usable plan, for example because a remote model was unreachable or answered with something invalid, throws `PlanningDeclinedException` from `plan()`. The engine then tries the next planner in priority order, ending with the rule-based planner, instead of failing the execution. Any other `PlanningException` still fails planning.
+
+```java
+@Override
+public Plan plan(Intent intent, PlanningContext context) {
+    try {
+        return askTheModel(intent, context);
+    } catch (ModelUnavailableException e) {
+        throw new PlanningDeclinedException("model unavailable", e);
+    }
+}
+```
+
+## LLM planner
+
+[`nexora-planner-llm`](../llm-planner/overview) is a ready-made planner plugin that plans goals with Anthropic, OpenAI, Gemini or any model on OpenRouter, validates the model's answer, and falls back to the rule-based planner when the answer cannot be used.
