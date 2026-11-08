@@ -74,7 +74,8 @@ public record LlmPlannerConfig(
                 throw new IllegalArgumentException("temperature is not supported by current Claude models;"
                         + " set effort (low, medium, high, xhigh, max) instead");
             }
-            if (temperature < 0 || temperature > MAX_TEMPERATURE) {
+            // NaN fails both comparisons below, so reject non-finite values first.
+            if (!Double.isFinite(temperature) || temperature < 0 || temperature > MAX_TEMPERATURE) {
                 throw new IllegalArgumentException("temperature must be between 0 and 2, got " + temperature);
             }
         }

@@ -20,7 +20,7 @@ Not sure whether it fits your workload? See [Use cases](use-cases).
 
 ## How it works
 
-1. An intent arrives. The engine asks the LLM planner first, ahead of the rule-based planner.
+1. An intent arrives. The engine asks the LLM planner first, ahead of the rule-based planner, for every goal that has at least one capability to plan with. To keep some goals on rules, see [Routing common goals to rules](use-cases#routing-common-goals-to-rules).
 2. The planner sends the model the goal, the capabilities the intent's tenant may use, and the **names** of the values in the intent context. The values themselves never leave your process.
 3. The model answers with a plan as structured JSON. Each provider is asked to enforce the plan's JSON schema.
 4. The planner checks the plan before anything runs: every capability exists, step ids are unique, dependencies form no cycle, each required input is bound, and each binding points at a context value or step output that will exist.
@@ -41,12 +41,12 @@ The model can only arrange your capabilities. It cannot add a capability, call a
    ```java
    NexoraEngine engine = NexoraEngine.builder()
        .withPlugin(myCapabilities)
-       .withPluginJar(Path.of("plugins/nexora-planner-llm-0.5.0-plugin.jar"))
+       .withPluginJar(Path.of("nexora-planner-llm/target/nexora-planner-llm-0.5.0-SNAPSHOT-plugin.jar"))
        .withStepDefinition(...)
        .build();
    ```
 
-   With the CLI, list the JAR under `plugins` in `nexora.json`.
+   The build names the JAR after the project version, for example `nexora-planner-llm-0.5.0-SNAPSHOT-plugin.jar` on a snapshot build. With the CLI, list the JAR under `plugins` in `nexora.json`.
 
 3. Pick a provider and set its key. For example:
 
@@ -106,4 +106,4 @@ WARN LLM planner declined, falling back to the next planner provider=anthropic m
 | `EMPTY` | The response had no text | Usually transient; retry |
 | `CLIENT_ERROR` | An SDK failure nothing recognised (also logged at `ERROR`) | Read the stack trace; report it if it repeats |
 
-Logs carry a hash of the goal, never the goal itself.
+Log lines identify the goal by a hash rather than its text. The `detail` can quote the model's answer, though, and a model may repeat words from the goal in it (for example as an unknown capability id), so treat these logs as you would logs that may contain request text.

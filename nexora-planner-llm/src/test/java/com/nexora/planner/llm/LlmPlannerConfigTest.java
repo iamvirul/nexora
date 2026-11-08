@@ -142,6 +142,17 @@ class LlmPlannerConfigTest {
     }
 
     @Test
+    void nonFiniteTemperatureIsRefused() {
+        env.put("OPENAI_API_KEY", "sk-test");
+        env.put("NEXORA_LLM_MODEL", "some-model");
+        env.put("NEXORA_LLM_TEMPERATURE", "NaN");
+        assertThatThrownBy(this::load).hasMessageContaining("temperature must be between 0 and 2");
+
+        env.put("NEXORA_LLM_TEMPERATURE", "Infinity");
+        assertThatThrownBy(this::load).hasMessageContaining("temperature must be between 0 and 2");
+    }
+
+    @Test
     void effortIsRefusedOutsideAnthropic() {
         env.put("OPENAI_API_KEY", "sk-test");
         env.put("NEXORA_LLM_MODEL", "some-model");

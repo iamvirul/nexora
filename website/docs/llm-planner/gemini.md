@@ -16,7 +16,7 @@ The `gemini` provider plans with Google Gemini models on the Gemini Developer AP
 
    ```bash
    export GEMINI_API_KEY=...
-   export NEXORA_LLM_MODEL=<a Gemini model your project can use>
+   export NEXORA_LLM_MODEL="your-gemini-model-id"   # replace with a model your project can use
    ```
 
 List the models your key can use:

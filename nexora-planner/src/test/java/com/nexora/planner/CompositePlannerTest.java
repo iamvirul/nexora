@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.nexora.core.intent.Intent;
 import com.nexora.core.plan.Plan;
+import com.nexora.core.plan.Step;
 import com.nexora.planner.engine.CompositePlanner;
 import com.nexora.planner.engine.PlannerEngine;
 import com.nexora.planner.engine.RulePlanner;
@@ -81,12 +82,29 @@ class CompositePlannerTest {
     @Test
     void declinedPlannerFallsThroughToTheNextPlanner() {
         Planner declining = new DecliningPlanner();
-        Planner next = new NamedPlanner("next", 10, true);
+        // Returns a real step, so the test fails if the composite skipped it for the (empty) fallback.
+        Planner next = new Planner() {
+            @Override
+            public PlannerDescriptor descriptor() {
+                return new PlannerDescriptor("next", "next", 10);
+            }
+
+            @Override
+            public boolean canPlan(Intent intent, PlanningContext context) {
+                return true;
+            }
+
+            @Override
+            public Plan plan(Intent intent, PlanningContext context) {
+                return new Plan(List.of(Step.of("from-next", "cap")));
+            }
+        };
 
         CompositePlanner composite = new CompositePlanner(List.of(declining, next), fallback);
 
         assertThat(composite.plan(new Intent("goal", Map.of()), CONTEXT).getSteps())
-                .isEmpty();
+                .extracting(Step::id)
+                .containsExactly("from-next");
     }
 
     @Test

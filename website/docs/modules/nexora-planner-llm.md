@@ -21,7 +21,7 @@ mvn package -pl nexora-planner-llm -am
 
 ```java
 NexoraEngine engine = NexoraEngine.builder()
-    .withPluginJar(Path.of("/opt/nexora/plugins/nexora-planner-llm-0.5.0-plugin.jar"))
+    .withPluginJar(Path.of("/opt/nexora/plugins/nexora-planner-llm-0.5.0-SNAPSHOT-plugin.jar"))
     .withPlugin(myCapabilities)
     .withStepDefinition(...)   // still used as the fallback plan
     .build();
@@ -107,7 +107,7 @@ WARN LLM planner declined, falling back to the next planner provider=anthropic m
      goalHash=3f9a1c0e7b2d reason=INVALID_PLAN detail=step 'x' uses unknown capability 'launch_rocket'
 ```
 
-The reason is one of `INVALID_PLAN`, `REJECTED` (bad key, permission, unknown model), `UNAVAILABLE` (rate limit, overload or server error after retries), `NETWORK`, `REFUSED` (including a Gemini safety block), `TRUNCATED`, `EMPTY`, or `CLIENT_ERROR` for an SDK failure no client recognised, which is also logged at `ERROR` with its stack trace. Logs carry a hash of the goal, never the goal itself.
+The reason is one of `INVALID_PLAN`, `REJECTED` (bad key, permission, unknown model), `UNAVAILABLE` (rate limit, overload or server error after retries), `NETWORK`, `REFUSED` (including a Gemini safety block), `TRUNCATED`, `EMPTY`, or `CLIENT_ERROR` for an SDK failure no client recognised, which is also logged at `ERROR` with its stack trace. Log lines identify the goal by a hash rather than its text, but the `detail` can quote the model's answer, which may repeat words from the goal.
 
 On models that support it (`claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-fable-5-1`), Anthropic requests also opt into server-side refusal fallback, so a request the model declines is answered by a fallback model instead.
 

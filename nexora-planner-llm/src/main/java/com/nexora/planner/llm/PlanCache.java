@@ -1,6 +1,8 @@
 package com.nexora.planner.llm;
 
 import com.nexora.core.plan.Plan;
+import com.nexora.spi.CapabilityDescriptor;
+import com.nexora.spi.ParameterDescriptor;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -19,8 +21,10 @@ import java.util.Optional;
  * for a second call. Entries expire after the TTL; past the size bound the least recently used one
  * is dropped. Only valid plans are stored, and plans are immutable, so a hit can be shared.
  *
- * <p>The key is {@code sha256} over the goal, the sorted capability ids and the sorted context
- * names. Context names are part of it because the plan binds inputs to them.
+ * <p>The key is {@code sha256} over the goal, the sorted capability {@link #signature signatures}
+ * and the sorted context names. A signature carries the capability's inputs and outputs as well as
+ * its id, so a plugin reloaded with a changed contract never gets a plan checked against the old
+ * one. Context names are part of the key because the plan binds inputs to them.
  */
 final class PlanCache {
 
@@ -39,7 +43,7 @@ final class PlanCache {
         this.entries = new LinkedHashMap<>(16, 0.75f, true) {
             @Override
             protected boolean removeEldestEntry(Map.Entry<String, Entry> eldest) {
-                return size() > PlanCache.this.maxEntries;
+                return this.size() > PlanCache.this.maxEntries;
             }
         };
     }
@@ -70,9 +74,29 @@ final class PlanCache {
         return entries.size();
     }
 
-    static String key(String goal, Collection<String> capabilityIds, Collection<String> contextNames) {
+    /**
+     * The parts of a capability a plan is checked against: its id, its input names with whether each
+     * is required, and its output names, each list sorted.
+     */
+    static String signature(CapabilityDescriptor capability) {
+        StringBuilder signature = new StringBuilder(capability.id()).append('(');
+        capability.inputParameters().stream()
+                .map(p -> p.name() + (p.required() ? "!" : "?"))
+                .sorted()
+                .forEach(input -> signature.append(input).append(';'));
+        signature.append(")->(");
+        capability.outputParameters().stream()
+                .map(ParameterDescriptor::name)
+                .sorted()
+                .forEach(output -> signature.append(output).append(';'));
+        return signature.append(')').toString();
+    }
+
+    static String key(String goal, Collection<String> capabilitySignatures, Collection<String> contextNames) {
         StringBuilder material = new StringBuilder(goal).append('\n');
-        capabilityIds.stream().sorted().forEach(id -> material.append(id).append(','));
+        capabilitySignatures.stream()
+                .sorted()
+                .forEach(signature -> material.append(signature).append(','));
         material.append('\n');
         contextNames.stream().sorted().forEach(name -> material.append(name).append(','));
         try {

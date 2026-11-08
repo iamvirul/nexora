@@ -83,7 +83,7 @@ public final class LlmPlanner implements Planner {
         Set<String> contextNames = intent.getContext().keySet();
         String key = PlanCache.key(
                 intent.getGoal(),
-                capabilities.stream().map(CapabilityDescriptor::id).toList(),
+                capabilities.stream().map(PlanCache::signature).toList(),
                 contextNames);
         String goalHash = key.substring(0, GOAL_HASH_LENGTH);
 

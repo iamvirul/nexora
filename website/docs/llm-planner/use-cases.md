@@ -33,7 +33,7 @@ Each capability keeps its own permission checks and audit trail. On a multi-tena
 
 ### Long-tail order and commerce flows
 
-The common path, *"process order"*, stays on fast, free rules. The unusual ones go to the model: *"Split ORD-42 into two shipments, charge the deposit now and the balance on delivery."* This is the pattern the [demo](overview#quick-start) shows: rules for the common path, the LLM planner for the rest, with automatic fallback between them.
+Keep the common path, *"process order"*, on fast, free rules, and send the unusual ones to the model: *"Split ORD-42 into two shipments, charge the deposit now and the balance on delivery."* The LLM planner does not leave common goals to rules on its own; add a rule-first planner for them, as in [Routing common goals to rules](#routing-common-goals-to-rules). The [demo](overview#quick-start) shows the two planners' plans for the same goal side by side.
 
 ### Incident runbooks
 
@@ -45,7 +45,7 @@ The common path, *"process order"*, stays on fast, free rules. The unusual ones 
 
 ### Drafting workflows for review
 
-A business user describes a flow in plain language; the planner drafts it. Show the plan for approval, then save the approved one as a fixed [step definition](../modules/nexora-planner) so it runs on rules from then on. The cache means the same request is not re-planned within the TTL.
+A business user describes a flow in plain language; the planner drafts it, and you save the approved flow as fixed [step definitions](../modules/nexora-planner) so it runs on rules from then on. The engine has no plan-only call: `execute(...)` and `submit(...)` plan and then run. To show a plan for approval before anything runs, your application calls the planner itself, using the module as a library (`new LlmPlanner(LlmPlannerPlugin.clientFor(config), config).plan(intent, planningContext)`, with `config` from `LlmPlannerConfig.fromEnvironment()`), and runs the approved plan as step definitions. That approval flow is application code, not something the engine does for you.
 
 ## Where it does not fit
 
@@ -61,9 +61,46 @@ A business user describes a flow in plain language; the planner drafts it. Show 
 - **Mark required inputs.** The planner rejects any plan that leaves a required input unbound, instead of letting the step fail at run time.
 - **Name context values clearly.** The model sees context names like `orderId` and `email`, never their values.
 
+## Routing common goals to rules
+
+The LLM planner accepts every goal that has a capability to plan with, and it runs before the rule-based planner, whatever its priority. The rule-based planner only runs when the LLM planner declines. So to keep common goals off the model, and save its latency and cost, add a planner that claims them first: give it a priority above the LLM planner's (`NEXORA_LLM_PRIORITY`, default `100`) and let it plan those goals from rules.
+
+```java
+PlanRegistry common = new PlanRegistry();
+common.register(StepDefinition.builder("validate", "validate_order")
+        .withMatcher(goal -> goal.contains("order"))
+        .withInput("orderId", InputBinding.fromContext("intent.context.orderId"))
+        .build());
+// ... the other step definitions for your common flows
+
+RulePlanner commonRules = new RulePlanner(new PlannerEngine(common));
+Planner commonGoals = new Planner() {
+    @Override
+    public PlannerDescriptor descriptor() {
+        return new PlannerDescriptor("common-goals", "Rule plans for known goals", 200);
+    }
+
+    @Override
+    public boolean canPlan(Intent intent, PlanningContext context) {
+        return intent.getGoal().startsWith("process order"); // your known goals
+    }
+
+    @Override
+    public Plan plan(Intent intent, PlanningContext context) {
+        return commonRules.plan(intent, context);
+    }
+};
+
+NexoraEngine.builder()
+        .withPlanner(commonGoals)   // priority 200: known goals, rules, no model call
+        .withPluginJar(llmPluginJar) // priority 100: everything else
+        .withStepDefinition(...)    // last: the fallback when the LLM planner declines
+        .build();
+```
+
 ## A rollout that works
 
-1. Keep rule-based step definitions for your top flows.
-2. Add the LLM planner at a higher priority, so it handles everything else.
+1. Keep rule-based step definitions for your top flows, behind a rule-first planner so they never reach the model (see [Routing common goals to rules](#routing-common-goals-to-rules)).
+2. Add the LLM planner for everything else. Your step definitions remain the fallback when it declines.
 3. Watch the `WARN` reasons in your logs ([what they mean](overview#reading-the-logs)). Frequent `INVALID_PLAN` usually points at a vague capability description or missing `outputParameters`.
 4. Promote LLM plans that recur often into rule definitions, so they become fast and deterministic.

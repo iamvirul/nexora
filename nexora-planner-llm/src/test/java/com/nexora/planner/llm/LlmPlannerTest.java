@@ -138,6 +138,32 @@ class LlmPlannerTest {
     }
 
     @Test
+    void changedCapabilityContractMissesTheCache() {
+        client.answers.add(Fixtures.VALID_PLAN);
+        client.answers.add(Fixtures.VALID_PLAN);
+        planner.plan(INTENT, Fixtures.context());
+        // Same ids as before, but send_receipt now also requires an input, as after a plugin reload.
+        var receipt = Fixtures.CAPABILITIES.get(2);
+        var reloaded = new com.nexora.spi.CapabilityDescriptor(
+                receipt.id(),
+                receipt.description(),
+                List.of(
+                        new com.nexora.spi.ParameterDescriptor("orderId", "string", true, null),
+                        new com.nexora.spi.ParameterDescriptor("locale", "string", true, null)),
+                List.of(),
+                true,
+                false);
+
+        assertThatThrownBy(() -> planner.plan(
+                        INTENT,
+                        Fixtures.context(
+                                List.of(Fixtures.CAPABILITIES.get(0), Fixtures.CAPABILITIES.get(1), reloaded))))
+                .isInstanceOf(PlanningDeclinedException.class)
+                .hasMessageContaining("required input 'locale'");
+        assertThat(client.calls.get()).isEqualTo(2);
+    }
+
+    @Test
     void invalidAnswerIsNotCached() {
         client.answers.add("not json");
         client.answers.add(Fixtures.VALID_PLAN);

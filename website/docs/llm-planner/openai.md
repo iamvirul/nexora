@@ -16,7 +16,7 @@ The `openai` provider plans with OpenAI models through the official OpenAI Java 
 
    ```bash
    export OPENAI_API_KEY=sk-...
-   export NEXORA_LLM_MODEL=<an OpenAI model your account can use>
+   export NEXORA_LLM_MODEL="your-openai-model-id"   # replace with a model your account can use
    ```
 
 With only `OPENAI_API_KEY` set, the planner selects OpenAI; with several keys set, add `NEXORA_LLM_PROVIDER=openai` to choose it.

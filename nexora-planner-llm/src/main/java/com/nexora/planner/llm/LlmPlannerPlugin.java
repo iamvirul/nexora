@@ -47,7 +47,12 @@ public final class LlmPlannerPlugin implements NexoraPlugin {
         this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory must not be null");
     }
 
-    static PlanCompletionClient clientFor(LlmPlannerConfig config) {
+    /**
+     * The SDK client for {@code config}'s provider. For using the planner as a library, for example
+     * to preview a plan before running it: {@code new LlmPlanner(clientFor(config), config).plan(...)}.
+     * The caller owns the returned client and must close it.
+     */
+    public static PlanCompletionClient clientFor(LlmPlannerConfig config) {
         return switch (config.provider()) {
             case ANTHROPIC -> new AnthropicPlanClient(config);
             case OPENAI, OPENROUTER -> new OpenAiPlanClient(config);

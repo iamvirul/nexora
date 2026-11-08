@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.nexora.core.plan.Plan;
 import com.nexora.core.plan.Step;
+import com.nexora.spi.CapabilityDescriptor;
+import com.nexora.spi.ParameterDescriptor;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -75,6 +77,41 @@ class PlanCacheTest {
         assertThat(PlanCache.key("other goal", List.of("a"), List.of("x"))).isNotEqualTo(base);
         assertThat(PlanCache.key("goal", List.of("a", "b"), List.of("x"))).isNotEqualTo(base);
         assertThat(PlanCache.key("goal", List.of("a"), List.of("x", "y"))).isNotEqualTo(base);
+    }
+
+    @Test
+    void signatureChangesWithTheCapabilityContract() {
+        CapabilityDescriptor original =
+                capability(List.of(new ParameterDescriptor("orderId", "string", true, null)), List.of());
+        CapabilityDescriptor newRequiredInput = capability(
+                List.of(
+                        new ParameterDescriptor("orderId", "string", true, null),
+                        new ParameterDescriptor("currency", "string", true, null)),
+                List.of());
+        CapabilityDescriptor inputNowOptional =
+                capability(List.of(new ParameterDescriptor("orderId", "string", false, null)), List.of());
+        CapabilityDescriptor renamedOutput = capability(
+                List.of(new ParameterDescriptor("orderId", "string", true, null)),
+                List.of(new ParameterDescriptor("chargeId", "string", true, null)));
+
+        assertThat(List.of(newRequiredInput, inputNowOptional, renamedOutput))
+                .extracting(PlanCache::signature)
+                .doesNotContain(PlanCache.signature(original))
+                .doesNotHaveDuplicates();
+    }
+
+    @Test
+    void signatureIgnoresParameterOrder() {
+        ParameterDescriptor a = new ParameterDescriptor("a", "string", true, null);
+        ParameterDescriptor b = new ParameterDescriptor("b", "string", false, null);
+
+        assertThat(PlanCache.signature(capability(List.of(a, b), List.of())))
+                .isEqualTo(PlanCache.signature(capability(List.of(b, a), List.of())));
+    }
+
+    private static CapabilityDescriptor capability(
+            List<ParameterDescriptor> inputs, List<ParameterDescriptor> outputs) {
+        return new CapabilityDescriptor("charge_card", "Charges", inputs, outputs, true, false);
     }
 
     private static final class MutableClock extends Clock {
