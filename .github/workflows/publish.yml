@@ -4,6 +4,12 @@ name: Publish
 # the GitHub Release. The modules published are those the root pom's release profile does not
 # exclude; nexora-all is the BOM listing them.
 #
+# Two ways to release:
+#   - push a v* tag: that commit is built and published.
+#   - run it from the Actions tab on main with a tag name. An existing tag is built as is (a re-run);
+#     a new one is created on the main commit built, only after Central accepts the upload, and the
+#     container image workflow is started for it (tags created by this workflow trigger nothing).
+#
 # Secrets:
 #   CENTRAL_USERNAME, CENTRAL_TOKEN  a user token generated at central.sonatype.com (Account > Generate User Token)
 #   GPG_PRIVATE_KEY                  the ASCII-armored private signing key, its public key on keys.openpgp.org
@@ -15,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish (e.g. v0.5.0)"
+        description: "Release tag (e.g. v0.5.0). Created on main if it does not exist yet."
         required: true
 
 permissions:
@@ -35,12 +41,45 @@ jobs:
 
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
+      new-tag: ${{ steps.tag.outputs.new-tag }}
 
     steps:
+      - name: Resolve release tag and source
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Not a release tag (vMAJOR.MINOR.PATCH[-suffix]): ${TAG}"
+            exit 1
+          fi
+          # matching-refs is a prefix match (v0.5.0 also matches v0.5.0-rc.1), so compare exactly.
+          if gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${TAG}" --jq '.[].ref' \
+              | grep -qx "refs/tags/${TAG}"; then
+            echo "Tag ${TAG} exists: publishing it."
+            REF="refs/tags/${TAG}"
+            NEW_TAG=false
+          elif [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            echo "Tag ${TAG} does not exist: publishing main at ${GITHUB_SHA}; the tag is created there after the upload."
+            REF="$GITHUB_SHA"
+            NEW_TAG=true
+          else
+            echo "::error::Tag ${TAG} does not exist. Run this workflow from main to create it, or push the tag."
+            exit 1
+          fi
+          {
+            echo "tag=${TAG}"
+            echo "version=${TAG#v}"
+            echo "ref=${REF}"
+            echo "new-tag=${NEW_TAG}"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ steps.tag.outputs.ref }}
 
       # No dependency cache here: this job signs and publishes artifacts, and a cache other runs can
       # write could put a tampered dependency into them.
@@ -68,20 +107,6 @@ jobs:
             echo "::error::Missing repository secrets: ${missing[*]}. See CONTRIBUTING.md, Releases."
             exit 1
           fi
-
-      - name: Resolve release tag and version
-        id: tag
-        env:
-          INPUT_TAG: ${{ inputs.tag }}
-        run: |
-          # The input wins, as it does for checkout above, so the version always matches the source built.
-          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
-            echo "::error::Not a release tag (vMAJOR.MINOR.PATCH[-suffix]): ${TAG}"
-            exit 1
-          fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Set release version in pom
         env:
@@ -124,11 +149,13 @@ jobs:
           printf '%s\n' "$NOTES" > release-notes.txt
 
       # The library jars as built for Central, the CLI jar the container image runs, and the LLM
-      # planner plugin jar to drop into a plugins directory.
+      # planner plugin jar to drop into a plugins directory. A new tag is created here, on the commit
+      # built, so a run that fails earlier leaves no tag behind.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: "Nexora ${{ steps.tag.outputs.tag }}"
           body_path: release-notes.txt
           draft: false
@@ -139,6 +166,33 @@ jobs:
             nexora-planner-llm/target/*-plugin.jar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Container image for a tag this workflow created ─────────────────────────
+  # A tag pushed by a person starts the Container image workflow itself; one created with
+  # GITHUB_TOKEN does not, so start it here.
+  trigger-image:
+    name: Trigger container image build
+    needs: publish
+    if: needs.publish.outputs.new-tag == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Invoke container image workflow
+        uses: actions/github-script@v9
+        env:
+          RELEASED_TAG: ${{ needs.publish.outputs.tag }}
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'docker.yml',
+              ref: 'main',
+              inputs: {
+                tag: process.env.RELEASED_TAG
+              }
+            });
 
   # ── Post-release: open version-bump PR ──────────────────────────────────────
   trigger-version-bump:
