@@ -105,7 +105,7 @@ jobs:
           mvn -B -pl nexora-cli -am package -DskipTests -DskipITs --no-transfer-progress
           docker build -t nexora:ci .
 
-      - uses: helm/kind-action@v1.15.1
+      - uses: helm/kind-action@v1.15.2
         with:
           cluster_name: nexora-ci
 
