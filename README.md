@@ -242,6 +242,10 @@ NexoraEngine.builder()
     .build();
 ```
 
+A planner that accepted an intent but cannot plan it after all throws `PlanningDeclinedException`, and the engine moves on to the next planner, ending with the rule-based one.
+
+`nexora-planner-llm` is a ready-made LLM planner plugin: it plans goals with Anthropic, OpenAI, Gemini or any OpenRouter model through the official SDKs, validates every answer, caches plans, and falls back to the rule-based planner when an answer cannot be used. Configure it with `NEXORA_LLM_PROVIDER`, the provider's API key and `NEXORA_LLM_MODEL`, and try it without a key: `java -jar tests/llm-planner-demo/target/llm-planner-demo.jar --offline`. See the [nexora-planner-llm guide](website/docs/modules/nexora-planner-llm.md).
+
 ## Reactive plan amendment
 
 A capability can reshape the remaining plan by returning amendments alongside its result:

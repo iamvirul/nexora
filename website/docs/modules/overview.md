@@ -18,6 +18,7 @@ nexora-event          ExecutionEvent sealed hierarchy, InProcessEventBus
 nexora-executor       DAG scheduler with amendment support, interceptor pipeline, contract monitor
 nexora-plugin-loader  PluginClassLoader, PluginManager, lifecycle FSM
 nexora-planner        CompositePlanner, RulePlanner, StepDefinition, PlanRegistry
+nexora-planner-llm    LLM planner plugin (Anthropic, OpenAI, OpenRouter, Gemini), shipped as a plugin JAR
 nexora-runtime        ExecutionEngine (ties planner + scheduler together)
 nexora-api            NexoraEngine public facade, builder, NexoraObservability
 nexora-cli            PicoCLI command-line interface + ObserveCommand HTTP server

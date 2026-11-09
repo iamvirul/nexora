@@ -29,6 +29,7 @@
 
         <!-- Domain modules -->
         <module>nexora-planner</module>
+        <module>nexora-planner-llm</module>
         <module>nexora-capabilities</module>
 
         <!-- Saga / compensation — depends on executor, event -->
@@ -48,6 +49,7 @@
         <module>tests/json-config-demo</module>
         <module>tests/login-demo</module>
         <module>tests/multi-tenant-demo</module>
+        <module>tests/llm-planner-demo</module>
     </modules>
 
     <properties>
@@ -81,6 +83,12 @@
         <testcontainers.version>1.21.4</testcontainers.version>
         <postgresql.version>42.7.14</postgresql.version>
         <bucket4j.version>8.21.0</bucket4j.version>
+        <!-- Official LLM provider SDKs, used only by nexora-planner-llm and bundled into its plugin JAR. -->
+        <anthropic-java.version>3.6.0</anthropic-java.version>
+        <openai-java.version>4.101.0</openai-java.version>
+        <google-genai.version>1.80.0</google-genai.version>
+        <!-- Pinned above what google-genai's auth library brings (33.4.0-android, CVE-2026-102554). -->
+        <guava.version>33.7.2-jre</guava.version>
         <!-- Set -DskipITs to skip integration tests, -DskipUTs to run only integration tests. -->
         <skipUTs>false</skipUTs>
         <nexora-retry.version>0.5.0-SNAPSHOT</nexora-retry.version>
@@ -88,6 +96,7 @@
         <nexora-executor.version>0.5.0-SNAPSHOT</nexora-executor.version>
         <nexora-plugin-loader.version>0.5.0-SNAPSHOT</nexora-plugin-loader.version>
         <nexora-planner.version>0.5.0-SNAPSHOT</nexora-planner.version>
+        <nexora-planner-llm.version>0.5.0-SNAPSHOT</nexora-planner-llm.version>
         <nexora-capabilities.version>0.5.0-SNAPSHOT</nexora-capabilities.version>
         <nexora-saga.version>0.5.0-SNAPSHOT</nexora-saga.version>
         <nexora-runtime.version>0.5.0-SNAPSHOT</nexora-runtime.version>
@@ -230,6 +239,31 @@
                 <groupId>com.nexora</groupId>
                 <artifactId>nexora-planner</artifactId>
                 <version>${nexora-planner.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.nexora</groupId>
+                <artifactId>nexora-planner-llm</artifactId>
+                <version>${nexora-planner-llm.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.anthropic</groupId>
+                <artifactId>anthropic-java</artifactId>
+                <version>${anthropic-java.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.openai</groupId>
+                <artifactId>openai-java</artifactId>
+                <version>${openai-java.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.genai</groupId>
+                <artifactId>google-genai</artifactId>
+                <version>${google-genai.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>${guava.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.nexora</groupId>

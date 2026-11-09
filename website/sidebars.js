@@ -34,6 +34,19 @@ const sidebars = {
     },
     {
       type: 'category',
+      label: 'LLM Planner',
+      collapsed: false,
+      items: [
+        'llm-planner/overview',
+        'llm-planner/anthropic',
+        'llm-planner/openai',
+        'llm-planner/openrouter',
+        'llm-planner/gemini',
+        'llm-planner/use-cases',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Modules',
       collapsed: false,
       items: [
@@ -42,6 +55,7 @@ const sidebars = {
         'modules/nexora-core',
         'modules/nexora-plugin-spi',
         'modules/nexora-planner',
+        'modules/nexora-planner-llm',
         'modules/nexora-executor',
         'modules/nexora-registry',
         'modules/nexora-retry',
