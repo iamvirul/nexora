@@ -82,7 +82,7 @@
         <opentelemetry.version>1.67.0</opentelemetry.version>
         <testcontainers.version>1.21.4</testcontainers.version>
         <postgresql.version>42.7.14</postgresql.version>
-        <bucket4j.version>8.21.0</bucket4j.version>
+        <bucket4j.version>8.22.0</bucket4j.version>
         <!-- Official LLM provider SDKs, used only by nexora-planner-llm and bundled into its plugin JAR. -->
         <anthropic-java.version>3.6.0</anthropic-java.version>
         <openai-java.version>4.101.0</openai-java.version>
