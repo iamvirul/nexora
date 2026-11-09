@@ -6,7 +6,45 @@ sidebar_position: 2
 
 # Getting Started
 
-## Build
+## Add Nexora to your project
+
+From 0.5.0 the library modules are on Maven Central under the group `me.virul.nexora`. Import the BOM, `nexora-all`, so every Nexora module resolves to the same version, then add `nexora-api`, which brings in the engine:
+
+```xml
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>me.virul.nexora</groupId>
+            <artifactId>nexora-all</artifactId>
+            <version>0.5.0</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+
+<dependencies>
+    <dependency>
+        <groupId>me.virul.nexora</groupId>
+        <artifactId>nexora-api</artifactId>
+    </dependency>
+</dependencies>
+```
+
+Gradle (Kotlin DSL):
+
+```kotlin
+dependencies {
+    implementation(platform("me.virul.nexora:nexora-all:0.5.0"))
+    implementation("me.virul.nexora:nexora-api")
+}
+```
+
+Add `nexora-tracing-otel` for OpenTelemetry tracing. A plugin built as its own JAR needs only `nexora-plugin-spi`, as `provided` (Gradle: `compileOnly`), since the engine supplies it at runtime. The Java packages are `com.nexora.*`. [nexora-api](./modules/nexora-api.md) shows how to build and run an engine.
+
+The CLI (`nexora.jar`) and the LLM planner plugin JAR are not on Maven Central; download them from the [GitHub Releases](https://github.com/iamvirul/nexora/releases), or build them from source as below.
+
+## Build from source
 
 You can build the project using Maven:
 

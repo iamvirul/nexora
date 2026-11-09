@@ -69,4 +69,24 @@ Check locally with `helm lint --strict deploy/helm/nexora` and `helm template ne
 
 ## Releases
 
-A `v*` tag publishes the Maven modules (`Publish` workflow) and the container image (`Container image` workflow): `ghcr.io/iamvirul/nexora:<version>`, `:<major>.<minor>` and `:latest`. GHCR creates a new package as private, so after the first image is published, set the `nexora` package to public in the repository's GitHub Packages settings; until then, clusters cannot pull the chart's default image.
+A `v*` tag publishes the library modules to Maven Central (`Publish` workflow) and the container image (`Container image` workflow): `ghcr.io/iamvirul/nexora:<version>`, `:<major>.<minor>` and `:latest`. GHCR creates a new package as private, so after the first image is published, set the `nexora` package to public in the repository's GitHub Packages settings; until then, clusters cannot pull the chart's default image.
+
+### Maven Central
+
+The library modules are published under `me.virul.nexora` through the Central Publisher Portal. The `release` profile in the root `pom.xml` adds sources and javadoc JARs, signs everything and uploads it as one bundle; Central publishes it only once every module passes validation. `nexora-cli`, `nexora-planner-llm`, `nexora-capabilities` (no code yet) and the demos under `tests/` are excluded there. `nexora-all` is the BOM: when a module is published or dropped, update both its list and the profile's `excludeArtifacts`.
+
+One-time setup, done by the namespace owner:
+
+1. Sign in at [central.sonatype.com](https://central.sonatype.com) and add the namespace `me.virul`. Verify it with the DNS TXT record it shows, set on `virul.me` itself: `nexora.virul.me` is a CNAME to GitHub Pages and cannot also hold a TXT record. `me.virul` covers `me.virul.nexora`.
+2. Generate a user token (Account > Generate User Token).
+3. Create a signing key, for example `gpg --quick-gen-key "Nexora Releases <you@example.com>" rsa4096 sign 2y`, and publish its public key to `keyserver.ubuntu.com` and `keys.openpgp.org` (`gpg --keyserver <server> --send-keys <fingerprint>`). Central checks signatures against public keyservers.
+4. Add four repository secrets: `CENTRAL_USERNAME` and `CENTRAL_TOKEN` from the token, `GPG_PRIVATE_KEY` from `gpg --armor --export-secret-keys <key id>`, and `GPG_PASSPHRASE`.
+
+A version can be published to Central only once and cannot be removed. To check a release before tagging, build the bundle locally without uploading it:
+
+```bash
+MAVEN_GPG_KEY="$(gpg --armor --export-secret-keys <key id>)" MAVEN_GPG_PASSPHRASE=... \
+  mvn -P release deploy -DskipTests -DskipUpload=true
+```
+
+This needs a `central` server entry in `~/.m2/settings.xml` (any credentials do when not uploading), and a release version: the bundle in `target/central-publishing/central-bundle.zip` is built only for non-SNAPSHOT versions.

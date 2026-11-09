@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/iamvirul/nexora/actions/workflows/ci.yml/badge.svg)](https://github.com/iamvirul/nexora/actions/workflows/ci.yml)
 [![Trivy Scan](https://github.com/iamvirul/nexora/actions/workflows/trivy.yml/badge.svg)](https://github.com/iamvirul/nexora/actions/workflows/trivy.yml)
+[![Maven Central](https://img.shields.io/maven-central/v/me.virul.nexora/nexora-api?label=Maven%20Central)](https://central.sonatype.com/artifact/me.virul.nexora/nexora-api)
 [![Java](https://img.shields.io/badge/Java-21%2B-blue.svg)](https://www.oracle.com/java/)
 [![License](https://img.shields.io/github/license/iamvirul/nexora)](https://github.com/iamvirul/nexora/blob/main/LICENSE)
 [![GitHub last commit](https://img.shields.io/github/last-commit/iamvirul/nexora)](https://github.com/iamvirul/nexora/commits/main)
@@ -46,6 +47,42 @@ At runtime, `validate_order` can inject a new `audit_log` step into that DAG wit
 
 - Java 21
 - Maven 3.9+
+
+## Use it as a library
+
+From 0.5.0 the library modules are on Maven Central under the group `me.virul.nexora`. Import the BOM, `nexora-all`, so every Nexora module resolves to the same version, then add `nexora-api`, which brings in the engine:
+
+```xml
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>me.virul.nexora</groupId>
+            <artifactId>nexora-all</artifactId>
+            <version>0.5.0</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+
+<dependencies>
+    <dependency>
+        <groupId>me.virul.nexora</groupId>
+        <artifactId>nexora-api</artifactId>
+    </dependency>
+</dependencies>
+```
+
+Gradle (Kotlin DSL):
+
+```kotlin
+dependencies {
+    implementation(platform("me.virul.nexora:nexora-all:0.5.0"))
+    implementation("me.virul.nexora:nexora-api")
+}
+```
+
+Add `nexora-tracing-otel` for OpenTelemetry tracing. A plugin built as its own JAR needs only `nexora-plugin-spi`, as `provided` (Gradle: `compileOnly`), since the engine supplies it at runtime. The Java packages are `com.nexora.*`. The CLI (`nexora.jar`) and the LLM planner plugin JAR are not on Maven Central; download them from the [GitHub Releases](https://github.com/iamvirul/nexora/releases).
 
 ## Build
 
