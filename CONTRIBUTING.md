@@ -69,7 +69,7 @@ Check locally with `helm lint --strict deploy/helm/nexora` and `helm template ne
 
 ## Releases
 
-A `v*` tag publishes the library modules to Maven Central (`Publish` workflow) and the container image (`Container image` workflow): `ghcr.io/iamvirul/nexora:<version>`, `:<major>.<minor>` and `:latest`. GHCR creates a new package as private, so after the first image is published, set the `nexora` package to public in the repository's GitHub Packages settings; until then, clusters cannot pull the chart's default image.
+A `v*` tag publishes the library modules to Maven Central (`Publish` workflow) and the container image (`Container image` workflow): `ghcr.io/iamvirul/nexora:<version>`, `:<major>.<minor>` and `:latest`. Instead of pushing the tag, you can run `Publish` from the Actions tab on `main` with the new tag name: it builds `main`, creates the tag and the GitHub Release only after Central accepts the upload, and starts the image build. Run with an existing tag, it publishes that tag again, for example after a failed upload. GHCR creates a new package as private, so after the first image is published, set the `nexora` package to public in the repository's GitHub Packages settings; until then, clusters cannot pull the chart's default image.
 
 ### Maven Central
 
