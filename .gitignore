@@ -4,6 +4,9 @@ target/
 !**/src/test/**/target/
 .kotlin
 
+# flatten-maven-plugin output (nexora-all, the BOM)
+.flattened-pom.xml
+
 ### IntelliJ IDEA ###
 .idea/modules.xml
 .idea/jarRepositories.xml
