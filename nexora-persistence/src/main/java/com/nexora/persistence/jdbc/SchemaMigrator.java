@@ -92,10 +92,10 @@ final class SchemaMigrator {
             try {
                 result = flyway.migrate();
             } catch (FlywayException e) {
-                // Retry only the startup race: an existing but empty history. A real failure either
-                // leaves rows behind (a failed migration, or applied ones that no longer validate) or
-                // no table at all: fail at once, with Flyway's own message, which names the cause.
-                if (attempt >= MAX_ATTEMPTS || !historyIsEmpty(flyway)) {
+                // Retry only what may be a concurrent startup; a missing history, a failed migration on
+                // record or an unreachable database fails at once, with Flyway's message naming the cause.
+                if (attempt >= MAX_ATTEMPTS
+                        || !mayBeConcurrentStartup(flyway.getConfiguration().getDataSource())) {
                     throw new IllegalStateException("Persistence schema migration failed: " + e.getMessage(), e);
                 }
                 log.warn(
@@ -126,18 +126,22 @@ final class SchemaMigrator {
     }
 
     /**
-     * True when the history table exists but has no rows: what another process leaves between
-     * creating the table and recording its baseline, and the only state in which Flyway fails a
-     * concurrent startup. A missing table means this failure had another cause (an unreachable
-     * database, a bad location, broken SQL), and so does anything that stops the check itself; both
-     * fail at once instead of waiting through the retries.
+     * Whether a failed migration may be another process's startup still in progress. The race
+     * leaves the history table created, and by the time this runs the winner may already have
+     * recorded rows, so an empty table is not required. What rules a retry out is evidence of a
+     * real failure: no table at all (nothing else is migrating this database), a migration
+     * recorded as failed, or a check that cannot run, such as an unreachable database.
+     *
+     * <p>A real error that leaves a healthy history, such as an edited migration, is retried too and
+     * fails after the retries with the same message, a short delay at startup only.
      */
-    private static boolean historyIsEmpty(Flyway flyway) {
-        try (Connection conn = flyway.getConfiguration().getDataSource().getConnection()) {
+    static boolean mayBeConcurrentStartup(DataSource dataSource) {
+        try (Connection conn = dataSource.getConnection()) {
             if (!historyTableExists(conn)) {
                 return false;
             }
-            try (PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM \"" + HISTORY_TABLE + "\"");
+            try (PreparedStatement ps = conn.prepareStatement(
+                            "SELECT COUNT(*) FROM \"" + HISTORY_TABLE + "\" WHERE \"success\" = FALSE");
                     ResultSet rs = ps.executeQuery()) {
                 return rs.next() && rs.getLong(1) == 0;
             }

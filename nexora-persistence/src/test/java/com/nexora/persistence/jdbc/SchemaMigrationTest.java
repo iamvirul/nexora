@@ -207,19 +207,45 @@ class SchemaMigrationTest {
         assertFalse(store.isSchemaCurrent());
     }
 
+    // Whether a failed migration is retried as a possible concurrent startup. The race itself runs
+    // end to end in JdbcExecutionStoreConcurrentStartupIT against PostgreSQL.
+
     @Test
-    void emptyHistoryTableLeftByAConcurrentStartupIsRetried() throws SQLException {
-        // The state a racing process leaves behind: the history table created, the baseline not yet
-        // recorded. Here nobody completes it, so every attempt fails; what matters is that it retried.
-        execute("CREATE TABLE \"nexora_schema_history\" (\"installed_rank\" INT PRIMARY KEY)");
-        long started = System.nanoTime();
+    void noHistoryTableIsNotARetry() {
+        assertFalse(SchemaMigrator.mayBeConcurrentStartup(database));
+    }
 
-        IllegalStateException error = assertThrows(IllegalStateException.class, () -> new JdbcExecutionStore(database));
+    @Test
+    void emptyHistoryTableIsARetry() throws SQLException {
+        createHistoryTable();
 
-        long elapsedMs = (System.nanoTime() - started) / 1_000_000;
-        assertTrue(error.getMessage().startsWith("Persistence schema migration failed"), error.getMessage());
-        // Four pauses of at least 200, 400, 600 and 800 ms come before the last attempt.
-        assertTrue(elapsedMs >= 2_000, "failed after " + elapsedMs + " ms, so it did not retry");
+        assertTrue(SchemaMigrator.mayBeConcurrentStartup(database));
+    }
+
+    @Test
+    void historyWithOnlySuccessfulRowsIsARetry() throws SQLException {
+        // The winner of the race may have recorded its baseline before the loser looks.
+        createHistoryTable();
+        recordHistoryRow(true);
+
+        assertTrue(SchemaMigrator.mayBeConcurrentStartup(database));
+    }
+
+    @Test
+    void recordedFailedMigrationIsNotARetry() throws SQLException {
+        createHistoryTable();
+        recordHistoryRow(true);
+        recordHistoryRow(false);
+
+        assertFalse(SchemaMigrator.mayBeConcurrentStartup(database));
+    }
+
+    @Test
+    void unreadableDatabaseIsNotARetry() {
+        JdbcDataSource unreachable = new JdbcDataSource();
+        unreachable.setURL("jdbc:h2:mem:absent_" + System.nanoTime() + ";IFEXISTS=TRUE");
+
+        assertFalse(SchemaMigrator.mayBeConcurrentStartup(unreachable));
     }
 
     @Test
@@ -309,6 +335,25 @@ class SchemaMigrationTest {
             }
         }
         return tenants;
+    }
+
+    /** Flyway's history table layout, as a process that won the race would have created it. */
+    private void createHistoryTable() throws SQLException {
+        execute("CREATE TABLE \"nexora_schema_history\" (\"installed_rank\" INT PRIMARY KEY,"
+                + " \"version\" VARCHAR(50), \"description\" VARCHAR(200) NOT NULL, \"type\" VARCHAR(20) NOT NULL,"
+                + " \"script\" VARCHAR(1000) NOT NULL, \"checksum\" INT, \"installed_by\" VARCHAR(100) NOT NULL,"
+                + " \"installed_on\" TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL, \"execution_time\" INT NOT NULL,"
+                + " \"success\" BOOLEAN NOT NULL)");
+    }
+
+    private int historyRows = 0;
+
+    private void recordHistoryRow(boolean success) throws SQLException {
+        historyRows++;
+        execute("INSERT INTO \"nexora_schema_history\" (\"installed_rank\", \"version\", \"description\","
+                + " \"type\", \"script\", \"installed_by\", \"execution_time\", \"success\") VALUES (" + historyRows
+                + ", '" + historyRows + "', 'test', 'SQL', 'V" + historyRows + "__test.sql', 'test', 0, " + success
+                + ")");
     }
 
     private void execute(String sql) throws SQLException {
