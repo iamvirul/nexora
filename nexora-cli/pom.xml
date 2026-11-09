@@ -2,15 +2,20 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>com.nexora</groupId>
+        <groupId>me.virul.nexora</groupId>
         <artifactId>nexora</artifactId>
         <version>0.5.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>nexora-cli</artifactId>
+    <name>Nexora CLI</name>
     <description>Command-line interface and built-in observability HTTP server.</description>
 
     <properties>
+        <!-- Not published to Maven Central (excluded in the root release profile): skip the release extras. -->
+        <maven.source.skip>true</maven.source.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <gpg.skip>true</gpg.skip>
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -18,11 +23,11 @@
 
     <dependencies>
         <dependency>
-            <groupId>com.nexora</groupId>
+            <groupId>me.virul.nexora</groupId>
             <artifactId>nexora-api</artifactId>
             </dependency>
         <dependency>
-            <groupId>com.nexora</groupId>
+            <groupId>me.virul.nexora</groupId>
             <artifactId>nexora-tracing-otel</artifactId>
             </dependency>
         <dependency>

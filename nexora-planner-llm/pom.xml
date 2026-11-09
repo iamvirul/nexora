@@ -2,15 +2,20 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>com.nexora</groupId>
+        <groupId>me.virul.nexora</groupId>
         <artifactId>nexora</artifactId>
         <version>0.5.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>nexora-planner-llm</artifactId>
+    <name>Nexora LLM Planner</name>
     <description>Reference planner plugin that turns a natural-language goal into a plan DAG with an LLM (Anthropic, OpenAI, OpenRouter or Gemini).</description>
 
     <properties>
+        <!-- Not published to Maven Central (excluded in the root release profile): skip the release extras. -->
+        <maven.source.skip>true</maven.source.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <gpg.skip>true</gpg.skip>
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -19,12 +24,12 @@
     <dependencies>
         <!-- Provided by the engine at runtime: PluginClassLoader delegates these packages to the host. -->
         <dependency>
-            <groupId>com.nexora</groupId>
+            <groupId>me.virul.nexora</groupId>
             <artifactId>nexora-plugin-spi</artifactId>
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>com.nexora</groupId>
+            <groupId>me.virul.nexora</groupId>
             <artifactId>nexora-core</artifactId>
             <scope>provided</scope>
         </dependency>
@@ -51,7 +56,7 @@
             <artifactId>jackson-databind</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.nexora</groupId>
+            <groupId>me.virul.nexora</groupId>
             <artifactId>nexora-api</artifactId>
             <scope>test</scope>
         </dependency>

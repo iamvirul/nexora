@@ -1,5 +1,13 @@
 name: Publish
 
+# Publishes the library modules to Maven Central under me.virul.nexora for a release tag, then creates
+# the GitHub Release. The modules published are those the root pom's release profile does not
+# exclude; nexora-all is the BOM listing them.
+#
+# Secrets:
+#   CENTRAL_USERNAME, CENTRAL_TOKEN  a user token generated at central.sonatype.com (Account > Generate User Token)
+#   GPG_PRIVATE_KEY                  the ASCII-armored private signing key, its public key on keys.openpgp.org
+#   GPG_PASSPHRASE                   that key's passphrase
 on:
   push:
     tags:
@@ -7,17 +15,23 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.2.0)"
+        description: "Release tag to publish (e.g. v0.5.0)"
         required: true
+
+permissions:
+  contents: read
+
+# A version can be published to Central only once; never run two publishes of one tag together.
+concurrency:
+  group: publish-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   publish:
-    name: Publish modules to GitHub Packages
+    name: Publish to Maven Central
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      packages: write
-      pull-requests: write
 
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
@@ -25,150 +39,92 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
 
+      # No dependency cache here: this job signs and publishes artifacts, and a cache other runs can
+      # write could put a tampered dependency into them.
       - name: Set up JDK 21
         uses: actions/setup-java@v6
         with:
           java-version: "21"
           distribution: temurin
-          cache: maven
-          server-id: github
-          server-username: GITHUB_ACTOR
-          server-password: GITHUB_TOKEN
+          server-id: central
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_TOKEN
 
-      # Resolve tag from push event or manual input, then strip SNAPSHOT from pom
-      - name: Resolve release tag and version
-        id: tag
+      - name: Check publishing secrets
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
-          TAG="${GITHUB_REF_NAME:-}"
-          if [ -z "$TAG" ] || [[ "$TAG" != v* ]]; then
-            TAG="${{ inputs.tag }}"
-          fi
-          if [ -z "$TAG" ]; then
-            echo "No tag provided." >&2
+          missing=()
+          for name in CENTRAL_USERNAME CENTRAL_TOKEN GPG_PRIVATE_KEY GPG_PASSPHRASE; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing repository secrets: ${missing[*]}. See CONTRIBUTING.md, Releases."
             exit 1
           fi
-          VERSION="${TAG#v}"
+
+      - name: Resolve release tag and version
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          # The input wins, as it does for checkout above, so the version always matches the source built.
+          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Not a release tag (vMAJOR.MINOR.PATCH[-suffix]): ${TAG}"
+            exit 1
+          fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Releasing ${TAG} (pom version -> ${VERSION})"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Set release version in pom
         env:
           NEW_VERSION: ${{ steps.tag.outputs.version }}
         run: |
-          OLD_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-          mvn versions:set -DnewVersion="${NEW_VERSION}" -DgenerateBackupPoms=false -q
-          # versions:set updates <version> elements but not the individual nexora-*.version
-          # properties in the parent pom — patch those explicitly
+          mvn -B -q versions:set -DnewVersion="${NEW_VERSION}" -DgenerateBackupPoms=false
+          # versions:set updates <version> elements but not the nexora-*.version properties in the
+          # parent pom; patch those explicitly.
           sed -i "s|<nexora-\(.*\)\.version>[^<]*</nexora-\1\.version>|<nexora-\1.version>${NEW_VERSION}</nexora-\1.version>|g" pom.xml
+          # Central refuses SNAPSHOT dependencies, so fail here rather than after the upload.
+          if grep -rl --include=pom.xml -- "-SNAPSHOT" .; then
+            echo "::error::SNAPSHOT versions remain in the files above"
+            exit 1
+          fi
 
-      - name: Build & test all modules
-        run: mvn install --no-transfer-progress
+      # One run builds, tests (unit and integration), signs and uploads. The upload is a single
+      # bundle, published only after Central validates every module in it, so a failure never leaves
+      # half a release on Central.
+      - name: Build, test and publish
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ── Publish each module individually in dependency order ─────────────────
-      - name: Publish root POM
-        run: mvn deploy -N -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-core
-        run: mvn deploy -pl nexora-core -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-plugin-spi
-        run: mvn deploy -pl nexora-plugin-spi -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-registry
-        run: mvn deploy -pl nexora-registry -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-tracing
-        run: mvn deploy -pl nexora-tracing -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-retry
-        run: mvn deploy -pl nexora-retry -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-event
-        run: mvn deploy -pl nexora-event -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-executor
-        run: mvn deploy -pl nexora-executor -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-plugin-loader
-        run: mvn deploy -pl nexora-plugin-loader -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-planner
-        run: mvn deploy -pl nexora-planner -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-capabilities
-        run: mvn deploy -pl nexora-capabilities -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-saga
-        run: mvn deploy -pl nexora-saga -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-persistence
-        run: mvn deploy -pl nexora-persistence -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-runtime
-        run: mvn deploy -pl nexora-runtime -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-api
-        run: mvn deploy -pl nexora-api -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-cli
-        run: mvn deploy -pl nexora-cli -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish nexora-all (shaded bundle)
-        run: mvn deploy -pl nexora-all -DskipTests --no-transfer-progress
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}
+          MAVEN_GPG_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: mvn -B -ntp -P release deploy
 
       # ── GitHub Release ───────────────────────────────────────────────────────
       - name: Extract release notes from CHANGELOG.md
-        id: changelog
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          VERSION="${{ steps.tag.outputs.version }}"
-          NOTES=$(awk "/^## \\[${VERSION}\\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md 2>/dev/null || true)
+          NOTES=$(awk -v v="$VERSION" 'index($0, "## [" v "]") == 1 {found=1; next} found && /^## /{exit} found{print}' CHANGELOG.md)
           if [ -z "$NOTES" ]; then
-            NOTES=$(awk '/^## \[Unreleased\]/{found=1; next} found && /^## /{exit} found{print}' CHANGELOG.md 2>/dev/null || true)
+            NOTES=$(awk '/^## \[Unreleased\]/{found=1; next} found && /^## /{exit} found{print}' CHANGELOG.md)
           fi
           if [ -z "$NOTES" ]; then
-            NOTES="Release ${{ steps.tag.outputs.tag }}"
+            NOTES="Release ${TAG}"
           fi
-          echo "$NOTES" > release-notes.txt
+          printf '%s\n' "$NOTES" > release-notes.txt
 
+      # The library jars as built for Central, the CLI jar the container image runs, and the LLM
+      # planner plugin jar to drop into a plugins directory.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -178,7 +134,9 @@ jobs:
           draft: false
           prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
           files: |
-            nexora-*/target/*.jar
+            nexora-*/target/*-${{ steps.tag.outputs.version }}.jar
+            nexora-cli/target/nexora.jar
+            nexora-planner-llm/target/*-plugin.jar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -189,11 +147,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: write
-      contents: write
-      pull-requests: write
     steps:
       - name: Invoke bump-version workflow
         uses: actions/github-script@v9
+        env:
+          RELEASED_TAG: ${{ needs.publish.outputs.tag }}
         with:
           script: |
             await github.rest.actions.createWorkflowDispatch({
@@ -202,6 +160,6 @@ jobs:
               workflow_id: 'bump-version.yml',
               ref: 'main',
               inputs: {
-                released_tag: '${{ needs.publish.outputs.tag }}'
+                released_tag: process.env.RELEASED_TAG
               }
             });
