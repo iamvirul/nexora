@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-plugin-spi</artifactId>
+    <name>Nexora Plugin SPI</name>
     <description>Service Provider Interfaces for Nexora capabilities and planners.</description>
 
     <properties>

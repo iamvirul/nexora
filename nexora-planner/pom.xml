@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-planner</artifactId>
+    <name>Nexora Planner</name>
     <description>Rule-based planner and step definition matching.</description>
 
     <properties>

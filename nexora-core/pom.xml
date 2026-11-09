@@ -10,6 +10,7 @@
     </parent>
 
     <artifactId>nexora-core</artifactId>
+    <name>Nexora Core</name>
     <description>Core domain types and abstractions for the Nexora engine.</description>
 
     <properties>

@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-executor</artifactId>
+    <name>Nexora Executor</name>
     <description>DAG scheduler, capability invoker, and contract monitor.</description>
 
     <properties>

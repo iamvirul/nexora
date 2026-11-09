@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-persistence</artifactId>
+    <name>Nexora Persistence</name>
     <description>Durable execution store implementations (e.g., JDBC/H2).</description>
 
     <properties>

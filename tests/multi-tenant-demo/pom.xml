@@ -15,6 +15,10 @@
     <description>Multi-tenancy with the library: tenants on intents, tenant-only capabilities, per-tenant engines.</description>
 
     <properties>
+        <!-- Not published to Maven Central (excluded in the root release profile): skip the release extras. -->
+        <maven.source.skip>true</maven.source.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <gpg.skip>true</gpg.skip>
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

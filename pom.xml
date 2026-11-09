@@ -1,14 +1,51 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- The inherit.append.path attributes stop Maven appending each module's artifactId to the URLs
+     below, so every published pom points at the project, not at a page that does not exist. -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd"
+         child.project.url.inherit.append.path="false">
     <modelVersion>4.0.0</modelVersion>
 
+    <!-- Maven Central namespace me.virul, verified through a DNS TXT record on virul.me. -->
     <groupId>me.virul.nexora</groupId>
     <artifactId>nexora</artifactId>
+    <name>Nexora</name>
     <description>Nexora is a reactive, intent-based Java execution engine.</description>
     <version>0.5.0-SNAPSHOT</version>
     <packaging>pom</packaging>
+    <url>https://nexora.virul.me</url>
+    <inceptionYear>2026</inceptionYear>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>iamvirul</id>
+            <name>Virul Nirmala Wickramasinghe</name>
+            <url>https://github.com/iamvirul</url>
+        </developer>
+    </developers>
+
+    <scm child.scm.connection.inherit.append.path="false"
+         child.scm.developerConnection.inherit.append.path="false"
+         child.scm.url.inherit.append.path="false">
+        <connection>scm:git:https://github.com/iamvirul/nexora.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/iamvirul/nexora.git</developerConnection>
+        <url>https://github.com/iamvirul/nexora</url>
+        <tag>HEAD</tag>
+    </scm>
+
+    <issueManagement>
+        <system>GitHub</system>
+        <url>https://github.com/iamvirul/nexora/issues</url>
+    </issueManagement>
     <modules>
         <!-- Foundation — no intra-project deps -->
         <module>nexora-core</module>
@@ -107,15 +144,14 @@
         <spotless.version>3.11.0</spotless.version>
         <palantir-java-format.version>2.100.0</palantir-java-format.version>
         <swagger-ui.version>5.34.1</swagger-ui.version>
-    </properties>
 
-    <distributionManagement>
-        <repository>
-            <id>github</id>
-            <name>GitHub Packages</name>
-            <url>https://maven.pkg.github.com/iamvirul/nexora</url>
-        </repository>
-    </distributionManagement>
+        <!-- Release plugins, used by the release profile. -->
+        <maven-source-plugin.version>3.4.0</maven-source-plugin.version>
+        <maven-javadoc-plugin.version>3.12.0</maven-javadoc-plugin.version>
+        <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
+        <central-publishing-plugin.version>0.12.0</central-publishing-plugin.version>
+        <flatten-maven-plugin.version>1.8.0</flatten-maven-plugin.version>
+    </properties>
 
     <build>
         <pluginManagement>
@@ -432,5 +468,94 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <profiles>
+        <!-- Publishes the library modules to Maven Central: `mvn -P release deploy`, run by the Publish
+             workflow on each v* tag. Signing reads the armored private key and its passphrase from
+             MAVEN_GPG_KEY and MAVEN_GPG_PASSPHRASE; the upload uses the Central Portal user token
+             configured as server "central" in settings.xml. -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>${maven-source-plugin.version}</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>${maven-javadoc-plugin.version}</version>
+                        <configuration>
+                            <source>${java.version}</source>
+                            <!-- Undocumented members are allowed; broken HTML and references still fail the release. -->
+                            <doclint>all,-missing</doclint>
+                            <quiet>true</quiet>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>${maven-gpg-plugin.version}</version>
+                        <configuration>
+                            <!-- Bouncy Castle signer: signs from MAVEN_GPG_KEY, no gpg binary or keyring needed. -->
+                            <signer>bc</signer>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>${central-publishing-plugin.version}</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>true</autoPublish>
+                            <waitUntil>published</waitUntil>
+                            <deploymentName>nexora ${project.version}</deploymentName>
+                            <!-- Applications and demos, not libraries: the CLI ships as a GitHub Release
+                                 jar and a container image, the LLM planner as a plugin jar.
+                                 nexora-capabilities has no code yet. -->
+                            <excludeArtifacts>
+                                <artifact>nexora-cli</artifact>
+                                <artifact>nexora-planner-llm</artifact>
+                                <artifact>nexora-capabilities</artifact>
+                                <artifact>json-config-demo</artifact>
+                                <artifact>llm-planner-demo</artifact>
+                                <artifact>login-demo</artifact>
+                                <artifact>multi-tenant-demo</artifact>
+                                <artifact>payment-pipeline</artifact>
+                            </excludeArtifacts>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
 </project>

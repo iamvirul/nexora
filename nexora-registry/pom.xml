@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-registry</artifactId>
+    <name>Nexora Registry</name>
     <description>Thread-safe registry for capabilities and planners.</description>
 
     <properties>

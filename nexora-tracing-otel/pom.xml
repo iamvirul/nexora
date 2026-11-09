@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-tracing-otel</artifactId>
+    <name>Nexora Tracing OpenTelemetry</name>
     <description>OpenTelemetry-backed Tracer/Span implementation, exporting spans over OTLP.</description>
 
     <properties>

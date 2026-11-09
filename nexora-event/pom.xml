@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-event</artifactId>
+    <name>Nexora Event</name>
     <description>Event bus and execution lifecycle events.</description>
 
     <properties>

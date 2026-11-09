@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-retry</artifactId>
+    <name>Nexora Retry</name>
     <description>Retry policies and exponential backoff implementation.</description>
 
     <properties>

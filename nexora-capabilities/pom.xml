@@ -8,9 +8,14 @@
     </parent>
 
     <artifactId>nexora-capabilities</artifactId>
+    <name>Nexora Capabilities</name>
     <description>Built-in capabilities for the Nexora engine.</description>
 
     <properties>
+        <!-- Not published to Maven Central (excluded in the root release profile): no code yet. -->
+        <maven.source.skip>true</maven.source.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <gpg.skip>true</gpg.skip>
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

@@ -8,6 +8,7 @@
     </parent>
 
     <artifactId>nexora-tracing</artifactId>
+    <name>Nexora Tracing</name>
     <description>Tracing abstractions and interceptors for step execution.</description>
 
     <properties>
