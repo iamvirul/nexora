@@ -8,7 +8,7 @@ const config = {
   favicon: 'img/logo.png',
 
   url: 'https://iamvirul.github.io',
-  baseUrl: '/nexora/',
+  baseUrl: '/',
   organizationName: 'iamvirul',
   projectName: 'nexora',
   deploymentBranch: 'gh-pages',
