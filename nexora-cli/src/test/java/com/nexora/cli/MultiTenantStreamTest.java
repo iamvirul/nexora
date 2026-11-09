@@ -57,6 +57,9 @@ class MultiTenantStreamTest {
         BlockingQueue<String> globex = new LinkedBlockingQueue<>();
         WebSocket acmeSocket = connect("acme", acme);
         WebSocket globexSocket = connect("globex", globex);
+        // The client's handshake can finish before the server has registered the connection and its
+        // tenant; a broadcast in that window skips it and the socket would wait for nothing.
+        awaitServerSideOpen(2);
 
         broadcaster.broadcastSnapshot(new ProcessSnapshot(
                 1L, 2, List.of(execution("a-1", "acme"), execution("g-1", "globex"), execution("a-2", "acme"))));
@@ -93,6 +96,19 @@ class MultiTenantStreamTest {
         }
 
         assertTrue(cause instanceof WebSocketHandshakeException, String.valueOf(cause));
+    }
+
+    private void awaitServerSideOpen(int expected) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (broadcaster.getConnections().stream()
+                        .filter(c -> c.isOpen() && c.getAttachment() != null)
+                        .count()
+                < expected) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("the server did not register " + expected + " open connections in time");
+            }
+            Thread.sleep(10);
+        }
     }
 
     /** The broadcaster binds asynchronously; retry until it accepts the authorized connection. */

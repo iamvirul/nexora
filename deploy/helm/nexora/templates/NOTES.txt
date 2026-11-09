@@ -1,0 +1,20 @@
+Nexora {{ include "nexora.imageTag" . }} is starting.
+
+Reach the dashboard and API from your machine (both ports: the dashboard's live stream uses the second):
+
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "nexora.fullname" . }} {{ .Values.service.httpPort }} {{ include "nexora.websocketPort" . }}
+  open {{ if .Values.tls.enabled }}https{{ else }}http{{ end }}://localhost:{{ .Values.service.httpPort }}
+
+Sign in with the API key from Secret {{ include "nexora.apiKeySecretName" . }} (key {{ .Values.apiKey.secretKey }}):
+
+  kubectl --namespace {{ .Release.Namespace }} get secret {{ include "nexora.apiKeySecretName" . }} -o jsonpath='{.data.{{ .Values.apiKey.secretKey }}}' | base64 -d
+
+Persistence: {{ .Values.persistence.mode }}{{ if eq .Values.persistence.mode "h2" }} (embedded H2 on PersistentVolumeClaim {{ default (printf "%s-data" (include "nexora.fullname" .)) .Values.persistence.h2.existingClaim }}; kept on uninstall){{ else if eq .Values.persistence.mode "none" }} (in memory: history, replay and schedules are lost on restart){{ end }}.
+{{- if or (gt (int .Values.replicaCount) 1) .Values.autoscaling.enabled }}
+
+Note: each pod keeps its own dashboard sessions, running executions, rate-limit counters and cron
+schedules. A cancel, or a dashboard request, that reaches another pod than the one holding the
+execution or session fails, and a schedule fires only on the pod that registered it until the
+others restart. Set service.sessionAffinity=ClientIP, and route by client, before relying on more
+than one replica.
+{{- end }}

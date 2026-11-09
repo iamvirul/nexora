@@ -188,6 +188,8 @@ By default Nexora looks for `nexora.json` in the working directory. Point to a d
 
 A step is included in the plan when its `matchesGoalContains` string appears in the goal. Dependencies between steps are declared in code using `StepDefinition`'s `dependsOn` set.
 
+`executionStore` names an embedded H2 file. To use a database server instead, set the `NEXORA_JDBC_URL` environment variable to its JDBC URL, credentials included, for example `jdbc:postgresql://db:5432/nexora?user=nexora&password=...` (PostgreSQL 15 or later; URL-encode special characters in the password). It is read only from the environment, so it can come from a secret, and setting it together with `executionStore` fails at startup.
+
 ## Using it as a library
 
 ```java
@@ -697,6 +699,27 @@ try (NexoraObservability obs = NexoraObservability.attach(engine)) {
     ProcessSnapshot snapshot = obs.processSnapshot();  // live execution state
 }
 ```
+
+## Deploying on Kubernetes
+
+A Helm chart (`deploy/helm/nexora`) and plain manifests (`deploy/k8s`) run `nexora observe` on Kubernetes, from the `ghcr.io/iamvirul/nexora` image that each release publishes from 0.5.0 on. Before that release, build the image (below) and set `image.repository` and `image.tag`.
+
+```bash
+kubectl create namespace nexora
+kubectl --namespace nexora create secret generic nexora-api-key \
+  --from-literal=api-key="$(openssl rand -base64 36)"
+
+helm install nexora deploy/helm/nexora --namespace nexora
+
+kubectl --namespace nexora port-forward svc/nexora 9464 9465
+open http://localhost:9464
+```
+
+By default it runs one pod with an embedded H2 store on a 1Gi PersistentVolumeClaim, with liveness and readiness probes on `/health/live` and `/health/ready`, and resource requests and limits set. For PostgreSQL, put the JDBC URL in a Secret and set `persistence.mode=jdbc`. HTTPS, a Prometheus `ServiceMonitor`, an HPA and a PodDisruptionBudget are options. See the [chart README](deploy/helm/nexora/README.md) and the [Kubernetes guide](website/docs/deploy/kubernetes.md).
+
+Without Helm: `kubectl apply -f deploy/k8s/namespace.yaml && kubectl --namespace nexora apply -f deploy/k8s/nexora.yaml`, after creating the Secret above.
+
+To build the image yourself: `mvn -pl nexora-cli -am package -DskipTests && docker build -t nexora:dev .`
 
 ## Module layout
 

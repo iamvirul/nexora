@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nexora
+  labels:
+    # The pod runs non-root, without privilege escalation or extra capabilities.
+    pod-security.kubernetes.io/enforce: restricted

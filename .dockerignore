@@ -1,0 +1,3 @@
+# The image only needs the CLI jar; keep the build context small and free of local secrets.
+*
+!nexora-cli/target/nexora.jar

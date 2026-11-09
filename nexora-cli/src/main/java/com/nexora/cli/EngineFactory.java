@@ -8,26 +8,38 @@ import com.nexora.tracing.otel.OtelTracer;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.function.UnaryOperator;
 
 final class EngineFactory {
 
     private EngineFactory() {}
 
     static NexoraEngine fromConfig(CliConfig config) {
+        return fromConfig(config, System::getenv);
+    }
+
+    /** @param env reads environment variables; tests pass their own */
+    static NexoraEngine fromConfig(CliConfig config, UnaryOperator<String> env) {
         String secret = config.webhookSecret != null && !config.webhookSecret.isBlank()
                 ? config.webhookSecret
-                : System.getenv("NEXORA_WEBHOOK_SECRET");
+                : env.apply("NEXORA_WEBHOOK_SECRET");
 
         NexoraEngine.Builder builder =
                 NexoraEngine.builder().withWebhookSecret(secret).withStepOutputMaxBytes(config.stepOutputMaxBytes());
 
-        if (config.executionStore != null && !config.executionStore.isBlank()) {
-            builder.withExecutionStore(JdbcExecutionStore.h2AutoServer(config.executionStore, config.poolConfig()));
+        switch (StoreSelection.resolve(config, env)) {
+            case StoreSelection.JdbcUrl jdbc ->
+                builder.withExecutionStore(new JdbcExecutionStore(jdbc.url(), config.poolConfig()));
+            case StoreSelection.H2File file ->
+                builder.withExecutionStore(JdbcExecutionStore.h2AutoServer(file.path(), config.poolConfig()));
+            case StoreSelection.None() -> {
+                // In-memory only: nothing to open.
+            }
         }
 
         String otlpEndpoint = config.otel.endpoint != null && !config.otel.endpoint.isBlank()
                 ? config.otel.endpoint
-                : System.getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
+                : env.apply("OTEL_EXPORTER_OTLP_ENDPOINT");
         if (otlpEndpoint != null && !otlpEndpoint.isBlank()) {
             builder.withTracer(OtelTracer.forEndpoint(otlpEndpoint));
         }

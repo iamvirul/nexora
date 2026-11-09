@@ -1,0 +1,162 @@
+# Default values for the Nexora observe server.
+#
+# Before installing, create the API key Secret the defaults expect (at least 32 characters):
+#   kubectl create secret generic nexora-api-key --from-literal=api-key="$(openssl rand -base64 36)"
+
+image:
+  repository: ghcr.io/iamvirul/nexora
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# More than one replica needs persistence.mode=jdbc (h2 and none are single-replica). Each pod keeps its own logins, running
+# executions and rate-limit counters in memory, so see the chart README before scaling out.
+replicaCount: 1
+
+# The API key every /api request and the live stream must present.
+apiKey:
+  # Name of an existing Secret holding the key. Recommended.
+  existingSecret: nexora-api-key
+  secretKey: api-key
+  # Or let the chart create the Secret from this value; when set, it takes precedence over
+  # existingSecret. It then lives in your values file and in the Helm release, so use it only for
+  # trials. Changing it with `helm upgrade` restarts the pods.
+  value: ""
+
+persistence:
+  # h2:   embedded H2 file on a PersistentVolumeClaim. Single replica only.
+  # jdbc: an external database (PostgreSQL 15+) named by a JDBC URL kept in a Secret.
+  # none: executions live in memory and are lost on restart; replay and history are unavailable.
+  mode: h2
+  h2:
+    size: 1Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    # Use an existing PersistentVolumeClaim instead of creating one.
+    existingClaim: ""
+  jdbc:
+    # Secret holding the full JDBC URL, credentials included, for example
+    # jdbc:postgresql://postgres:5432/nexora?user=nexora&password=<url-encoded password>
+    existingSecret: ""
+    secretKey: jdbc-url
+    # Or let the chart create the Secret from this value (trials only, as for apiKey.value). Set
+    # this or existingSecret, not both.
+    url: ""
+
+# OTLP/HTTP endpoint for traces, for example http://otel-collector:4318. Empty disables tracing.
+otel:
+  endpoint: ""
+
+# Serve HTTPS and WSS. The Secret is a kubernetes.io/tls Secret (tls.crt, tls.key), such as one
+# cert-manager issues.
+tls:
+  enabled: false
+  existingSecret: ""
+
+# Scope every request and the live stream to one tenant (nexora observe --multi-tenant).
+multiTenant: false
+
+# Dashboard users for username and password sign-in: a Secret holding the users file that
+# `nexora user add` writes. Empty means API key sign-in only.
+users:
+  existingSecret: ""
+  secretKey: observe-users
+
+# Contents of nexora.json: steps, plugins, retry, persistence.pool, observe.rateLimit, ...
+# Do not set executionStore here; persistence.mode decides the store.
+config: {}
+
+# Extra arguments for `nexora observe`, and extra environment variables for the container.
+extraArgs: []
+extraEnv: []
+
+service:
+  type: ClusterIP
+  # The dashboard opens its WebSocket on the HTTP port plus one, so keep both ports and expose them
+  # under the same numbers wherever the dashboard is reached.
+  httpPort: 9464
+  # ClientIP keeps a browser on one pod, which dashboard sessions need when replicaCount > 1.
+  sessionAffinity: None
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+livenessProbe:
+  initialDelaySeconds: 0
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+readinessProbe:
+  initialDelaySeconds: 0
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+# Covers JVM start and schema migrations: up to failureThreshold x periodSeconds.
+startupProbe:
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 30
+
+# Requires persistence.mode=jdbc; see replicaCount.
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+# A pod count or a percentage ("50%", rounded up as Kubernetes does). It must leave at least one
+# replica free to evict (replicaCount, or autoscaling.minReplicas with autoscaling on): otherwise no
+# voluntary disruption is allowed and node drains hang, so the chart refuses it.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# Prometheus Operator ServiceMonitor for /metrics.
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  # Labels your Prometheus selects ServiceMonitors by, for example release: kube-prometheus-stack.
+  labels: {}
+  # Passed through as the endpoint's tlsConfig when tls.enabled, for example a CA to verify.
+  tlsConfig: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # The server never calls the Kubernetes API.
+  automountToken: false
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+terminationGracePeriodSeconds: 30
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL

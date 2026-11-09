@@ -1,0 +1,11 @@
+# HTTPS from a cert-manager style Secret, password sign-in, ServiceMonitor over HTTPS. Used by CI.
+tls:
+  enabled: true
+  existingSecret: nexora-tls
+users:
+  existingSecret: nexora-users
+serviceMonitor:
+  enabled: true
+  tlsConfig:
+    insecureSkipVerify: false
+    serverName: nexora.example.com

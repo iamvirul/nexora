@@ -1,0 +1,160 @@
+name: Helm chart
+
+# Lints and validates deploy/helm/nexora, checks the plain manifests in deploy/k8s are regenerated,
+# and installs the chart on a throwaway kind cluster with an image built from this commit.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/helm.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/helm.yml"
+
+permissions:
+  contents: read
+
+env:
+  HELM_VERSION: v4.3.1
+  CHART: deploy/helm/nexora
+  # ServiceMonitor CRD, so manifests that include one validate against a real schema.
+  PROMETHEUS_OPERATOR_VERSION: v0.94.2
+
+jobs:
+  lint:
+    name: Lint chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: helm lint (defaults and every CI value set)
+        run: |
+          helm lint --strict "$CHART"
+          for values in "$CHART"/ci/*.yaml; do
+            echo "::group::helm lint -f $values"
+            helm lint --strict "$CHART" -f "$values"
+            echo "::endgroup::"
+          done
+
+      - name: Invalid settings are refused
+        run: |
+          refuse() {
+            if helm template t "$CHART" "$@" >/dev/null 2>&1; then
+              echo "::error::chart rendered with invalid settings: $*"
+              exit 1
+            fi
+          }
+          refuse --set replicaCount=2
+          refuse --set autoscaling.enabled=true
+          refuse --set apiKey.existingSecret=
+          refuse --set persistence.mode=jdbc
+          refuse --set persistence.mode=mongo
+          refuse --set tls.enabled=true
+          refuse --set config.executionStore=/x
+          refuse --set persistence.mode=none --set replicaCount=2
+          refuse --set persistence.mode=none --set autoscaling.enabled=true
+          refuse --set podDisruptionBudget.enabled=true
+          refuse --set persistence.mode=jdbc --set persistence.jdbc.existingSecret=db --set persistence.jdbc.url=jdbc:h2:mem:x
+          refuse --set persistence.mode=jdbc --set persistence.jdbc.existingSecret=db --set replicaCount=3 --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.minAvailable=100%
+          refuse --set persistence.mode=jdbc --set persistence.jdbc.existingSecret=db --set replicaCount=3 --set podDisruptionBudget.enabled=true --set-string podDisruptionBudget.minAvailable=two
+          refuse --set persistence.mode=jdbc --set persistence.jdbc.existingSecret=db --set podDisruptionBudget.enabled=true --set autoscaling.enabled=true --set autoscaling.minReplicas=1
+
+      - name: deploy/k8s is generated from the chart
+        run: |
+          deploy/k8s/generate.sh
+          if ! git diff --exit-code -- deploy/k8s; then
+            echo "::error::deploy/k8s/nexora.yaml is out of date with the chart. Run deploy/k8s/generate.sh and commit the result."
+            exit 1
+          fi
+
+  kubernetes:
+    name: Validate and install on kind
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      - name: Build the CLI jar and image
+        run: |
+          mvn -B -pl nexora-cli -am package -DskipTests -DskipITs --no-transfer-progress
+          docker build -t nexora:ci .
+
+      - uses: helm/kind-action@v1.15.1
+        with:
+          cluster_name: nexora-ci
+
+      - name: Install the ServiceMonitor CRD
+        run: |
+          kubectl apply --server-side -f "https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/${PROMETHEUS_OPERATOR_VERSION}/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml"
+
+      - name: kubectl apply --dry-run (client and server) for every value set
+        run: |
+          kubectl create namespace nexora
+          check() {
+            echo "::group::$1"
+            helm template nexora "$CHART" --namespace nexora "${@:2}" | kubectl apply --namespace nexora --dry-run=client -f -
+            helm template nexora "$CHART" --namespace nexora "${@:2}" | kubectl apply --namespace nexora --dry-run=server -f -
+            echo "::endgroup::"
+          }
+          check "defaults"
+          for values in "$CHART"/ci/*.yaml; do
+            check "$values" -f "$values"
+          done
+          echo "::group::deploy/k8s"
+          kubectl apply --namespace nexora --dry-run=client -f deploy/k8s/nexora.yaml
+          kubectl apply --dry-run=server -f deploy/k8s/namespace.yaml
+          echo "::endgroup::"
+
+      - name: Install the chart with the image from this commit
+        run: |
+          kind load docker-image nexora:ci --name nexora-ci
+          kubectl --namespace nexora create secret generic nexora-api-key \
+            --from-literal=api-key="ci-api-key-$(openssl rand -hex 24)"
+          helm install nexora "$CHART" --namespace nexora \
+            --set image.repository=nexora --set image.tag=ci --set image.pullPolicy=Never \
+            --wait --timeout 300s
+
+      - name: Probe the running server
+        run: |
+          kubectl --namespace nexora port-forward svc/nexora 9464:9464 &
+          for _ in $(seq 1 30); do curl -sf http://localhost:9464/health/live >/dev/null && break; sleep 2; done
+          curl -sf http://localhost:9464/health/ready
+          echo
+          status=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9464/api/executions)
+          if [ "$status" != "401" ]; then
+            echo "::error::/api without a key answered $status, expected 401"
+            exit 1
+          fi
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl --namespace nexora get all,pvc,events
+          kubectl --namespace nexora describe pods
+          kubectl --namespace nexora logs -l app.kubernetes.io/name=nexora --tail=200 || true

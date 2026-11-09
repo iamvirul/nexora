@@ -56,3 +56,17 @@ V<version>__<description>.sql
 ## Pull requests
 
 Use the pull request template. If you add or change an observe server endpoint, update `nexora-cli/src/main/resources/openapi.yaml`. `OpenApiSpecTest` fails the build when the spec and the server disagree. The spec's `info.version` is the API's own version, separate from the Nexora version: when your change is the first API change since the last release, bump it by the rules in `website/docs/http-api.md` and add the change to the API changelog there. The docs site publishes the spec to GitHub Pages from `main`.
+
+## Kubernetes chart
+
+The chart lives in `deploy/helm/nexora`. After changing it:
+
+- run `deploy/k8s/generate.sh` and commit `deploy/k8s/nexora.yaml`; the `Helm chart` workflow fails when they differ,
+- bump `version` in `Chart.yaml`; `appVersion` follows the Nexora release and changes with it,
+- add a value set under `deploy/helm/nexora/ci/` for any new option, so CI lints, dry-runs and installs it.
+
+Check locally with `helm lint --strict deploy/helm/nexora` and `helm template nexora deploy/helm/nexora -f <values>`.
+
+## Releases
+
+A `v*` tag publishes the Maven modules (`Publish` workflow) and the container image (`Container image` workflow): `ghcr.io/iamvirul/nexora:<version>`, `:<major>.<minor>` and `:latest`. GHCR creates a new package as private, so after the first image is published, set the `nexora` package to public in the repository's GitHub Packages settings; until then, clusters cannot pull the chart's default image.

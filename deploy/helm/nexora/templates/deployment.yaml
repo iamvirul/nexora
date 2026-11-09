@@ -1,0 +1,187 @@
+{{- include "nexora.validate" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nexora.fullname" . }}
+  labels:
+    {{- include "nexora.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  {{- if eq .Values.persistence.mode "h2" }}
+  # The H2 volume is ReadWriteOnce: the old pod must let go of it before the new one starts.
+  strategy:
+    type: Recreate
+  {{- else }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "nexora.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Roll the pods when nexora.json changes.
+        checksum/config: {{ include "nexora.configJson" . | sha256sum }}
+        {{- if include "nexora.createSecret" . }}
+        # Roll the pods when a chart-created Secret changes, such as a rotated apiKey.value; pods read
+        # it once, as environment variables. A Secret you manage yourself needs its own restart.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "nexora.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "nexora.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountToken }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: nexora
+          image: "{{ .Values.image.repository }}:{{ include "nexora.imageTag" . }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          args:
+            - --config
+            - /etc/nexora/config/nexora.json
+            - observe
+            - --host
+            - 0.0.0.0
+            - --port
+            - {{ .Values.service.httpPort | quote }}
+            {{- if .Values.tls.enabled }}
+            - --tls-cert
+            - /etc/nexora/tls/tls.crt
+            - --tls-key
+            - /etc/nexora/tls/tls.key
+            {{- end }}
+            {{- if .Values.users.existingSecret }}
+            - --users-file
+            - /etc/nexora/users/{{ .Values.users.secretKey }}
+            {{- end }}
+            {{- if .Values.multiTenant }}
+            - --multi-tenant
+            {{- end }}
+            {{- range .Values.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          env:
+            - name: NEXORA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nexora.apiKeySecretName" . }}
+                  key: {{ .Values.apiKey.secretKey }}
+            {{- if eq .Values.persistence.mode "h2" }}
+            - name: NEXORA_JDBC_URL
+              value: {{ include "nexora.h2JdbcUrl" . | quote }}
+            {{- end }}
+            {{- if eq .Values.persistence.mode "jdbc" }}
+            - name: NEXORA_JDBC_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nexora.jdbcSecretName" . }}
+                  key: {{ .Values.persistence.jdbc.secretKey }}
+            {{- end }}
+            {{- if .Values.otel.endpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.httpPort }}
+              protocol: TCP
+            - name: websocket
+              containerPort: {{ include "nexora.websocketPort" . }}
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+              scheme: {{ include "nexora.scheme" . }}
+            {{- toYaml .Values.startupProbe | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+              scheme: {{ include "nexora.scheme" . }}
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+              scheme: {{ include "nexora.scheme" . }}
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nexora/config
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- if eq .Values.persistence.mode "h2" }}
+            - name: data
+              mountPath: /data
+            {{- end }}
+            {{- if .Values.tls.enabled }}
+            - name: tls
+              mountPath: /etc/nexora/tls
+              readOnly: true
+            {{- end }}
+            {{- if .Values.users.existingSecret }}
+            - name: users
+              mountPath: /etc/nexora/users
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "nexora.fullname" . }}
+        - name: tmp
+          emptyDir: {}
+        {{- if eq .Values.persistence.mode "h2" }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-data" (include "nexora.fullname" .)) .Values.persistence.h2.existingClaim }}
+        {{- end }}
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.tls.existingSecret }}
+        {{- end }}
+        {{- if .Values.users.existingSecret }}
+        - name: users
+          secret:
+            secretName: {{ .Values.users.existingSecret }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

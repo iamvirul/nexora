@@ -1,7 +1,8 @@
 Manage recurring cron-based executions.
 
-  Requires a persistence store configured in nexora.json:
+  Requires a persistence store: an embedded H2 file in nexora.json,
     { "executionStore": "./nexora-data" }
+  or a database server named by the NEXORA_JDBC_URL environment variable.
 
   Subcommands
   ───────────

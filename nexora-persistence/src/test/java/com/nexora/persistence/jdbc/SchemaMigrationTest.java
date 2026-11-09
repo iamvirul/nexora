@@ -21,6 +21,10 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.flywaydb.core.api.CoreErrorCode;
+import org.flywaydb.core.api.ErrorDetails;
+import org.flywaydb.core.api.FlywayException;
+import org.flywaydb.core.api.exception.FlywayValidateException;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -207,6 +211,107 @@ class SchemaMigrationTest {
         assertFalse(store.isSchemaCurrent());
     }
 
+    // Whether a failed migration is retried as a possible concurrent startup. The race itself runs
+    // end to end in JdbcExecutionStoreConcurrentStartupIT against PostgreSQL.
+
+    @Test
+    void noHistoryTableIsNotARetry() {
+        assertFalse(SchemaMigrator.mayBeConcurrentStartup(database));
+    }
+
+    @Test
+    void emptyHistoryTableIsARetry() throws SQLException {
+        createHistoryTable();
+
+        assertTrue(SchemaMigrator.mayBeConcurrentStartup(database));
+    }
+
+    @Test
+    void historyWithOnlySuccessfulRowsIsARetry() throws SQLException {
+        // The winner of the race may have recorded its baseline before the loser looks.
+        createHistoryTable();
+        recordHistoryRow(true);
+
+        assertTrue(SchemaMigrator.mayBeConcurrentStartup(database));
+    }
+
+    @Test
+    void recordedFailedMigrationIsNotARetry() throws SQLException {
+        createHistoryTable();
+        recordHistoryRow(true);
+        recordHistoryRow(false);
+
+        assertFalse(SchemaMigrator.mayBeConcurrentStartup(database));
+    }
+
+    @Test
+    void unreadableDatabaseIsNotARetry() {
+        JdbcDataSource unreachable = new JdbcDataSource();
+        unreachable.setURL("jdbc:h2:mem:absent_" + System.nanoTime() + ";IFEXISTS=TRUE");
+
+        assertFalse(SchemaMigrator.mayBeConcurrentStartup(unreachable));
+    }
+
+    @Test
+    void baselineFailureCountsAsBeforeAnyMigrationRan() {
+        // What Flyway throws when the race hits its baseline step: a plain FlywayException.
+        FlywayException race = new FlywayException(
+                "Unable to baseline schema history table \"public\".\"nexora_schema_history\" as it already exists, and is empty.");
+
+        assertTrue(SchemaMigrator.happenedBeforeAnyMigrationRan(race));
+        assertFalse(SchemaMigrator.happenedBeforeAnyMigrationRan(new FlywayValidateException(
+                new ErrorDetails(CoreErrorCode.VALIDATE_ERROR, "checksum mismatch"), "edited")));
+    }
+
+    @Test
+    void failingMigrationScriptIsNotRetried() {
+        long started = System.nanoTime();
+
+        assertThrows(IllegalStateException.class, () -> new JdbcExecutionStore(database, BROKEN_LOCATION));
+
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+        assertTrue(elapsedMs < 1_500, "failed after " + elapsedMs + " ms, so it re-ran the broken script");
+    }
+
+    @Test
+    void failedValidationIsNotRetried() {
+        new JdbcExecutionStore(database);
+        long started = System.nanoTime();
+
+        assertThrows(IllegalStateException.class, () -> new JdbcExecutionStore(database, EDITED_LOCATION));
+
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+        assertTrue(elapsedMs < 1_500, "failed after " + elapsedMs + " ms, so it retried a validation failure");
+    }
+
+    @Test
+    void missingMigrationLocationFailsWithoutRetrying() {
+        long started = System.nanoTime();
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> new JdbcExecutionStore(database, "classpath:db/nexora-test/does-not-exist"));
+
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+        assertTrue(elapsedMs < 1_500, "failed after " + elapsedMs + " ms, so it retried");
+    }
+
+    @Test
+    void unreachableDatabaseFailsWithoutRetrying() {
+        // Nothing listens on port 1, so every connection is refused at once. Only a missing or empty
+        // history table is worth a retry; four retries would add at least 2 seconds of pauses.
+        String unreachable = "jdbc:postgresql://127.0.0.1:1/nexora?connectTimeout=1";
+        long started = System.nanoTime();
+
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class,
+                () -> SchemaMigrator.migrate(unreachable, SchemaMigrator.DEFAULT_LOCATION));
+
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+        assertTrue(error.getMessage().startsWith("Persistence schema migration failed"), error.getMessage());
+        assertTrue(elapsedMs < 1_500, "failed after " + elapsedMs + " ms, so it retried");
+    }
+
     @Test
     void callerPoolTooSmallToMigrateIsRejectedImmediately() {
         try (HikariDataSource onePooled = HikariCPDataSourceFactory.create(
@@ -266,6 +371,25 @@ class SchemaMigrationTest {
             }
         }
         return tenants;
+    }
+
+    /** Flyway's history table layout, as a process that won the race would have created it. */
+    private void createHistoryTable() throws SQLException {
+        execute("CREATE TABLE \"nexora_schema_history\" (\"installed_rank\" INT PRIMARY KEY,"
+                + " \"version\" VARCHAR(50), \"description\" VARCHAR(200) NOT NULL, \"type\" VARCHAR(20) NOT NULL,"
+                + " \"script\" VARCHAR(1000) NOT NULL, \"checksum\" INT, \"installed_by\" VARCHAR(100) NOT NULL,"
+                + " \"installed_on\" TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL, \"execution_time\" INT NOT NULL,"
+                + " \"success\" BOOLEAN NOT NULL)");
+    }
+
+    private int historyRows = 0;
+
+    private void recordHistoryRow(boolean success) throws SQLException {
+        historyRows++;
+        execute("INSERT INTO \"nexora_schema_history\" (\"installed_rank\", \"version\", \"description\","
+                + " \"type\", \"script\", \"installed_by\", \"execution_time\", \"success\") VALUES (" + historyRows
+                + ", '" + historyRows + "', 'test', 'SQL', 'V" + historyRows + "__test.sql', 'test', 0, " + success
+                + ")");
     }
 
     private void execute(String sql) throws SQLException {
