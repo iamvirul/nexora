@@ -7,8 +7,8 @@ const config = {
   tagline: 'Reactive, intent-based Java execution engine',
   favicon: 'img/logo.png',
 
-  url: 'https://iamvirul.github.io',
-  baseUrl: '/nexora/',
+  url: 'https://nexora.virul.me',
+  baseUrl: '/',
   organizationName: 'iamvirul',
   projectName: 'nexora',
   deploymentBranch: 'gh-pages',

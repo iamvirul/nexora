@@ -6,8 +6,8 @@ type: application
 version: 0.1.0
 # The Nexora release the default image tag points at.
 appVersion: "0.5.0"
-home: https://iamvirul.github.io/nexora/
-icon: https://iamvirul.github.io/nexora/img/logo.png
+home: https://nexora.virul.me/
+icon: https://nexora.virul.me/img/logo.png
 sources:
   - https://github.com/iamvirul/nexora
 keywords:

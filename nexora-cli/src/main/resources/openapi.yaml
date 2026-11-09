@@ -26,7 +26,7 @@ info:
 
     `info.version` is the version of this API contract, not of Nexora: it changes only when the
     API does. The changes in each version, and the Nexora release that first serves it, are listed
-    at https://iamvirul.github.io/nexora/docs/http-api.
+    at https://nexora.virul.me/docs/http-api.
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
