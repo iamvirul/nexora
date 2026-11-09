@@ -115,8 +115,9 @@ autoscaling:
   maxReplicas: 5
   targetCPUUtilizationPercentage: 80
 
-# Needs more replicas than minAvailable (replicaCount, or autoscaling.minReplicas with autoscaling on):
-# with one replica and minAvailable 1, no voluntary disruption is allowed and node drains hang.
+# A pod count or a percentage ("50%", rounded up as Kubernetes does). It must leave at least one
+# replica free to evict (replicaCount, or autoscaling.minReplicas with autoscaling on): otherwise no
+# voluntary disruption is allowed and node drains hang, so the chart refuses it.
 podDisruptionBudget:
   enabled: false
   minAvailable: 1

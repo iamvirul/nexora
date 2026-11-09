@@ -124,8 +124,22 @@ Refuses settings that would deploy but not work. Rendered from the Deployment, s
 {{- end }}
 {{- if .Values.podDisruptionBudget.enabled }}
 {{- $replicas := ternary (int .Values.autoscaling.minReplicas) (int .Values.replicaCount) .Values.autoscaling.enabled }}
-{{- if le $replicas (int .Values.podDisruptionBudget.minAvailable) }}
-{{- fail (printf "podDisruptionBudget.minAvailable=%d with %d replica(s) allows no voluntary disruption, so node drains would hang. Run more replicas than minAvailable (replicaCount, or autoscaling.minReplicas with autoscaling on), or leave podDisruptionBudget.enabled=false" (int .Values.podDisruptionBudget.minAvailable) $replicas) }}
+{{- $minAvailable := toString .Values.podDisruptionBudget.minAvailable }}
+{{- $needed := 0 }}
+{{- if hasSuffix "%" $minAvailable }}
+{{- $percent := atoi (trimSuffix "%" $minAvailable) }}
+{{- if or (lt $percent 0) (gt $percent 100) (ne (printf "%d%%" $percent) $minAvailable) }}
+{{- fail (printf "podDisruptionBudget.minAvailable must be a whole number or a percentage from 0%% to 100%%, got %q" $minAvailable) }}
+{{- end }}
+{{- /* Kubernetes rounds a percentage of pods up. */}}
+{{- $needed = div (add (mul $replicas $percent) 99) 100 }}
+{{- else if regexMatch "^[0-9]+$" $minAvailable }}
+{{- $needed = atoi $minAvailable }}
+{{- else }}
+{{- fail (printf "podDisruptionBudget.minAvailable must be a whole number or a percentage from 0%% to 100%%, got %q" $minAvailable) }}
+{{- end }}
+{{- if ge (int $needed) $replicas }}
+{{- fail (printf "podDisruptionBudget.minAvailable=%s keeps %d of %d replica(s), so it allows no voluntary disruption and node drains would hang. Run more replicas (replicaCount, or autoscaling.minReplicas with autoscaling on) or lower minAvailable, or leave podDisruptionBudget.enabled=false" $minAvailable (int $needed) $replicas) }}
 {{- end }}
 {{- end }}
 {{- if and .Values.tls.enabled (not .Values.tls.existingSecret) }}
