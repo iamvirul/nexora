@@ -45,7 +45,21 @@ Keep the common path, *"process order"*, on fast, free rules, and send the unusu
 
 ### Drafting workflows for review
 
-A business user describes a flow in plain language; the planner drafts it, and you save the approved flow as fixed [step definitions](../modules/nexora-planner) so it runs on rules from then on. The engine has no plan-only call: `execute(...)` and `submit(...)` plan and then run. To show a plan for approval before anything runs, your application calls the planner itself, using the module as a library (`new LlmPlanner(LlmPlannerPlugin.clientFor(config), config).plan(intent, planningContext)`, with `config` from `LlmPlannerConfig.fromEnvironment()`), and runs the approved plan as step definitions. That approval flow is application code, not something the engine does for you.
+A business user describes a flow in plain language; the planner drafts it, and you save the approved flow as fixed [step definitions](../modules/nexora-planner).
+
+The engine has no plan-only call: `execute(...)` and `submit(...)` plan and then run. To show a plan for approval before anything runs, call the planner yourself, using the module as a library. The client holds a connection pool and is `AutoCloseable`: close it after planning, as below, or keep one for the application's lifetime and close it at shutdown.
+
+```java
+LlmPlannerConfig config = LlmPlannerConfig.fromEnvironment().orElseThrow();
+try (PlanCompletionClient client = LlmPlannerPlugin.clientFor(config)) {
+    Plan draft = new LlmPlanner(client, config).plan(intent, planningContext);
+    // show the draft for approval; nothing has run
+}
+```
+
+`planningContext` lists the capabilities to plan with, for example those from `engine.listCapabilities(tenantId)`. The approval step itself is application code, not something the engine does for you.
+
+Once a flow is approved and saved, route its goal to those step definitions ahead of the LLM planner, as in [Routing common goals to rules](#routing-common-goals-to-rules). Otherwise the LLM planner, which runs first, plans the goal again and may produce a different plan from the one that was approved.
 
 ## Where it does not fit
 
@@ -74,6 +88,7 @@ common.register(StepDefinition.builder("validate", "validate_order")
 // ... the other step definitions for your common flows
 
 RulePlanner commonRules = new RulePlanner(new PlannerEngine(common));
+Set<String> knownGoals = Set.of("process order"); // the exact goals your rules cover
 Planner commonGoals = new Planner() {
     @Override
     public PlannerDescriptor descriptor() {
@@ -82,7 +97,9 @@ Planner commonGoals = new Planner() {
 
     @Override
     public boolean canPlan(Intent intent, PlanningContext context) {
-        return intent.getGoal().startsWith("process order"); // your known goals
+        // Exact match: a prefix would also claim "process order and split it into two shipments",
+        // and the rule plan would silently drop the extra instruction.
+        return knownGoals.contains(intent.getGoal().strip().toLowerCase(Locale.ROOT));
     }
 
     @Override
@@ -92,6 +109,7 @@ Planner commonGoals = new Planner() {
 };
 
 NexoraEngine.builder()
+        .withPlugin(myCapabilities) // the capabilities both planners plan with
         .withPlanner(commonGoals)   // priority 200: known goals, rules, no model call
         .withPluginJar(llmPluginJar) // priority 100: everything else
         .withStepDefinition(...)    // last: the fallback when the LLM planner declines

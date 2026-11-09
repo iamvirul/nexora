@@ -21,7 +21,8 @@ mvn package -pl nexora-planner-llm -am
 
 ```java
 NexoraEngine engine = NexoraEngine.builder()
-    .withPluginJar(Path.of("/opt/nexora/plugins/nexora-planner-llm-0.5.0-SNAPSHOT-plugin.jar"))
+    // The JAR the build above produced; copy it to your plugins directory for a deployment.
+    .withPluginJar(Path.of("nexora-planner-llm/target/nexora-planner-llm-0.5.0-SNAPSHOT-plugin.jar"))
     .withPlugin(myCapabilities)
     .withStepDefinition(...)   // still used as the fallback plan
     .build();
