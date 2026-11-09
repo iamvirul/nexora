@@ -26,6 +26,7 @@ import java.util.function.Supplier;
  */
 public final class LlmPlannerPlugin implements NexoraPlugin {
 
+    /** The id the plugin registers under, as {@code activePluginIds()} lists it. */
     public static final String PLUGIN_ID = "nexora-planner-llm";
 
     private static final String UNKNOWN_VERSION = "0.0.0-dev";

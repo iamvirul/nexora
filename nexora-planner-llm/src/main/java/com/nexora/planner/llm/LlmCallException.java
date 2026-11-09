@@ -21,16 +21,19 @@ public final class LlmCallException extends RuntimeException {
 
     private final Reason reason;
 
+    /** @param message why the call failed, without the request body or API key */
     public LlmCallException(Reason reason, String message) {
         super(message);
         this.reason = reason;
     }
 
+    /** @param cause the SDK exception that the call failed with */
     public LlmCallException(Reason reason, String message, Throwable cause) {
         super(message, cause);
         this.reason = reason;
     }
 
+    /** The failure category the planner logs as the decline reason. */
     public Reason reason() {
         return reason;
     }

@@ -31,6 +31,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class LlmPlanner implements Planner {
 
+    /** The planner's id in its {@link PlannerDescriptor} and in log lines. */
     public static final String PLANNER_ID = "llm-planner";
 
     private static final Logger log = LoggerFactory.getLogger(LlmPlanner.class);
@@ -50,6 +51,10 @@ public final class LlmPlanner implements Planner {
     /** Counters since the planner was created. */
     public record Stats(long cacheHits, long modelCalls, long declined) {}
 
+    /**
+     * @param client the provider client to plan with; the caller keeps ownership and closes it
+     * @param config the settings the plan cache and descriptor are built from
+     */
     public LlmPlanner(PlanCompletionClient client, LlmPlannerConfig config) {
         this(client, config, Clock.systemUTC());
     }
@@ -127,6 +132,7 @@ public final class LlmPlanner implements Planner {
         }
     }
 
+    /** Cache hits, model calls and declined plans since this planner was created. */
     public Stats stats() {
         return new Stats(cacheHits.get(), modelCalls.get(), declined.get());
     }

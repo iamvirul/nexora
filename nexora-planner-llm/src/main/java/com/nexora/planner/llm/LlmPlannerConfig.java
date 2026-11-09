@@ -44,10 +44,17 @@ public record LlmPlannerConfig(
         int cacheMaxEntries,
         int priority) {
 
+    /** Output limit, including any reasoning; large because current models think before answering. */
     public static final long DEFAULT_MAX_TOKENS = 16_000;
+    /** Per attempt; a slow model delays the submit by up to this, times one plus the retries. */
     public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
+
+    /** SDK retries for rate limits, overload and server errors before the planner falls back. */
     public static final int DEFAULT_MAX_RETRIES = 2;
+    /** How long a valid plan is reused for the same goal, capabilities and context names. */
     public static final Duration DEFAULT_CACHE_TTL = Duration.ofMinutes(10);
+
+    /** Plans kept before the least recently used one is dropped. */
     public static final int DEFAULT_CACHE_MAX_ENTRIES = 1_000;
     /** Above the default plugin planner priority (0), so the LLM planner is tried first. */
     public static final int DEFAULT_PRIORITY = 100;
@@ -58,6 +65,7 @@ public record LlmPlannerConfig(
     private static final String ENV_PREFIX = "NEXORA_LLM_";
     private static final String ANTHROPIC_AUTH_TOKEN = "ANTHROPIC_AUTH_TOKEN";
 
+    /** @throws IllegalArgumentException when a setting is out of range or does not apply to the provider */
     public LlmPlannerConfig {
         Objects.requireNonNull(provider, "provider must not be null");
         Objects.requireNonNull(model, "model must not be null");

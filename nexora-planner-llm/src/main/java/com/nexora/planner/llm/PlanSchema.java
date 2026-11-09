@@ -21,6 +21,7 @@ import java.util.Map;
  */
 public final class PlanSchema {
 
+    /** The schema's name, sent where a provider asks for one (OpenAI's {@code json_schema}). */
     public static final String NAME = "nexora_plan";
 
     static final String SOURCE_LITERAL = "literal";
