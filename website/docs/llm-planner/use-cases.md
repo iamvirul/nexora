@@ -80,12 +80,16 @@ Once a flow is approved and saved, route its goal to those step definitions ahea
 The LLM planner accepts every goal that has a capability to plan with, and it runs before the rule-based planner, whatever its priority. The rule-based planner only runs when the LLM planner declines. So to keep common goals off the model, and save its latency and cost, add a planner that claims them first: give it a priority above the LLM planner's (`NEXORA_LLM_PRIORITY`, default `100`) and let it plan those goals from rules.
 
 ```java
+// One normalization for canPlan and every matcher below. If they disagree, a goal can be claimed
+// here, match no step, and run an empty plan that completes without doing anything.
+UnaryOperator<String> normalize = goal -> goal.strip().toLowerCase(Locale.ROOT);
+
 PlanRegistry common = new PlanRegistry();
 common.register(StepDefinition.builder("validate", "validate_order")
-        .withMatcher(goal -> goal.contains("order"))
+        .withMatcher(goal -> normalize.apply(goal).contains("order"))
         .withInput("orderId", InputBinding.fromContext("intent.context.orderId"))
         .build());
-// ... the other step definitions for your common flows
+// ... the other step definitions for your common flows, each matching through normalize
 
 RulePlanner commonRules = new RulePlanner(new PlannerEngine(common));
 Set<String> knownGoals = Set.of("process order"); // the exact goals your rules cover
@@ -99,7 +103,7 @@ Planner commonGoals = new Planner() {
     public boolean canPlan(Intent intent, PlanningContext context) {
         // Exact match: a prefix would also claim "process order and split it into two shipments",
         // and the rule plan would silently drop the extra instruction.
-        return knownGoals.contains(intent.getGoal().strip().toLowerCase(Locale.ROOT));
+        return knownGoals.contains(normalize.apply(intent.getGoal()));
     }
 
     @Override
