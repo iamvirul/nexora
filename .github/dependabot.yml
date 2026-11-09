@@ -9,6 +9,13 @@ updates:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"] # Ignore major bumps to prevent breakage
 
+  # The Dockerfile's base image (eclipse-temurin JRE), for security patches.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

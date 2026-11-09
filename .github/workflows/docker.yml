@@ -1,0 +1,94 @@
+name: Container image
+
+# Builds the `nexora observe` image for a release tag and pushes it to GitHub Container Registry:
+# ghcr.io/<owner>/nexora:<version>, :<major>.<minor>, and :latest for releases without a pre-release
+# suffix. The Helm chart's default image is this one.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v0.5.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      - name: Resolve release tag and version
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="${GITHUB_REF_NAME:-}"
+          if [[ "$TAG" != v* ]]; then
+            TAG="$INPUT_TAG"
+          fi
+          if [[ "$TAG" != v* ]]; then
+            echo "::error::No release tag (v*) to build" >&2
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      # The jar reports this version on /health, so build it from release-versioned poms, as publish.yml does.
+      - name: Set release version in pom
+        env:
+          NEW_VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          mvn versions:set -DnewVersion="${NEW_VERSION}" -DgenerateBackupPoms=false -q
+          sed -i "s|<nexora-\(.*\)\.version>[^<]*</nexora-\1\.version>|<nexora-\1.version>${NEW_VERSION}</nexora-\1.version>|g" pom.xml
+
+      - name: Build the CLI jar
+        run: mvn -B -pl nexora-cli -am package -DskipTests -DskipITs --no-transfer-progress
+
+      - uses: docker/setup-qemu-action@v4.4.0
+
+      - uses: docker/setup-buildx-action@v4.4.1
+
+      - uses: docker/login-action@v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/nexora
+          tags: |
+            type=semver,pattern={{version}},value=${{ steps.tag.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.tag.outputs.tag }}
+          flavor: |
+            latest=auto
+
+      - uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            NEXORA_VERSION=${{ steps.tag.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
