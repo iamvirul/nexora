@@ -97,7 +97,7 @@ Start a local observability server for Nexora.
       -H "content-type: application/json" \
       -d '{"goal":"process order payment notification","context":{"orderId":"ORD-99"}}'
 
-  Register a nightly cron schedule (requires executionStore in nexora.json):
+  Register a nightly cron schedule (requires a persistence store: executionStore or NEXORA_JDBC_URL):
     curl -H "Authorization: Bearer $NEXORA_API_KEY" -X POST http://localhost:9464/api/schedules \
       -H "content-type: application/json" \
       -d '{"cronExpression":"0 0 * * *","goal":"nightly cleanup","missedFirePolicy":"FIRE_ONCE"}'

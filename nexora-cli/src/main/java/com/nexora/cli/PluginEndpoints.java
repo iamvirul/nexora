@@ -113,7 +113,7 @@ final class PluginEndpoints {
                     exchange,
                     STATUS_UNAVAILABLE,
                     "PERSISTENCE_DISABLED",
-                    "Plugin hot reload requires a persistence store; set executionStore in nexora.json");
+                    "Plugin hot reload requires a persistence store; set executionStore in nexora.json or NEXORA_JDBC_URL");
             return;
         }
         if (!engine.activePluginIds().contains(pluginId)) {

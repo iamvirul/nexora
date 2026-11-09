@@ -536,7 +536,7 @@ paths:
                 $ref: '#/components/schemas/PluginError'
               examples:
                 noStore:
-                  value: { error: { code: PERSISTENCE_DISABLED, message: Plugin hot reload requires a persistence store; set executionStore in nexora.json } }
+                  value: { error: { code: PERSISTENCE_DISABLED, message: Plugin hot reload requires a persistence store; set executionStore in nexora.json or NEXORA_JDBC_URL } }
 
   /api/webhook-deliveries/{executionId}:
     get:
