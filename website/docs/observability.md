@@ -112,7 +112,7 @@ The `nexora_ready` gauge mirrors `/health/ready` (1 = ready, 0 = not ready) and 
 
 ## Execution History API
 
-Read-only access to past and running executions, backed by the persistence store (`executionStore` in `nexora.json`). Without a store these routes return `503`.
+Read-only access to past and running executions, backed by the persistence store (`executionStore` in `nexora.json`, or `NEXORA_JDBC_URL`). Without a store these routes return `503`.
 
 > **Authentication**: these endpoints return execution goals and context, so they require the API key. See [Authentication](#authentication).
 

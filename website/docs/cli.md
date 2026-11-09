@@ -99,6 +99,8 @@ By default Nexora looks for `nexora.json` in the working directory. Point to a d
 
 `persistence.stepOutputMaxBytes` caps the output stored for each completed step, in UTF-8 JSON bytes (default 65536). A larger output is stored as a truncated `preview` and logged at `WARN`; the step still completes, and later steps still receive the whole output. Values from 1 to 255 fail at startup. Set it to `0` to store no outputs, for example when steps return data that must not be written to the database.
 
+`executionStore` names an embedded H2 file. To use a database server instead, set the `NEXORA_JDBC_URL` environment variable to its JDBC URL, credentials included, for example `jdbc:postgresql://db:5432/nexora?user=nexora&password=...`. PostgreSQL 15 or later is supported; URL-encode special characters in the password. The URL is read only from the environment, never from `nexora.json`, so it can come from a secret, and it is never logged. Setting it together with `executionStore` fails at startup.
+
 `plugins` lists plugin JARs to load and activate at startup, in order: put a plugin's required plugins before it. Relative paths resolve against the working directory. A JAR that fails to load stops startup.
 
 A step is included in the plan when its `matchesGoalContains` string appears in the goal. Dependencies between steps are declared in code using `StepDefinition`'s `dependsOn` set.
@@ -125,7 +127,7 @@ The command calls `POST /api/plugins/{pluginId}/reload` with `{"jar": "<path>"}`
 
 ## `nexora schedule`: Cron Scheduling
 
-Requires a persistence store (`executionStore` in `nexora.json` or `withExecutionStore(...)` in code).
+Requires a persistence store: `executionStore` in `nexora.json`, the `NEXORA_JDBC_URL` environment variable, or `withExecutionStore(...)` in code.
 
 ### `schedule add`
 

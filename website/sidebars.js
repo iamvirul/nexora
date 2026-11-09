@@ -84,6 +84,11 @@ const sidebars = {
     },
     {
       type: 'doc',
+      id: 'deploy/kubernetes',
+      label: 'Kubernetes',
+    },
+    {
+      type: 'doc',
       id: 'http-api',
       label: 'HTTP API',
     },
