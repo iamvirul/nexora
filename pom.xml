@@ -71,7 +71,7 @@
         <prometheus.version>0.16.0</prometheus.version>
         <h2.version>2.5.252</h2.version>
         <hikaricp.version>7.1.0</hikaricp.version>
-        <flyway.version>13.12.0</flyway.version>
+        <flyway.version>13.12.1</flyway.version>
         
         <!-- Internal Module Versions -->
         <nexora-core.version>0.5.0-SNAPSHOT</nexora-core.version>
