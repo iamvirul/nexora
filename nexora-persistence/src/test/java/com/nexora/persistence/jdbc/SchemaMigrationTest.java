@@ -21,6 +21,10 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.flywaydb.core.api.CoreErrorCode;
+import org.flywaydb.core.api.ErrorDetails;
+import org.flywaydb.core.api.FlywayException;
+import org.flywaydb.core.api.exception.FlywayValidateException;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -246,6 +250,38 @@ class SchemaMigrationTest {
         unreachable.setURL("jdbc:h2:mem:absent_" + System.nanoTime() + ";IFEXISTS=TRUE");
 
         assertFalse(SchemaMigrator.mayBeConcurrentStartup(unreachable));
+    }
+
+    @Test
+    void baselineFailureCountsAsBeforeAnyMigrationRan() {
+        // What Flyway throws when the race hits its baseline step: a plain FlywayException.
+        FlywayException race = new FlywayException(
+                "Unable to baseline schema history table \"public\".\"nexora_schema_history\" as it already exists, and is empty.");
+
+        assertTrue(SchemaMigrator.happenedBeforeAnyMigrationRan(race));
+        assertFalse(SchemaMigrator.happenedBeforeAnyMigrationRan(new FlywayValidateException(
+                new ErrorDetails(CoreErrorCode.VALIDATE_ERROR, "checksum mismatch"), "edited")));
+    }
+
+    @Test
+    void failingMigrationScriptIsNotRetried() {
+        long started = System.nanoTime();
+
+        assertThrows(IllegalStateException.class, () -> new JdbcExecutionStore(database, BROKEN_LOCATION));
+
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+        assertTrue(elapsedMs < 1_500, "failed after " + elapsedMs + " ms, so it re-ran the broken script");
+    }
+
+    @Test
+    void failedValidationIsNotRetried() {
+        new JdbcExecutionStore(database);
+        long started = System.nanoTime();
+
+        assertThrows(IllegalStateException.class, () -> new JdbcExecutionStore(database, EDITED_LOCATION));
+
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+        assertTrue(elapsedMs < 1_500, "failed after " + elapsedMs + " ms, so it retried a validation failure");
     }
 
     @Test

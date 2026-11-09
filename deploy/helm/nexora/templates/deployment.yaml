@@ -28,6 +28,11 @@ spec:
       annotations:
         # Roll the pods when nexora.json changes.
         checksum/config: {{ include "nexora.configJson" . | sha256sum }}
+        {{- if include "nexora.createSecret" . }}
+        # Roll the pods when a chart-created Secret changes, such as a rotated apiKey.value; pods read
+        # it once, as environment variables. A Secret you manage yourself needs its own restart.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -82,6 +87,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "nexora.apiKeySecretName" . }}
                   key: {{ .Values.apiKey.secretKey }}
+            {{- if eq .Values.persistence.mode "h2" }}
+            - name: NEXORA_JDBC_URL
+              value: {{ include "nexora.h2JdbcUrl" . | quote }}
+            {{- end }}
             {{- if eq .Values.persistence.mode "jdbc" }}
             - name: NEXORA_JDBC_URL
               valueFrom:

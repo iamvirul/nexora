@@ -67,6 +67,7 @@ jobs:
           refuse --set persistence.mode=none --set replicaCount=2
           refuse --set persistence.mode=none --set autoscaling.enabled=true
           refuse --set podDisruptionBudget.enabled=true
+          refuse --set persistence.mode=jdbc --set persistence.jdbc.existingSecret=db --set persistence.jdbc.url=jdbc:h2:mem:x
           refuse --set persistence.mode=jdbc --set persistence.jdbc.existingSecret=db --set podDisruptionBudget.enabled=true --set autoscaling.enabled=true --set autoscaling.minReplicas=1
 
       - name: deploy/k8s is generated from the chart

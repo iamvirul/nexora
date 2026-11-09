@@ -31,9 +31,7 @@ metadata:
     app.kubernetes.io/managed-by: "Helm"
 data:
   nexora.json: |
-    {
-      "executionStore": "/data/nexora"
-    }
+    {}
 
 ---
 # Source: nexora/templates/pvc.yaml
@@ -113,7 +111,7 @@ spec:
     metadata:
       annotations:
         # Roll the pods when nexora.json changes.
-        checksum/config: ac8bc10c157a1dcdd623fb9d6ff7260630be97063665a326190739f50f93161e
+        checksum/config: 44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a
       labels:
         helm.sh/chart: "nexora-0.1.0"
         app.kubernetes.io/name: "nexora"
@@ -156,6 +154,8 @@ spec:
                 secretKeyRef:
                   name: nexora-api-key
                   key: api-key
+            - name: NEXORA_JDBC_URL
+              value: "jdbc:h2:/data/nexora;AUTO_SERVER=TRUE"
           ports:
             - name: http
               containerPort: 9464

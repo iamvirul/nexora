@@ -51,7 +51,7 @@ On a local kind cluster, `kind load docker-image nexora:dev` replaces the push; 
 | ConfigMap | Always. `nexora.json`, built from `config` |
 | ServiceAccount | `serviceAccount.create` (default). No API token is mounted |
 | PersistentVolumeClaim | `persistence.mode=h2` (default), unless `persistence.h2.existingClaim` is set. Kept on `helm uninstall` |
-| Secret | Only for values given inline: `apiKey.value` or `persistence.jdbc.url` |
+| Secret | Only for values given inline: `apiKey.value` (which takes precedence over `apiKey.existingSecret`) or `persistence.jdbc.url`. Changing them with `helm upgrade` restarts the pods |
 | HorizontalPodAutoscaler | `autoscaling.enabled`. Needs `persistence.mode=jdbc` |
 | PodDisruptionBudget | `podDisruptionBudget.enabled`. Needs more replicas than `minAvailable`, or node drains would hang |
 | ServiceMonitor | `serviceMonitor.enabled`. Needs the Prometheus Operator CRDs |
@@ -62,7 +62,7 @@ Probes: startup and liveness on `GET /health/live`, readiness on `GET /health/re
 
 | `persistence.mode` | Store | Replicas |
 |--------------------|-------|----------|
-| `h2` (default) | Embedded H2 file on a ReadWriteOnce PersistentVolumeClaim, mounted at `/data` | One. The Deployment uses the `Recreate` strategy so the old pod releases the volume before the new one starts |
+| `h2` (default) | Embedded H2 file on a ReadWriteOnce PersistentVolumeClaim, mounted at `/data`, passed as `NEXORA_JDBC_URL` | One. The Deployment uses the `Recreate` strategy so the old pod releases the volume before the new one starts |
 | `jdbc` | An external PostgreSQL 15+ database | Any number, see [Scaling out](#scaling-out) |
 | `none` | In memory | One: each pod would have its own history. History, replay, schedules and dead letters are lost on restart |
 
@@ -105,13 +105,14 @@ More than one replica needs `persistence.mode=jdbc`, so every pod shares one sto
 
 - dashboard sessions and user API keys issued at login,
 - running executions, so a cancel request must reach the pod running the execution,
-- rate-limit counters, so each pod allows the full rate.
+- rate-limit counters, so each pod allows the full rate,
+- cron schedules: a schedule fires only on the pod that registered it, and the other pods pick it up only when they restart. If that pod is scaled away or deleted, the schedule does not fire until another pod restarts. Run schedules with a fixed `replicaCount` rather than the HPA, and restart the Deployment after registering schedules (`kubectl rollout restart`) so every pod loads them; each firing is claimed in the store, so it still runs once.
 
 So two replicas behave as two servers over one shared history, not as one server. A dashboard session or cancel that reaches the other pod fails. `service.sessionAffinity=ClientIP` keeps each client on one pod, which covers browsers and the CLI behind a single address. The chart refuses `replicaCount > 1` or `autoscaling.enabled` with `persistence.mode=h2`.
 
 ## Configuration
 
-`config` becomes `nexora.json`: steps, plugins, retry, `persistence.pool`, `observe.rateLimit`. Do not set `executionStore`; `persistence.mode` picks the store. Behind an ingress or load balancer, list its addresses in `observe.rateLimit.trustedProxies` so clients are told apart by `X-Forwarded-For`.
+`config` becomes `nexora.json`: steps, plugins, retry, `persistence.pool`, `observe.rateLimit`. Do not set `executionStore`; `persistence.mode` picks the store. Check `config` carefully: the CLI ignores a `nexora.json` it cannot parse (an unknown or misspelt key) and logs only a warning, so the server runs without your steps or settings. The store is unaffected, since it never comes from `config`. Behind an ingress or load balancer, list its addresses in `observe.rateLimit.trustedProxies` so clients are told apart by `X-Forwarded-For`.
 
 ```yaml
 config:

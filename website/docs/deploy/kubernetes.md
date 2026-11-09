@@ -58,6 +58,6 @@ The server reads it from `NEXORA_JDBC_URL`. URL-encode special characters in the
 
 ## Running more than one replica
 
-More than one replica needs PostgreSQL (`persistence.mode=jdbc`); the chart refuses it with H2. Each pod still keeps dashboard sessions, running executions and rate-limit counters in its own memory, so replicas share history but not sessions: a dashboard request or cancel that lands on another pod fails. Use `service.sessionAffinity=ClientIP` so each client stays on one pod, and treat the HPA and PodDisruptionBudget (both off by default) as options for that setup.
+More than one replica needs PostgreSQL (`persistence.mode=jdbc`); the chart refuses it with H2. Each pod still keeps dashboard sessions, running executions, rate-limit counters and cron schedules in its own memory, so replicas share history but not sessions: a dashboard request or cancel that lands on another pod fails, and a schedule fires only on the pod that registered it until the others restart. Use `service.sessionAffinity=ClientIP` so each client stays on one pod, and treat the HPA and PodDisruptionBudget (both off by default) as options for that setup.
 
 Replicas starting together on an empty database apply the schema migrations once; the rest wait or retry briefly, then start.

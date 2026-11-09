@@ -54,8 +54,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
 {{- printf "%s-secrets" (include "nexora.fullname" .) }}
 {{- end }}
 
+{{/* An inline apiKey.value wins over existingSecret, whose non-empty default would otherwise hide it. */}}
 {{- define "nexora.apiKeySecretName" -}}
-{{- default (include "nexora.secretName" .) .Values.apiKey.existingSecret }}
+{{- if .Values.apiKey.value }}{{ include "nexora.secretName" . }}{{ else }}{{ .Values.apiKey.existingSecret }}{{ end }}
 {{- end }}
 
 {{- define "nexora.jdbcSecretName" -}}
@@ -63,7 +64,16 @@ app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
 {{- end }}
 
 {{- define "nexora.createSecret" -}}
-{{- if or (and (not .Values.apiKey.existingSecret) .Values.apiKey.value) (and (eq .Values.persistence.mode "jdbc") (not .Values.persistence.jdbc.existingSecret) .Values.persistence.jdbc.url) }}true{{- end }}
+{{- if or .Values.apiKey.value (and (eq .Values.persistence.mode "jdbc") .Values.persistence.jdbc.url) }}true{{- end }}
+{{- end }}
+
+{{/*
+The embedded H2 store, as the URL the CLI builds for executionStore. Passed in the environment, not in
+nexora.json: the CLI drops an unparseable nexora.json for its defaults, and a typo in `config` would then
+drop the store with it, leaving the pod serving from memory.
+*/}}
+{{- define "nexora.h2JdbcUrl" -}}
+jdbc:h2:/data/nexora;AUTO_SERVER=TRUE
 {{- end }}
 
 {{/* The WebSocket port is fixed by the server: the HTTP port plus one. */}}
@@ -75,13 +85,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
 {{- if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
 {{- end }}
 
-{{/* nexora.json: the user's config, plus the H2 file location when persistence.mode is h2. */}}
+{{/* nexora.json: the user's config as given. The store never goes in it; see nexora.h2JdbcUrl. */}}
 {{- define "nexora.configJson" -}}
-{{- $config := deepCopy (.Values.config | default dict) }}
-{{- if eq .Values.persistence.mode "h2" }}
-{{- $_ := set $config "executionStore" "/data/nexora" }}
-{{- end }}
-{{- toPrettyJson $config }}
+{{- toPrettyJson (.Values.config | default dict) }}
 {{- end }}
 
 {{/*
@@ -103,6 +109,9 @@ Refuses settings that would deploy but not work. Rendered from the Deployment, s
 {{- fail "Do not set executionStore in config; persistence.mode chooses the store" }}
 {{- end }}
 {{- if eq $mode "jdbc" }}
+{{- if and .Values.persistence.jdbc.existingSecret .Values.persistence.jdbc.url }}
+{{- fail "Set one of persistence.jdbc.existingSecret and persistence.jdbc.url, not both" }}
+{{- end }}
 {{- if and (not .Values.persistence.jdbc.existingSecret) (not .Values.persistence.jdbc.url) }}
 {{- fail "persistence.mode=jdbc needs persistence.jdbc.existingSecret (a Secret with the JDBC URL) or persistence.jdbc.url" }}
 {{- end }}

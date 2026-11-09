@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexora.api.NexoraEngine;
 import java.io.File;
 import java.util.concurrent.Callable;
+import java.util.function.UnaryOperator;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Model.CommandSpec;
@@ -34,6 +35,7 @@ import picocli.CommandLine.Spec;
 public class NexoraCli implements Callable<Integer> {
 
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final int EXIT_USAGE = 2;
 
     @Spec
     CommandSpec spec;
@@ -71,12 +73,39 @@ public class NexoraCli implements Callable<Integer> {
         return _config;
     }
 
-    /** Returns a shared engine wired from the loaded config. */
+    /**
+     * Returns a shared engine wired from the loaded config.
+     *
+     * @throws EngineStartupException if the config does not describe an engine that can start, such
+     *     as a store that cannot be opened
+     */
     NexoraEngine engine() {
         if (_engine == null) {
-            _engine = EngineFactory.fromConfig(config());
+            _engine = startEngine(config(), System::getenv);
         }
         return _engine;
+    }
+
+    static NexoraEngine startEngine(CliConfig config, UnaryOperator<String> env) {
+        try {
+            return EngineFactory.fromConfig(config, env);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            throw EngineStartupException.of(e);
+        }
+    }
+
+    /**
+     * Prints an {@link EngineStartupException} as one line and exits 2, like other configuration
+     * errors. Anything else is a bug and keeps picocli's default handling, the stack trace included.
+     */
+    static CommandLine withStartupErrorHandling(CommandLine cmd) {
+        return cmd.setExecutionExceptionHandler((ex, commandLine, parseResult) -> {
+            if (ex instanceof EngineStartupException startup) {
+                commandLine.getErr().println("Error: " + startup.getMessage());
+                return EXIT_USAGE;
+            }
+            throw ex;
+        });
     }
 
     /** Root command with no subcommand — print help. */
@@ -87,9 +116,9 @@ public class NexoraCli implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
-        CommandLine cmd = new CommandLine(new NexoraCli())
+        CommandLine cmd = withStartupErrorHandling(new CommandLine(new NexoraCli())
                 .setCaseInsensitiveEnumValuesAllowed(true)
-                .setUsageHelpAutoWidth(true);
+                .setUsageHelpAutoWidth(true));
         HelpLoader.apply(cmd);
         System.exit(cmd.execute(args));
     }

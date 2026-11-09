@@ -19,11 +19,12 @@ replicaCount: 1
 
 # The API key every /api request and the live stream must present.
 apiKey:
-  # Name of an existing Secret holding the key. Recommended. Set it to "" to use value instead.
+  # Name of an existing Secret holding the key. Recommended.
   existingSecret: nexora-api-key
   secretKey: api-key
-  # Or let the chart create the Secret from this value. It then lives in your values file and in
-  # the Helm release, so use it only for trials.
+  # Or let the chart create the Secret from this value; when set, it takes precedence over
+  # existingSecret. It then lives in your values file and in the Helm release, so use it only for
+  # trials. Changing it with `helm upgrade` restarts the pods.
   value: ""
 
 persistence:
@@ -43,7 +44,8 @@ persistence:
     # jdbc:postgresql://postgres:5432/nexora?user=nexora&password=<url-encoded password>
     existingSecret: ""
     secretKey: jdbc-url
-    # Or let the chart create the Secret from this value (trials only, as for apiKey.value).
+    # Or let the chart create the Secret from this value (trials only, as for apiKey.value). Set
+    # this or existingSecret, not both.
     url: ""
 
 # OTLP/HTTP endpoint for traces, for example http://otel-collector:4318. Empty disables tracing.

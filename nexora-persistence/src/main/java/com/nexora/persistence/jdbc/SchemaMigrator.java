@@ -12,7 +12,10 @@ import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.flywaydb.core.api.MigrationVersion;
 import org.flywaydb.core.api.configuration.FluentConfiguration;
+import org.flywaydb.core.api.exception.FlywayValidateException;
 import org.flywaydb.core.api.output.MigrateResult;
+// Internal to Flyway: an upgrade that moves it fails the build here, rather than silently retrying failed scripts.
+import org.flywaydb.core.internal.exception.FlywayMigrateException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -92,9 +95,10 @@ final class SchemaMigrator {
             try {
                 result = flyway.migrate();
             } catch (FlywayException e) {
-                // Retry only what may be a concurrent startup; a missing history, a failed migration on
-                // record or an unreachable database fails at once, with Flyway's message naming the cause.
+                // Retry only what may be a concurrent startup; anything else fails at once, with
+                // Flyway's message naming the cause.
                 if (attempt >= MAX_ATTEMPTS
+                        || !happenedBeforeAnyMigrationRan(e)
                         || !mayBeConcurrentStartup(flyway.getConfiguration().getDataSource())) {
                     throw new IllegalStateException("Persistence schema migration failed: " + e.getMessage(), e);
                 }
@@ -132,8 +136,8 @@ final class SchemaMigrator {
      * real failure: no table at all (nothing else is migrating this database), a migration
      * recorded as failed, or a check that cannot run, such as an unreachable database.
      *
-     * <p>A real error that leaves a healthy history, such as an edited migration, is retried too and
-     * fails after the retries with the same message, a short delay at startup only.
+     * <p>Failed scripts and failed validations are excluded before this runs; see
+     * {@link #happenedBeforeAnyMigrationRan}.
      */
     static boolean mayBeConcurrentStartup(DataSource dataSource) {
         try (Connection conn = dataSource.getConnection()) {
@@ -149,6 +153,15 @@ final class SchemaMigrator {
             log.debug("Could not inspect the schema history, not retrying the migration", e);
             return false;
         }
+    }
+
+    /**
+     * The race fails while creating or baselining the history table, before any migration script
+     * runs. A failed script or a failed validation is never the race, and retrying a failed script
+     * would run its SQL, and take its locks, again on every attempt.
+     */
+    static boolean happenedBeforeAnyMigrationRan(FlywayException e) {
+        return !(e instanceof FlywayMigrateException) && !(e instanceof FlywayValidateException);
     }
 
     /** Asks the driver's metadata, so no database-specific "table not found" error codes are needed. */
