@@ -10,7 +10,7 @@
 #
 # Ports: 9464 HTTP (API, dashboard, /metrics, /health/*), 9465 the dashboard's WebSocket stream.
 # Writable paths: /data for an embedded H2 store, /tmp for the JVM. Everything else can be read-only.
-FROM eclipse-temurin:21-jre-noble
+FROM eclipse-temurin:25-jre-noble
 
 ARG NEXORA_VERSION=dev
 LABEL org.opencontainers.image.title="nexora" \
