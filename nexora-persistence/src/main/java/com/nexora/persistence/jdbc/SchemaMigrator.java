@@ -6,6 +6,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
@@ -27,6 +28,14 @@ final class SchemaMigrator {
     static final String DEFAULT_LOCATION = "classpath:db/nexora/migration";
     static final String HISTORY_TABLE = "nexora_schema_history";
     static final int MIGRATION_CONNECTIONS = 2;
+    /**
+     * Processes starting together on an empty database race to create the history table: the
+     * losers find it created but not yet baselined, and Flyway fails them. Flyway's own lock covers
+     * everything after that moment, so a short wait and another attempt always gets through.
+     */
+    static final int MAX_ATTEMPTS = 5;
+
+    private static final long RETRY_BASE_DELAY_MS = 200;
 
     private static final Logger log = LoggerFactory.getLogger(SchemaMigrator.class);
     // A schema Flyway has not seen yet is baselined below V1, so V1 still runs on it. That covers both
@@ -78,23 +87,67 @@ final class SchemaMigrator {
                 .baselineVersion(BASELINE_VERSION)
                 .failOnMissingLocations(true)
                 .load();
-        try {
-            MigrateResult result = flyway.migrate();
-            // Target is what this run reached; with nothing pending it can be unset, so fall back to where it began.
-            String reached =
-                    result.targetSchemaVersion != null ? result.targetSchemaVersion : result.initialSchemaVersion;
-            if (reached == null || !MigrationVersion.fromVersion(reached).isNewerThan(BASELINE_VERSION)) {
-                // Seen when a repackaged jar drops the SQL resources: tables would never be created.
-                throw new IllegalStateException("No persistence schema migrations found at " + location);
+        for (int attempt = 1; ; attempt++) {
+            MigrateResult result;
+            try {
+                result = flyway.migrate();
+            } catch (FlywayException e) {
+                // Retry only the startup race. A real failure leaves rows in the history (a failed
+                // migration, or applied ones that no longer validate): fail at once, with Flyway's
+                // own message, which names the script.
+                if (attempt >= MAX_ATTEMPTS || !historyIsEmpty(flyway)) {
+                    throw new IllegalStateException("Persistence schema migration failed: " + e.getMessage(), e);
+                }
+                log.warn(
+                        "Persistence schema migration failed, retrying attempt={} maxAttempts={} reason={}",
+                        attempt,
+                        MAX_ATTEMPTS,
+                        e.getMessage());
+                pauseBeforeRetry(attempt);
+                continue;
             }
-            MigrationVersion version = MigrationVersion.fromVersion(reached);
-            log.info(
-                    "Persistence schema migrated schemaVersion={} migrationsExecuted={}",
-                    version,
-                    result.migrationsExecuted);
-            return new SchemaMigrator(version);
-        } catch (FlywayException e) {
-            throw new IllegalStateException("Persistence schema migration failed: " + e.getMessage(), e);
+            return migrated(result, location);
+        }
+    }
+
+    private static SchemaMigrator migrated(MigrateResult result, String location) {
+        // Target is what this run reached; with nothing pending it can be unset, so fall back to where it began.
+        String reached = result.targetSchemaVersion != null ? result.targetSchemaVersion : result.initialSchemaVersion;
+        if (reached == null || !MigrationVersion.fromVersion(reached).isNewerThan(BASELINE_VERSION)) {
+            // Seen when a repackaged jar drops the SQL resources: tables would never be created.
+            throw new IllegalStateException("No persistence schema migrations found at " + location);
+        }
+        MigrationVersion version = MigrationVersion.fromVersion(reached);
+        log.info(
+                "Persistence schema migrated schemaVersion={} migrationsExecuted={}",
+                version,
+                result.migrationsExecuted);
+        return new SchemaMigrator(version);
+    }
+
+    /**
+     * True when the history table is missing or has no rows: the state another process leaves
+     * between creating the table and recording its baseline, which is the only failure worth a retry.
+     */
+    private static boolean historyIsEmpty(Flyway flyway) {
+        try (Connection conn = flyway.getConfiguration().getDataSource().getConnection();
+                PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM \"" + HISTORY_TABLE + "\"");
+                ResultSet rs = ps.executeQuery()) {
+            return rs.next() && rs.getLong(1) == 0;
+        } catch (SQLException e) {
+            // No table yet: another process may be about to create it.
+            return true;
+        }
+    }
+
+    /** Grows with each attempt, with jitter so processes that collided once do not collide again. */
+    private static void pauseBeforeRetry(int attempt) {
+        long delay = RETRY_BASE_DELAY_MS * attempt + ThreadLocalRandom.current().nextLong(RETRY_BASE_DELAY_MS);
+        try {
+            Thread.sleep(delay);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting to retry the schema migration", e);
         }
     }
 
