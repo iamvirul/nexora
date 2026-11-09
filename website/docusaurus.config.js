@@ -7,7 +7,7 @@ const config = {
   tagline: 'Reactive, intent-based Java execution engine',
   favicon: 'img/logo.png',
 
-  url: 'https://iamvirul.github.io',
+  url: 'https://nexora.virul.me',
   baseUrl: '/',
   organizationName: 'iamvirul',
   projectName: 'nexora',
