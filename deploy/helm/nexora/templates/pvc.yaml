@@ -1,0 +1,20 @@
+{{- if and (eq .Values.persistence.mode "h2") (not .Values.persistence.h2.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "nexora.fullname" . }}-data
+  labels:
+    {{- include "nexora.labels" . | nindent 4 }}
+  annotations:
+    # Keep the execution history when the release is uninstalled.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.h2.accessModes | nindent 4 }}
+  {{- with .Values.persistence.h2.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.h2.size }}
+{{- end }}

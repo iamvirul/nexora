@@ -1,0 +1,26 @@
+# External PostgreSQL, scaled out, with every optional resource on. Used by CI.
+persistence:
+  mode: jdbc
+  jdbc:
+    existingSecret: nexora-db
+replicaCount: 2
+autoscaling:
+  enabled: true
+podDisruptionBudget:
+  enabled: true
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+service:
+  sessionAffinity: ClientIP
+otel:
+  endpoint: http://otel-collector:4318
+multiTenant: true
+config:
+  retry:
+    maxAttempts: 5
+  observe:
+    rateLimit:
+      trustedProxies:
+        - 10.0.0.10
