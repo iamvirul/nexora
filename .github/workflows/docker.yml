@@ -29,12 +29,13 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.tag || github.ref }}
 
+      # No dependency cache here: this job publishes the image, and a cache other runs can write
+      # could put a tampered dependency into it. The build is one Maven run, so the cost is small.
       - name: Set up JDK 21
         uses: actions/setup-java@v6
         with:
           java-version: "21"
           distribution: temurin
-          cache: maven
 
       - name: Resolve release tag and version
         id: tag

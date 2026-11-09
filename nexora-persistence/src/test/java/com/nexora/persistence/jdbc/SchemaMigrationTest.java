@@ -208,6 +208,49 @@ class SchemaMigrationTest {
     }
 
     @Test
+    void emptyHistoryTableLeftByAConcurrentStartupIsRetried() throws SQLException {
+        // The state a racing process leaves behind: the history table created, the baseline not yet
+        // recorded. Here nobody completes it, so every attempt fails; what matters is that it retried.
+        execute("CREATE TABLE \"nexora_schema_history\" (\"installed_rank\" INT PRIMARY KEY)");
+        long started = System.nanoTime();
+
+        IllegalStateException error = assertThrows(IllegalStateException.class, () -> new JdbcExecutionStore(database));
+
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+        assertTrue(error.getMessage().startsWith("Persistence schema migration failed"), error.getMessage());
+        // Four pauses of at least 200, 400, 600 and 800 ms come before the last attempt.
+        assertTrue(elapsedMs >= 2_000, "failed after " + elapsedMs + " ms, so it did not retry");
+    }
+
+    @Test
+    void missingMigrationLocationFailsWithoutRetrying() {
+        long started = System.nanoTime();
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> new JdbcExecutionStore(database, "classpath:db/nexora-test/does-not-exist"));
+
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+        assertTrue(elapsedMs < 1_500, "failed after " + elapsedMs + " ms, so it retried");
+    }
+
+    @Test
+    void unreachableDatabaseFailsWithoutRetrying() {
+        // Nothing listens on port 1, so every connection is refused at once. Only a missing or empty
+        // history table is worth a retry; four retries would add at least 2 seconds of pauses.
+        String unreachable = "jdbc:postgresql://127.0.0.1:1/nexora?connectTimeout=1";
+        long started = System.nanoTime();
+
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class,
+                () -> SchemaMigrator.migrate(unreachable, SchemaMigrator.DEFAULT_LOCATION));
+
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+        assertTrue(error.getMessage().startsWith("Persistence schema migration failed"), error.getMessage());
+        assertTrue(elapsedMs < 1_500, "failed after " + elapsedMs + " ms, so it retried");
+    }
+
+    @Test
     void callerPoolTooSmallToMigrateIsRejectedImmediately() {
         try (HikariDataSource onePooled = HikariCPDataSourceFactory.create(
                 "jdbc:h2:mem:tiny_" + System.nanoTime(), PoolConfig.singleConnection())) {

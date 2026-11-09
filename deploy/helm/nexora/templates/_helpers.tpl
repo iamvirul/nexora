@@ -107,9 +107,16 @@ Refuses settings that would deploy but not work. Rendered from the Deployment, s
 {{- fail "persistence.mode=jdbc needs persistence.jdbc.existingSecret (a Secret with the JDBC URL) or persistence.jdbc.url" }}
 {{- end }}
 {{- end }}
-{{- if eq $mode "h2" }}
-{{- if or (gt (int .Values.replicaCount) 1) .Values.autoscaling.enabled }}
+{{- if and (eq $mode "h2") (or (gt (int .Values.replicaCount) 1) .Values.autoscaling.enabled) }}
 {{- fail "persistence.mode=h2 keeps the store on one ReadWriteOnce volume, so it runs a single replica. Use persistence.mode=jdbc to run more than one, or set replicaCount=1 and autoscaling.enabled=false" }}
+{{- end }}
+{{- if and (eq $mode "none") (or (gt (int .Values.replicaCount) 1) .Values.autoscaling.enabled) }}
+{{- fail "persistence.mode=none keeps each pod's executions in its own memory, so more than one replica would be separate servers with separate histories. Use persistence.mode=jdbc to run more than one, or set replicaCount=1 and autoscaling.enabled=false" }}
+{{- end }}
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- $replicas := ternary (int .Values.autoscaling.minReplicas) (int .Values.replicaCount) .Values.autoscaling.enabled }}
+{{- if le $replicas (int .Values.podDisruptionBudget.minAvailable) }}
+{{- fail (printf "podDisruptionBudget.minAvailable=%d with %d replica(s) allows no voluntary disruption, so node drains would hang. Run more replicas than minAvailable (replicaCount, or autoscaling.minReplicas with autoscaling on), or leave podDisruptionBudget.enabled=false" (int .Values.podDisruptionBudget.minAvailable) $replicas) }}
 {{- end }}
 {{- end }}
 {{- if and .Values.tls.enabled (not .Values.tls.existingSecret) }}

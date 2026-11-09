@@ -53,7 +53,7 @@ On a local kind cluster, `kind load docker-image nexora:dev` replaces the push; 
 | PersistentVolumeClaim | `persistence.mode=h2` (default), unless `persistence.h2.existingClaim` is set. Kept on `helm uninstall` |
 | Secret | Only for values given inline: `apiKey.value` or `persistence.jdbc.url` |
 | HorizontalPodAutoscaler | `autoscaling.enabled`. Needs `persistence.mode=jdbc` |
-| PodDisruptionBudget | `podDisruptionBudget.enabled` |
+| PodDisruptionBudget | `podDisruptionBudget.enabled`. Needs more replicas than `minAvailable`, or node drains would hang |
 | ServiceMonitor | `serviceMonitor.enabled`. Needs the Prometheus Operator CRDs |
 
 Probes: startup and liveness on `GET /health/live`, readiness on `GET /health/ready`, which goes down when the store is unreachable, its schema is behind, a plugin is not active, or the executor has stopped. Resources default to requests `cpu: 250m, memory: 512Mi` and limits `cpu: 1, memory: 1Gi`; the JVM sizes its heap to 75% of the memory limit.
@@ -64,7 +64,7 @@ Probes: startup and liveness on `GET /health/live`, readiness on `GET /health/re
 |--------------------|-------|----------|
 | `h2` (default) | Embedded H2 file on a ReadWriteOnce PersistentVolumeClaim, mounted at `/data` | One. The Deployment uses the `Recreate` strategy so the old pod releases the volume before the new one starts |
 | `jdbc` | An external PostgreSQL 15+ database | Any number, see [Scaling out](#scaling-out) |
-| `none` | In memory | One. History, replay, schedules and dead letters are lost on restart |
+| `none` | In memory | One: each pod would have its own history. History, replay, schedules and dead letters are lost on restart |
 
 For PostgreSQL, put the whole JDBC URL, credentials included, in a Secret. URL-encode special characters in the password (`@` is `%40`, `/` is `%2F`, a space is `%20`):
 
@@ -126,7 +126,7 @@ config:
 
 Dashboard users for username and password sign-in: create the users file with `nexora user add`, store it in a Secret, and set `users.existingSecret`.
 
-All values, with comments, are in [values.yaml](values.yaml). The chart refuses settings that would deploy but not work: a missing API key, H2 with more than one replica, `jdbc` without a URL, TLS without a certificate, or an `executionStore` in `config`.
+All values, with comments, are in [values.yaml](values.yaml). The chart refuses settings that would deploy but not work: a missing API key, `h2` or `none` with more than one replica or the HPA, `jdbc` without a URL, TLS without a certificate, a PodDisruptionBudget that would block every drain, or an `executionStore` in `config`.
 
 ## Plain manifests
 

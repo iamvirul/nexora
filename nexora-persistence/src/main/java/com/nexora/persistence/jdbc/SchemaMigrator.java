@@ -92,9 +92,9 @@ final class SchemaMigrator {
             try {
                 result = flyway.migrate();
             } catch (FlywayException e) {
-                // Retry only the startup race. A real failure leaves rows in the history (a failed
-                // migration, or applied ones that no longer validate): fail at once, with Flyway's
-                // own message, which names the script.
+                // Retry only the startup race: an existing but empty history. A real failure either
+                // leaves rows behind (a failed migration, or applied ones that no longer validate) or
+                // no table at all: fail at once, with Flyway's own message, which names the cause.
                 if (attempt >= MAX_ATTEMPTS || !historyIsEmpty(flyway)) {
                     throw new IllegalStateException("Persistence schema migration failed: " + e.getMessage(), e);
                 }
@@ -126,17 +126,33 @@ final class SchemaMigrator {
     }
 
     /**
-     * True when the history table is missing or has no rows: the state another process leaves
-     * between creating the table and recording its baseline, which is the only failure worth a retry.
+     * True when the history table exists but has no rows: what another process leaves between
+     * creating the table and recording its baseline, and the only state in which Flyway fails a
+     * concurrent startup. A missing table means this failure had another cause (an unreachable
+     * database, a bad location, broken SQL), and so does anything that stops the check itself; both
+     * fail at once instead of waiting through the retries.
      */
     private static boolean historyIsEmpty(Flyway flyway) {
-        try (Connection conn = flyway.getConfiguration().getDataSource().getConnection();
-                PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM \"" + HISTORY_TABLE + "\"");
-                ResultSet rs = ps.executeQuery()) {
-            return rs.next() && rs.getLong(1) == 0;
+        try (Connection conn = flyway.getConfiguration().getDataSource().getConnection()) {
+            if (!historyTableExists(conn)) {
+                return false;
+            }
+            try (PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM \"" + HISTORY_TABLE + "\"");
+                    ResultSet rs = ps.executeQuery()) {
+                return rs.next() && rs.getLong(1) == 0;
+            }
         } catch (SQLException e) {
-            // No table yet: another process may be about to create it.
-            return true;
+            log.debug("Could not inspect the schema history, not retrying the migration", e);
+            return false;
+        }
+    }
+
+    /** Asks the driver's metadata, so no database-specific "table not found" error codes are needed. */
+    private static boolean historyTableExists(Connection conn) throws SQLException {
+        // Flyway creates the table with a quoted lowercase name in the connection's current schema.
+        try (ResultSet tables =
+                conn.getMetaData().getTables(conn.getCatalog(), conn.getSchema(), HISTORY_TABLE, null)) {
+            return tables.next();
         }
     }
 

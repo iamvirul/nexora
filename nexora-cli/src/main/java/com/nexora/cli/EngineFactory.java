@@ -32,7 +32,7 @@ final class EngineFactory {
                 builder.withExecutionStore(new JdbcExecutionStore(jdbc.url(), config.poolConfig()));
             case StoreSelection.H2File file ->
                 builder.withExecutionStore(JdbcExecutionStore.h2AutoServer(file.path(), config.poolConfig()));
-            case StoreSelection.None none -> {
+            case StoreSelection.None() -> {
                 // In-memory only: nothing to open.
             }
         }
