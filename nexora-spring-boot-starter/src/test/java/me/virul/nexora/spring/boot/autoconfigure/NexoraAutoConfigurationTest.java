@@ -66,6 +66,8 @@ class NexoraAutoConfigurationTest {
 
             assertThat(result.status()).isEqualTo(ExecutionStatus.COMPLETED);
             assertThat(result.stepResults()).hasSize(1);
+            assertThat(result.stepResults().get(0).capabilityResult().output())
+                    .isEqualTo(Map.of("greeting", "hello ada"));
         });
     }
 
@@ -195,7 +197,7 @@ class NexoraAutoConfigurationTest {
         StepDefinition greetStep() {
             return StepDefinition.builder("greet", GreetingPlugin.CAPABILITY_ID)
                     .withMatcher(goal -> goal.contains("greet"))
-                    .withInput("name", InputBinding.fromContext("name"))
+                    .withInput("name", InputBinding.fromContext("intent.context.name"))
                     .build();
         }
     }
