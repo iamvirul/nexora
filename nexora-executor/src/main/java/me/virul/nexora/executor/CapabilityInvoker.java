@@ -1,0 +1,79 @@
+package me.virul.nexora.executor;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Objects;
+import me.virul.nexora.core.capability.CapabilityContract;
+import me.virul.nexora.core.capability.CapabilityRequest;
+import me.virul.nexora.core.capability.CapabilityResult;
+import me.virul.nexora.spi.Capability;
+import me.virul.nexora.spi.CapabilityDescriptor;
+import me.virul.nexora.spi.CapabilityRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Terminal node in the pipeline: resolves the capability from the registry and invokes it.
+ *
+ * Before invoking, it checks the capability's contract health via CapabilityContractMonitor.
+ * If the primary capability is unhealthy and has a declared fallback, the call is routed
+ * transparently to the fallback capability — the caller sees a normal result.
+ *
+ * All call outcomes (success/failure, latency) are recorded back to the monitor.
+ */
+public final class CapabilityInvoker {
+
+    private static final Logger log = LoggerFactory.getLogger(CapabilityInvoker.class);
+
+    private final CapabilityRegistry registry;
+    private final CapabilityContractMonitor monitor;
+
+    public CapabilityInvoker(CapabilityRegistry registry, CapabilityContractMonitor monitor) {
+        this.registry = Objects.requireNonNull(registry);
+        this.monitor = Objects.requireNonNull(monitor);
+    }
+
+    public CapabilityResult invoke(CapabilityRequest request) {
+        String primaryId = request.capabilityId();
+        String targetId = resolveTarget(primaryId);
+
+        // A capability hidden from this tenant answers exactly like a missing one, so tenants cannot
+        // discover each other's capabilities by probing ids.
+        Capability capability = registry.isVisibleTo(targetId, request.tenantId())
+                ? registry.find(targetId).orElse(null)
+                : null;
+
+        if (capability == null) {
+            monitor.recordFailure(targetId, Duration.ZERO);
+            return CapabilityResult.failure("CAPABILITY_NOT_FOUND", "No capability registered with id: " + targetId);
+        }
+
+        Instant start = Instant.now();
+        CapabilityResult result = capability.execute(request);
+        Duration elapsed = Duration.between(start, Instant.now());
+
+        if (result.succeeded()) {
+            monitor.recordSuccess(targetId, elapsed);
+        } else {
+            monitor.recordFailure(targetId, elapsed);
+        }
+
+        return result;
+    }
+
+    private String resolveTarget(String capabilityId) {
+        CapabilityDescriptor descriptor = registry.findDescriptor(capabilityId).orElse(null);
+        if (descriptor == null) return capabilityId;
+
+        CapabilityContract contract = descriptor.contract();
+        if (contract.hasFallback() && !monitor.isHealthy(capabilityId, contract)) {
+            log.warn(
+                    "Capability {} is unhealthy — routing to fallback {}",
+                    capabilityId,
+                    contract.fallbackCapabilityId());
+            return contract.fallbackCapabilityId();
+        }
+
+        return capabilityId;
+    }
+}
