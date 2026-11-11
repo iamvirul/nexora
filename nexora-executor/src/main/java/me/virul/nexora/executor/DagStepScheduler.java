@@ -50,7 +50,7 @@ import org.slf4j.LoggerFactory;
  * </ul>
  *
  * <p>A step starts once every step it depends on has finished. If one of them failed (including
- * a timeout, an exception or a halt), the step is not run: it is SKIPPED with
+ * a step timeout or an exception), the step is not run: it is SKIPPED with
  * {@link CapabilityResult#DEPENDENCY_FAILED}, and so is everything downstream of it. A dependency
  * skipped by a condition or a skip amendment does not stop its dependents. Steps on other
  * branches keep running, and the execution still ends FAILED.
