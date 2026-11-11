@@ -137,6 +137,18 @@ class NexoraAutoConfigurationTest {
     }
 
     @Test
+    void failsStartupWhenProbeTimeoutIsBelowMinimum() {
+        runner.withPropertyValues(
+                        "nexora.persistence.jdbc-url=jdbc:h2:mem:starter_" + System.nanoTime(),
+                        "nexora.persistence.pool.probe-timeout=10ms")
+                .run(context -> assertThat(context)
+                        .hasFailed()
+                        .getFailure()
+                        .rootCause()
+                        .hasMessageContaining("probeTimeoutMs"));
+    }
+
+    @Test
     void failsStartupWhenPoolSettingsAreInvalid() {
         runner.withPropertyValues(
                         "nexora.persistence.jdbc-url=jdbc:h2:mem:starter_" + System.nanoTime(),

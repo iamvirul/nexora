@@ -97,8 +97,15 @@ public record NexoraProperties(
      * @param minimumIdle       idle connections kept open, at most {@code maximumPoolSize}
      * @param connectionTimeout wait for a free connection, at least 250ms
      * @param idleTimeout       idle time before a connection is retired, 0 or at least 10s
+     * @param probeTimeout      bound on each check behind the {@code nexora} health component,
+     *                          separate from {@code connectionTimeout}; at least 100ms
      */
-    public record Pool(Integer maximumPoolSize, Integer minimumIdle, Duration connectionTimeout, Duration idleTimeout) {
+    public record Pool(
+            Integer maximumPoolSize,
+            Integer minimumIdle,
+            Duration connectionTimeout,
+            Duration idleTimeout,
+            Duration probeTimeout) {
 
         PoolConfig toPoolConfig() {
             int maximum = maximumPoolSize != null ? maximumPoolSize : PoolConfig.DEFAULT_MAXIMUM_POOL_SIZE;
@@ -107,7 +114,8 @@ public record NexoraProperties(
                     // Capped so a small pool with no minimum-idle set stays valid, e.g. maximum-pool-size: 1.
                     minimumIdle != null ? minimumIdle : Math.min(PoolConfig.DEFAULT_MINIMUM_IDLE, maximum),
                     connectionTimeout != null ? connectionTimeout.toMillis() : PoolConfig.DEFAULT_CONNECTION_TIMEOUT_MS,
-                    idleTimeout != null ? idleTimeout.toMillis() : PoolConfig.DEFAULT_IDLE_TIMEOUT_MS);
+                    idleTimeout != null ? idleTimeout.toMillis() : PoolConfig.DEFAULT_IDLE_TIMEOUT_MS,
+                    probeTimeout != null ? probeTimeout.toMillis() : PoolConfig.DEFAULT_PROBE_TIMEOUT_MS);
         }
     }
 }

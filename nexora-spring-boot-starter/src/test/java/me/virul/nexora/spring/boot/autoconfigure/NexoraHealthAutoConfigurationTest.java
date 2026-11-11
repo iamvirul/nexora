@@ -2,9 +2,17 @@ package me.virul.nexora.spring.boot.autoconfigure;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.zaxxer.hikari.HikariDataSource;
+import java.sql.Connection;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import me.virul.nexora.api.NexoraEngine.ReadinessReport;
 import me.virul.nexora.persistence.ExecutionStore;
+import me.virul.nexora.persistence.jdbc.HikariCPDataSourceFactory;
+import me.virul.nexora.persistence.jdbc.JdbcExecutionStore;
+import me.virul.nexora.persistence.jdbc.PoolConfig;
 import me.virul.nexora.spi.NexoraPlugin;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -57,6 +65,32 @@ class NexoraHealthAutoConfigurationTest {
     }
 
     @Test
+    void reportsDownWithinProbeTimeoutWhenPoolIsSaturated() {
+        runner.withUserConfiguration(SaturablePoolConfig.class).run(context -> {
+            HikariDataSource pool = context.getBean(HikariDataSource.class);
+            List<Connection> held = new ArrayList<>();
+            try {
+                for (int i = 0; i < SaturablePoolConfig.POOL_SIZE; i++) {
+                    held.add(pool.getConnection());
+                }
+                long started = System.nanoTime();
+
+                Health health = context.getBean(NexoraHealthIndicator.class).health();
+
+                long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+                assertThat(health.getStatus()).isEqualTo(Status.DOWN);
+                assertThat(health.getDetails()).containsEntry(ReadinessReport.CHECK_PERSISTENCE, "DOWN");
+                // The pool would hold a borrower for 10s; the probe is bounded at 200ms.
+                assertThat(elapsedMs).isLessThan(2_000);
+            } finally {
+                for (Connection connection : held) {
+                    connection.close();
+                }
+            }
+        });
+    }
+
+    @Test
     void isNotRegisteredWhenDisabledByProperty() {
         runner.withPropertyValues("management.health.nexora.enabled=false")
                 .run(context -> assertThat(context).doesNotHaveBean(NexoraHealthIndicator.class));
@@ -74,6 +108,22 @@ class NexoraHealthAutoConfigurationTest {
             assertThat(context).hasNotFailed();
             assertThat(context).doesNotHaveBean(NexoraHealthIndicator.class);
         });
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class SaturablePoolConfig {
+        static final int POOL_SIZE = 2;
+
+        @Bean(destroyMethod = "close")
+        HikariDataSource nexoraPool() {
+            return HikariCPDataSourceFactory.create(
+                    "jdbc:h2:mem:saturable_" + System.nanoTime(), new PoolConfig(POOL_SIZE, POOL_SIZE, 10_000, 0));
+        }
+
+        @Bean
+        ExecutionStore executionStore(HikariDataSource nexoraPool) {
+            return new JdbcExecutionStore(nexoraPool, Duration.ofMillis(200));
+        }
     }
 
     @Configuration(proxyBeanMethods = false)
