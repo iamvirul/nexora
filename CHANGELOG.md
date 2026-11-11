@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - **Java packages are now `me.virul.nexora.*`** - Every package moved from `com.nexora.*` to `me.virul.nexora.*`, matching the Maven group ID. Update imports (`com.nexora.api.NexoraEngine` becomes `me.virul.nexora.api.NexoraEngine`), logger names in logging configs, and the ServiceLoader file of a plugin JAR: rename `META-INF/services/com.nexora.spi.NexoraPlugin` to `META-INF/services/me.virul.nexora.spi.NexoraPlugin`. A plugin JAR built against 0.5.0 is not found by this engine until it is rebuilt. Class names and behaviour are unchanged
 
+### Fixed
+- **A step no longer runs after a step it depends on fails** - The scheduler waited for dependencies to finish, not to succeed, so a dependent step ran after its dependency failed: an order validation could reject the order and the payment step still charged it, and with saga enabled the charge was then compensated instead of never happening. A step whose dependency failed (failure result, exception, timeout, or halt before it started) is now skipped with the new `CapabilityResult.DEPENDENCY_FAILED` failure code and a message naming the failed step, and the skip passes down the chain. Steps on other branches still run, a dependency skipped by a condition or skip amendment still lets its dependents run, and saga compensation still covers only completed steps. This changes behaviour for plans that relied on a step running after its dependency failed. `PlanFailedEvent.failedStepId` and the dead letter's failure message now always come from the step that failed, never from a skipped one ([#191](https://github.com/iamvirul/nexora/issues/191))
+
 ## [0.5.0] - 2026-11-10
 ### Added
 
