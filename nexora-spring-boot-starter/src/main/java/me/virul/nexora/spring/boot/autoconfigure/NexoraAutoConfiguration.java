@@ -38,8 +38,10 @@ public class NexoraAutoConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(NexoraAutoConfiguration.class);
 
+    // Also skipped for an application-defined engine, which would never use it: opening a pool and
+    // migrating a database the application did not ask for could only fail its startup.
     @Bean
-    @ConditionalOnMissingBean
+    @ConditionalOnMissingBean({ExecutionStore.class, NexoraEngine.class})
     @ConditionalOnProperty(prefix = NexoraProperties.PREFIX + ".persistence", name = "jdbc-url")
     public ExecutionStore nexoraExecutionStore(NexoraProperties properties) {
         NexoraProperties.Persistence persistence = properties.persistence();
@@ -48,7 +50,7 @@ public class NexoraAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean
+    @ConditionalOnMissingBean({RetryPolicy.class, NexoraEngine.class})
     @ConditionalOnProperty(prefix = NexoraProperties.PREFIX + ".retry", name = "max-attempts")
     public RetryPolicy nexoraRetryPolicy(NexoraProperties properties) {
         NexoraProperties.Retry retry = properties.retry();

@@ -56,6 +56,30 @@ class NexoraAutoConfigurationTest {
     }
 
     @Test
+    void createsNoStoreOrRetryPolicyWhenApplicationDefinesItsOwnEngine() {
+        // An unreachable URL: creating the store would fail startup of an app that never uses it.
+        runner.withUserConfiguration(OwnEngineConfig.class)
+                .withPropertyValues(
+                        "nexora.persistence.jdbc-url=jdbc:postgresql://127.0.0.1:1/unreachable",
+                        "nexora.retry.max-attempts=3")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(ExecutionStore.class);
+                    assertThat(context).doesNotHaveBean(RetryPolicy.class);
+                });
+    }
+
+    @Test
+    void failsStartupWhenDefaultTimeoutIsZero() {
+        runner.withPropertyValues("nexora.default-timeout=0ms")
+                .run(context -> assertThat(context)
+                        .hasFailed()
+                        .getFailure()
+                        .rootCause()
+                        .hasMessageContaining("defaultTimeout"));
+    }
+
+    @Test
     void executesIntentWithPluginAndStepDefinitionBeans() {
         runner.withUserConfiguration(GreetingConfig.class).run(context -> {
             NexoraEngine engine = context.getBean(NexoraEngine.class);

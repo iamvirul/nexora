@@ -90,7 +90,8 @@ public record NexoraProperties(
     }
 
     /**
-     * HikariCP pool settings; unset values take the {@link PoolConfig} defaults.
+     * HikariCP pool settings; unset values take the {@link PoolConfig} defaults, with the default
+     * {@code minimumIdle} capped at {@code maximumPoolSize}.
      *
      * @param maximumPoolSize   largest number of connections, at least 1
      * @param minimumIdle       idle connections kept open, at most {@code maximumPoolSize}
@@ -100,9 +101,11 @@ public record NexoraProperties(
     public record Pool(Integer maximumPoolSize, Integer minimumIdle, Duration connectionTimeout, Duration idleTimeout) {
 
         PoolConfig toPoolConfig() {
+            int maximum = maximumPoolSize != null ? maximumPoolSize : PoolConfig.DEFAULT_MAXIMUM_POOL_SIZE;
             return new PoolConfig(
-                    maximumPoolSize != null ? maximumPoolSize : PoolConfig.DEFAULT_MAXIMUM_POOL_SIZE,
-                    minimumIdle != null ? minimumIdle : PoolConfig.DEFAULT_MINIMUM_IDLE,
+                    maximum,
+                    // Capped so a small pool with no minimum-idle set stays valid, e.g. maximum-pool-size: 1.
+                    minimumIdle != null ? minimumIdle : Math.min(PoolConfig.DEFAULT_MINIMUM_IDLE, maximum),
                     connectionTimeout != null ? connectionTimeout.toMillis() : PoolConfig.DEFAULT_CONNECTION_TIMEOUT_MS,
                     idleTimeout != null ? idleTimeout.toMillis() : PoolConfig.DEFAULT_IDLE_TIMEOUT_MS);
         }
