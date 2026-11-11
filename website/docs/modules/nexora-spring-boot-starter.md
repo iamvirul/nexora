@@ -6,7 +6,7 @@ sidebar_position: 15
 
 # nexora-spring-boot-starter
 
-Auto-configures a `NexoraEngine` bean from `application.yml` and the Nexora beans your application declares. It targets Spring Boot 4. Import the `nexora-all` BOM (see [Getting started](../getting-started.md)) so the version resolves.
+Auto-configures a `NexoraEngine` bean from `application.yml` and the Nexora beans your application declares. It targets Spring Boot 4 and is available from 0.6.0: import the `nexora-all` BOM (see [Getting started](../getting-started.md)) at 0.6.0 or later, since 0.5.0 does not include the starter.
 
 ```xml
 <dependency>
@@ -35,6 +35,16 @@ nexora:
     pool:
       maximum-pool-size: 10
       minimum-idle: 2
+```
+
+The H2 driver comes with the starter. For PostgreSQL 15 or later, add its driver as well; Spring Boot manages the version:
+
+```xml
+<dependency>
+    <groupId>org.postgresql</groupId>
+    <artifactId>postgresql</artifactId>
+    <scope>runtime</scope>
+</dependency>
 ```
 
 Every key is optional; an unset key keeps the `NexoraEngine.Builder` default. An invalid value (a bad tenant id, a pool of 0 connections) fails application startup.
