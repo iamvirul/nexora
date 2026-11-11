@@ -10,6 +10,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import me.virul.nexora.core.capability.ResultStatus;
 import me.virul.nexora.core.context.ExecutionContext;
 import me.virul.nexora.core.context.TraceContext;
 import me.virul.nexora.core.execution.ExecutionHandle;
@@ -532,14 +533,15 @@ public final class ExecutionEngine {
             return compensateIfEnabled(plan, result, ctx);
 
         } else if (result.status() == ExecutionStatus.FAILED) {
+            // Only a step that ran and failed: skipped steps, including those skipped because this one
+            // failed, did not cause the failure.
             String failedStep = result.stepResults().stream()
-                    .filter(sr -> !sr.succeeded())
+                    .filter(sr -> sr.capabilityResult().status() == ResultStatus.FAILURE)
                     .map(sr -> sr.stepId())
                     .findFirst()
                     .orElse(null);
             String failureMessage = result.stepResults().stream()
-                    .filter(sr -> !sr.succeeded())
-                    .filter(sr -> sr.capabilityResult() != null)
+                    .filter(sr -> sr.capabilityResult().status() == ResultStatus.FAILURE)
                     .map(sr -> sr.capabilityResult().failureMessage())
                     .filter(Objects::nonNull)
                     .findFirst()
