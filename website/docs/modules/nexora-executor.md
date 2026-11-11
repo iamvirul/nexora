@@ -12,6 +12,8 @@ DAG scheduler, interceptor pipeline, and capability contract monitor. This modul
 
 Turns a `Plan` into concurrent execution. Steps without dependencies run in parallel; dependent steps are queued until their predecessors complete.
 
+If a predecessor failed (a failure result, an exception, a timeout, or a halt before it started), the dependent step is not run. It is recorded as `SKIPPED` with failure code `DEPENDENCY_FAILED` and a message naming the failed step, and every step downstream of it is skipped the same way. Steps on other branches keep running, and the execution ends `FAILED`. Saga compensation covers only the steps that completed, so a skipped step is never compensated.
+
 **How it works:**
 
 1. Compute the dependency graph from `Step.dependsOn`.
