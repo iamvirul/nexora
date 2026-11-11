@@ -65,7 +65,7 @@ class NexoraConfig {
     StepDefinition chargeStep() {
         return StepDefinition.builder("charge", "charge_card")
                 .withMatcher(goal -> goal.contains("payment"))
-                .withInput("amount", InputBinding.fromContext("amount"))
+                .withInput("amount", InputBinding.fromContext("intent.context.amount"))
                 .build();
     }
 }
@@ -74,4 +74,13 @@ class NexoraConfig {
 Define your own `NexoraEngine` bean to take over completely, or set `nexora.enabled=false` to turn the starter off. The engine is closed with the application context.
 
 With Spring Boot Actuator on the classpath, the `nexora` health component reports `NexoraEngine.readiness()`: UP only when persistence, its migrations, plugins and the executor are all UP, with each check, the active plugin ids and the bound tenant as details. Add it to the readiness probe with `management.endpoint.health.group.readiness.include=readinessState,nexora`, or turn it off with `management.health.nexora.enabled=false`.
+
+`tests/spring-boot-demo` is a runnable order API built this way: a plugin and two step definitions as beans, H2 persistence, retry, and the `nexora` check in the readiness probe.
+
+```bash
+mvn install -DskipTests -DskipITs
+java -jar tests/spring-boot-demo/target/spring-boot-demo.jar
+curl -s localhost:8080/v1/orders -H 'Content-Type: application/json' -d '{"orderId":"ORD-1","amount":42.50}'
+curl -s localhost:8080/actuator/health/readiness
+```
 
