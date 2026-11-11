@@ -35,6 +35,7 @@ nexora:
     pool:
       maximum-pool-size: 10
       minimum-idle: 2
+      probe-timeout: 1s          # bound on each health check, separate from connection-timeout
 ```
 
 The H2 driver comes with the starter. For PostgreSQL 15 or later, add its driver as well; Spring Boot manages the version:
