@@ -102,6 +102,23 @@ class SpringBootDemoAppTest {
     }
 
     @Test
+    void replacesTraceIdThatIsNotSafeToLogOrEcho() throws Exception {
+        String unsafe = "forged\" level=INFO message=\"x";
+
+        HttpResponse<String> response = http.send(
+                request("/v1/executions/no-such-id")
+                        .header(ApiErrorHandler.TRACE_HEADER, unsafe)
+                        .GET()
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertThat(response.statusCode()).isEqualTo(404);
+        String traceId =
+                JSON.readTree(response.body()).get("error").get("trace_id").asText();
+        assertThat(traceId).isNotEqualTo(unsafe).matches("[A-Za-z0-9-]{1,64}");
+    }
+
+    @Test
     void rejectsInvalidOrderBeforeRunningAnything() throws Exception {
         HttpResponse<String> response = post("/v1/orders", "{\"orderId\":\"bad id!\",\"amount\":-1}");
 
