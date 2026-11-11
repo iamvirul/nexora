@@ -81,6 +81,8 @@
         <!-- Public API facade -->
         <module>nexora-api</module>
         <module>nexora-cli</module>
+        <!-- Spring Boot auto-configuration over nexora-api -->
+        <module>nexora-spring-boot-starter</module>
         <module>nexora-all</module>
         <module>tests/payment-pipeline</module>
         <module>tests/json-config-demo</module>
@@ -140,6 +142,7 @@
         <nexora-persistence.version>0.6.0-SNAPSHOT</nexora-persistence.version>
         <nexora-api.version>0.6.0-SNAPSHOT</nexora-api.version>
         <nexora-cli.version>0.6.0-SNAPSHOT</nexora-cli.version>
+        <nexora-spring-boot-starter.version>0.6.0-SNAPSHOT</nexora-spring-boot-starter.version>
 
         <spotless.version>3.11.0</spotless.version>
         <palantir-java-format.version>2.100.0</palantir-java-format.version>
@@ -151,6 +154,9 @@
         <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
         <central-publishing-plugin.version>0.12.0</central-publishing-plugin.version>
         <flatten-maven-plugin.version>1.8.0</flatten-maven-plugin.version>
+
+        <!-- Imported only by nexora-spring-boot-starter. -->
+        <spring-boot.version>4.1.2</spring-boot.version>
     </properties>
 
     <build>
@@ -330,6 +336,11 @@
                 <groupId>me.virul.nexora</groupId>
                 <artifactId>nexora-cli</artifactId>
                 <version>${nexora-cli.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>me.virul.nexora</groupId>
+                <artifactId>nexora-spring-boot-starter</artifactId>
+                <version>${nexora-spring-boot-starter.version}</version>
             </dependency>
             
             <!-- External Dependencies -->
