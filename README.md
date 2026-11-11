@@ -82,7 +82,7 @@ dependencies {
 }
 ```
 
-Add `nexora-tracing-otel` for OpenTelemetry tracing. A plugin built as its own JAR needs only `nexora-plugin-spi`, as `provided` (Gradle: `compileOnly`), since the engine supplies it at runtime. The Java packages are `com.nexora.*`. The CLI (`nexora.jar`) and the LLM planner plugin JAR are not on Maven Central; download them from the [GitHub Releases](https://github.com/iamvirul/nexora/releases).
+Add `nexora-tracing-otel` for OpenTelemetry tracing. A plugin built as its own JAR needs only `nexora-plugin-spi`, as `provided` (Gradle: `compileOnly`), since the engine supplies it at runtime. The Java packages are `me.virul.nexora.*`. The CLI (`nexora.jar`) and the LLM planner plugin JAR are not on Maven Central; download them from the [GitHub Releases](https://github.com/iamvirul/nexora/releases).
 
 ## Build
 
@@ -342,7 +342,7 @@ NexoraEngine.HealthSnapshot health = NexoraEngine.HealthSnapshot.from(
 
 ## Writing a plugin
 
-A plugin is a JAR that implements `NexoraPlugin` and declares itself in `META-INF/services/com.nexora.spi.NexoraPlugin`.
+A plugin is a JAR that implements `NexoraPlugin` and declares itself in `META-INF/services/me.virul.nexora.spi.NexoraPlugin`.
 
 ```java
 public class MyPlugin implements NexoraPlugin {

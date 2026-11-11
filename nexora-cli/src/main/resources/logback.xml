@@ -8,7 +8,7 @@
         </encoder>
     </appender>
 
-    <!-- User-facing CLI output (INFO from com.nexora.cli) goes to stdout -->
+    <!-- User-facing CLI output (INFO from me.virul.nexora.cli) goes to stdout -->
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <target>System.out</target>
         <encoder>
@@ -17,17 +17,17 @@
     </appender>
 
     <!-- Engine internals: warn only, stderr -->
-    <logger name="com.nexora.runtime"  level="WARN" additivity="false"><appender-ref ref="STDERR"/></logger>
-    <logger name="com.nexora.executor" level="WARN" additivity="false"><appender-ref ref="STDERR"/></logger>
-    <logger name="com.nexora.loader"   level="WARN" additivity="false"><appender-ref ref="STDERR"/></logger>
-    <logger name="com.nexora.registry" level="WARN" additivity="false"><appender-ref ref="STDERR"/></logger>
+    <logger name="me.virul.nexora.runtime"  level="WARN" additivity="false"><appender-ref ref="STDERR"/></logger>
+    <logger name="me.virul.nexora.executor" level="WARN" additivity="false"><appender-ref ref="STDERR"/></logger>
+    <logger name="me.virul.nexora.loader"   level="WARN" additivity="false"><appender-ref ref="STDERR"/></logger>
+    <logger name="me.virul.nexora.registry" level="WARN" additivity="false"><appender-ref ref="STDERR"/></logger>
     <logger name="nexora.plugin"       level="WARN" additivity="false"><appender-ref ref="STDERR"/></logger>
 
     <!-- Auth audit trail (who changed what, logins, rejections): info, timestamped, stderr -->
-    <logger name="com.nexora.api.auth" level="INFO" additivity="false"><appender-ref ref="STDERR"/></logger>
+    <logger name="me.virul.nexora.api.auth" level="INFO" additivity="false"><appender-ref ref="STDERR"/></logger>
 
     <!-- CLI layer: info to stdout, clean format -->
-    <logger name="com.nexora.cli" level="INFO" additivity="false"><appender-ref ref="STDOUT"/></logger>
+    <logger name="me.virul.nexora.cli" level="INFO" additivity="false"><appender-ref ref="STDOUT"/></logger>
 
     <root level="WARN"><appender-ref ref="STDERR"/></root>
 

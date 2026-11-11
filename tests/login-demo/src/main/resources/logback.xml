@@ -11,7 +11,7 @@
     </encoder>
   </appender>
 
-  <logger name="com.nexora.api.auth" level="INFO" additivity="false">
+  <logger name="me.virul.nexora.api.auth" level="INFO" additivity="false">
     <appender-ref ref="AUDIT"/>
   </logger>
 

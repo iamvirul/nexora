@@ -1,0 +1,25 @@
+package me.virul.nexora.persistence;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import me.virul.nexora.persistence.jdbc.JdbcExecutionStore;
+import org.junit.jupiter.api.Test;
+
+class JdbcExecutionStoreHealthTest {
+
+    @Test
+    void isHealthyReturnsTrueWhileConnectionIsOpen() {
+        try (JdbcExecutionStore store = JdbcExecutionStore.h2InMemory()) {
+            assertTrue(store.isHealthy());
+        }
+    }
+
+    @Test
+    void isHealthyReturnsFalseOnceConnectionIsClosed() {
+        JdbcExecutionStore store = JdbcExecutionStore.h2InMemory();
+        store.close();
+
+        assertFalse(store.isHealthy());
+    }
+}

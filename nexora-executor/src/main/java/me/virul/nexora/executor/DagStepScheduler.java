@@ -1,0 +1,457 @@
+package me.virul.nexora.executor;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
+import me.virul.nexora.core.capability.CapabilityRequest;
+import me.virul.nexora.core.capability.CapabilityResult;
+import me.virul.nexora.core.capability.ResultStatus;
+import me.virul.nexora.core.context.ExecutionContext;
+import me.virul.nexora.core.execution.ExecutionResult;
+import me.virul.nexora.core.execution.ExecutionStatus;
+import me.virul.nexora.core.execution.StepResult;
+import me.virul.nexora.core.plan.AddStepAmendment;
+import me.virul.nexora.core.plan.InputBinding;
+import me.virul.nexora.core.plan.ModifyInputAmendment;
+import me.virul.nexora.core.plan.Plan;
+import me.virul.nexora.core.plan.PlanAmendment;
+import me.virul.nexora.core.plan.SkipStepAmendment;
+import me.virul.nexora.core.plan.Step;
+import me.virul.nexora.event.ExecutionEventBus;
+import me.virul.nexora.event.PlanAmendedEvent;
+import me.virul.nexora.event.StepCompletedEvent;
+import me.virul.nexora.event.StepFailedEvent;
+import me.virul.nexora.event.StepStartedEvent;
+import me.virul.nexora.retry.RetryPolicyRegistry;
+import me.virul.nexora.spi.CapabilityRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Schedules plan steps as a DAG, executing independent steps in parallel.
+ *
+ * <p>Supports reactive plan amendment: when a step's CapabilityResult carries
+ * PlanAmendment entries, the scheduler applies them before dependent steps start:
+ * <ul>
+ *   <li>AddStepAmendment  — injects a new step into the live DAG</li>
+ *   <li>SkipStepAmendment — marks a pending step as skipped</li>
+ *   <li>ModifyInputAmendment — overrides an input for a pending step</li>
+ * </ul>
+ *
+ * <p>Supports stopping an execution via the {@link HaltSignal} passed to
+ * {@link #schedule(Plan, ExecutionContext, HaltSignal)}. Once halted, steps that have not
+ * started are suppressed, and on {@link HaltSignal.Reason#CANCELLED} running steps are
+ * interrupted. The returned future completes with {@link ExecutionStatus#TIMED_OUT} or
+ * {@link ExecutionStatus#CANCELLED} once in-flight steps have drained.
+ *
+ * <p>Amendment processing is atomic with respect to the parent step's completion
+ * counter, so there is no window in which a newly added step can be missed by
+ * the final result collector.
+ */
+public final class DagStepScheduler {
+
+    private static final Logger log = LoggerFactory.getLogger(DagStepScheduler.class);
+
+    private final InterceptorPipeline pipeline;
+    private final RetryPolicyRegistry retryPolicyRegistry;
+    private final ExecutionEventBus eventBus;
+    private final Executor executor;
+    private final CapabilityRegistry capabilityRegistry;
+
+    public DagStepScheduler(
+            InterceptorPipeline pipeline,
+            RetryPolicyRegistry retryPolicyRegistry,
+            ExecutionEventBus eventBus,
+            Executor executor,
+            CapabilityRegistry capabilityRegistry) {
+        this.pipeline = Objects.requireNonNull(pipeline);
+        this.retryPolicyRegistry = Objects.requireNonNull(retryPolicyRegistry);
+        this.eventBus = Objects.requireNonNull(eventBus);
+        this.executor = Objects.requireNonNull(executor);
+        this.capabilityRegistry = Objects.requireNonNull(capabilityRegistry);
+    }
+
+    /**
+     * Holds the result of a schedule invocation.
+     *
+     * <p>{@code future} resolves when all steps have finished, including steps that were
+     * suppressed or interrupted after a halt.
+     *
+     * <p>{@code partialResults} is a thread-safe snapshot supplier that the caller
+     * (e.g. an external deadline watchdog in {@code ExecutionEngine}) can invoke at
+     * any time to obtain the results of steps that have already completed. This is
+     * used to populate the {@link ExecutionResult} when the deadline fires before
+     * all steps finish.
+     */
+    public record ScheduleSession(
+            CompletableFuture<ExecutionResult> future, Supplier<List<StepResult>> partialResults) {}
+
+    /** Schedules the plan with no way to stop it early. */
+    public CompletableFuture<ExecutionResult> schedule(Plan plan, ExecutionContext ctx) {
+        return schedule(plan, ctx, new HaltSignal()).future();
+    }
+
+    /**
+     * Schedules all steps in the plan as a DAG that can be stopped through {@code halt}.
+     *
+     * @param plan the execution plan (DAG of steps)
+     * @param ctx  the live execution context
+     * @param halt stop signal; see {@link HaltSignal} for how each reason affects running steps
+     * @return a {@link ScheduleSession} containing the future and a partial-results snapshot
+     */
+    public ScheduleSession schedule(Plan plan, ExecutionContext ctx, HaltSignal halt) {
+        validateNoCycles(plan);
+
+        ConcurrentHashMap<String, StepResult> completedResults = new ConcurrentHashMap<>();
+        Supplier<List<StepResult>> partialSnapshot = () -> List.copyOf(completedResults.values());
+
+        if (plan.getSteps().isEmpty()) {
+            ExecutionResult result = halt.seal()
+                    .map(reason -> haltedResult(reason, ctx.getExecutionId(), List.of()))
+                    .orElseGet(() -> ExecutionResult.completed(ctx.getExecutionId(), List.of()));
+            return new ScheduleSession(CompletableFuture.completedFuture(result), partialSnapshot);
+        }
+
+        // Mutable futures map — grows as AddStepAmendments inject new steps
+        ConcurrentHashMap<String, CompletableFuture<StepResult>> futures = new ConcurrentHashMap<>();
+        Set<String> skippedSteps = ConcurrentHashMap.newKeySet();
+
+        CompletableFuture<ExecutionResult> done = new CompletableFuture<>();
+        AtomicInteger pending = new AtomicInteger(plan.getSteps().size());
+
+        Runnable onStepDone = () -> {
+            if (pending.decrementAndGet() == 0) {
+                // Sealing decides the outcome atomically: a halt that arrives after this point
+                // is rejected, so a cancel can never report success on a plan that completed.
+                ExecutionResult result = halt.seal()
+                        .map(reason -> haltedResult(reason, ctx.getExecutionId(), partialSnapshot.get()))
+                        .orElseGet(() -> collectResults(ctx.getExecutionId(), completedResults));
+                done.complete(result);
+            }
+        };
+
+        for (Step step : plan.getSteps()) {
+            submitStep(step, futures, completedResults, skippedSteps, pending, onStepDone, ctx, halt);
+        }
+
+        return new ScheduleSession(done, partialSnapshot);
+    }
+
+    private void submitStep(
+            Step step,
+            ConcurrentHashMap<String, CompletableFuture<StepResult>> futures,
+            ConcurrentHashMap<String, StepResult> completedResults,
+            Set<String> skippedSteps,
+            AtomicInteger pending,
+            Runnable onStepDone,
+            ExecutionContext ctx,
+            HaltSignal halt) {
+
+        CompletableFuture<Void> prerequisite = buildPrerequisite(step, futures);
+
+        CompletableFuture<StepResult> stepFuture = prerequisite
+                .thenApplyAsync(
+                        ignored -> {
+                            // Registering and checking the halt is one atomic step, so a cancel either
+                            // sees this thread (and interrupts it) or the step never starts.
+                            if (!halt.enterStep()) {
+                                return suppressedResult(step, halt.reason().orElseThrow());
+                            }
+                            try {
+                                if (skippedSteps.contains(step.id())) {
+                                    log.info("Step skipped by amendment id={}", step.id());
+                                    return new StepResult(
+                                            step.id(), CapabilityResult.skipped("Step skipped by plan amendment"));
+                                }
+                                if (step.condition() != null
+                                        && !step.condition().evaluate(ctx)) {
+                                    log.info("Step skipped by condition id={}", step.id());
+                                    return new StepResult(
+                                            step.id(), CapabilityResult.skipped("Step condition evaluated to false"));
+                                }
+                                return executeStep(step, ctx);
+                            } finally {
+                                halt.exitStep();
+                            }
+                        },
+                        executor)
+                .handle((result, ex) -> {
+                    if (ex != null) {
+                        Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                        log.error("Step threw unexpectedly id={} capability={}", step.id(), step.capabilityId(), cause);
+                        eventBus.publish(new StepFailedEvent(
+                                ctx.getExecutionId(),
+                                step.id(),
+                                step.capabilityId(),
+                                ctx.getTraceContext().traceId(),
+                                "INTERNAL_ERROR",
+                                cause.getMessage(),
+                                java.time.Duration.ZERO,
+                                java.time.Instant.now()));
+                        return new StepResult(
+                                step.id(), CapabilityResult.failure("INTERNAL_ERROR", cause.getMessage()));
+                    }
+                    return result;
+                })
+                .whenComplete((result, ex) -> {
+                    if (result != null) {
+                        completedResults.put(step.id(), result);
+                        // Process amendments before decrementing — keeps pending count consistent
+                        applyAmendments(
+                                result.capabilityResult().amendments(),
+                                futures,
+                                completedResults,
+                                skippedSteps,
+                                pending,
+                                onStepDone,
+                                ctx,
+                                halt);
+                    }
+                    onStepDone.run();
+                });
+
+        futures.put(step.id(), stepFuture);
+    }
+
+    private void applyAmendments(
+            List<PlanAmendment> amendments,
+            ConcurrentHashMap<String, CompletableFuture<StepResult>> futures,
+            ConcurrentHashMap<String, StepResult> completedResults,
+            Set<String> skippedSteps,
+            AtomicInteger pending,
+            Runnable onStepDone,
+            ExecutionContext ctx,
+            HaltSignal halt) {
+
+        for (PlanAmendment amendment : amendments) {
+            switch (amendment) {
+                case AddStepAmendment add -> {
+                    if (futures.containsKey(add.step().id())) {
+                        log.warn(
+                                "AddStepAmendment ignored — step id already exists: {}",
+                                add.step().id());
+                        continue;
+                    }
+                    log.info("Plan amendment: adding step id={}", add.step().id());
+                    pending.incrementAndGet();
+                    eventBus.publish(new PlanAmendedEvent(
+                            ctx.getExecutionId(),
+                            ctx.getTraceContext().traceId(),
+                            "ADD_STEP",
+                            add.step().id(),
+                            Instant.now()));
+                    submitStep(add.step(), futures, completedResults, skippedSteps, pending, onStepDone, ctx, halt);
+                }
+                case SkipStepAmendment skip -> {
+                    log.info("Plan amendment: skipping step id={}", skip.stepId());
+                    skippedSteps.add(skip.stepId());
+                    eventBus.publish(new PlanAmendedEvent(
+                            ctx.getExecutionId(),
+                            ctx.getTraceContext().traceId(),
+                            "SKIP_STEP",
+                            skip.stepId(),
+                            Instant.now()));
+                }
+                case ModifyInputAmendment modify -> {
+                    log.info("Plan amendment: modifying input stepId={} key={}", modify.stepId(), modify.inputKey());
+                    ctx.putInputOverride(modify.stepId(), modify.inputKey(), modify.value());
+                    eventBus.publish(new PlanAmendedEvent(
+                            ctx.getExecutionId(),
+                            ctx.getTraceContext().traceId(),
+                            "MODIFY_INPUT",
+                            modify.stepId(),
+                            Instant.now()));
+                }
+            }
+        }
+    }
+
+    private static StepResult suppressedResult(Step step, HaltSignal.Reason reason) {
+        log.debug("Step suppressed by halt id={} reason={}", step.id(), reason);
+        return switch (reason) {
+            case DEADLINE ->
+                new StepResult(
+                        step.id(),
+                        CapabilityResult.failure("TIMED_OUT", "Execution deadline expired before step started"));
+            case CANCELLED ->
+                new StepResult(
+                        step.id(), CapabilityResult.failure("CANCELLED", "Execution cancelled before step started"));
+        };
+    }
+
+    private static ExecutionResult haltedResult(
+            HaltSignal.Reason reason, String executionId, List<StepResult> results) {
+        return switch (reason) {
+            case DEADLINE -> ExecutionResult.timedOut(executionId, results);
+            case CANCELLED -> ExecutionResult.cancelled(executionId, results);
+        };
+    }
+
+    private StepResult executeStep(Step step, ExecutionContext ctx) {
+        log.debug(
+                "Starting step id={} capability={} executionId={}",
+                step.id(),
+                step.capabilityId(),
+                ctx.getExecutionId());
+
+        Map<String, Object> resolvedInputs = resolveInputs(step, ctx);
+
+        Duration effectiveTimeout = step.timeout() != null
+                ? step.timeout()
+                : capabilityRegistry
+                        .findDescriptor(step.capabilityId())
+                        .filter(d -> d.contract().hasLatencySla())
+                        .map(d -> d.contract().expectedP99Latency())
+                        .orElse(null);
+
+        CapabilityRequest request = new CapabilityRequest(
+                step.capabilityId(),
+                step.id(),
+                ctx.idempotencyKeyFor(step.id()),
+                resolvedInputs,
+                ctx.getTraceContext().childSpan(),
+                effectiveTimeout,
+                ctx.getExecutionId(),
+                0,
+                ctx.tenantId());
+
+        eventBus.publish(new StepStartedEvent(
+                ctx.getExecutionId(),
+                step.id(),
+                step.capabilityId(),
+                request.idempotencyKey(),
+                request.traceContext().traceId(),
+                request.traceContext().spanId(),
+                Instant.now()));
+
+        Instant start = Instant.now();
+        CapabilityResult result = pipeline.execute(request);
+        Duration elapsed = Duration.between(start, Instant.now());
+
+        if (result.succeeded()) {
+            if (step.outputKey() != null) {
+                ctx.put(step.outputKey(), result.output());
+            }
+            ctx.recordStepOutput(step.id(), result.output());
+
+            eventBus.publish(new StepCompletedEvent(
+                    ctx.getExecutionId(),
+                    step.id(),
+                    step.capabilityId(),
+                    request.traceContext().traceId(),
+                    elapsed,
+                    Instant.now(),
+                    result.output()));
+            log.debug("Step completed id={} elapsed={}ms", step.id(), elapsed.toMillis());
+        } else {
+            eventBus.publish(new StepFailedEvent(
+                    ctx.getExecutionId(),
+                    step.id(),
+                    step.capabilityId(),
+                    request.traceContext().traceId(),
+                    result.failureCode(),
+                    result.failureMessage(),
+                    elapsed,
+                    Instant.now()));
+            log.warn("Step failed id={} code={} message={}", step.id(), result.failureCode(), result.failureMessage());
+        }
+
+        return new StepResult(step.id(), result);
+    }
+
+    private Map<String, Object> resolveInputs(Step step, ExecutionContext ctx) {
+        Map<String, Object> resolved = new HashMap<>();
+        // ModifyInputAmendment overrides take priority over declared bindings
+        Map<String, Object> overrides = ctx.getInputOverrides(step.id());
+        for (Map.Entry<String, InputBinding> entry : step.inputs().entrySet()) {
+            String key = entry.getKey();
+            resolved.put(
+                    key,
+                    overrides.containsKey(key)
+                            ? overrides.get(key)
+                            : entry.getValue().resolve(ctx));
+        }
+        overrides.forEach(resolved::putIfAbsent);
+        return resolved;
+    }
+
+    private CompletableFuture<Void> buildPrerequisite(
+            Step step, ConcurrentHashMap<String, CompletableFuture<StepResult>> futures) {
+
+        if (step.dependsOn().isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        List<CompletableFuture<StepResult>> deps = new ArrayList<>();
+        for (String depId : step.dependsOn()) {
+            CompletableFuture<StepResult> dep = futures.get(depId);
+            if (dep == null) {
+                throw new IllegalStateException("Step '" + step.id() + "' declares dependency on '" + depId
+                        + "' but that step is not in the plan. "
+                        + "AddStepAmendment dependencies must reference existing steps.");
+            }
+            deps.add(dep);
+        }
+
+        return CompletableFuture.allOf(deps.toArray(new CompletableFuture[0]));
+    }
+
+    private ExecutionResult collectResults(String executionId, ConcurrentHashMap<String, StepResult> completedResults) {
+
+        List<StepResult> results = new ArrayList<>(completedResults.values());
+        ExecutionStatus overallStatus = ExecutionStatus.COMPLETED;
+
+        for (StepResult result : results) {
+            if (!result.succeeded() && !isSkipped(result)) {
+                overallStatus = ExecutionStatus.FAILED;
+                break;
+            }
+        }
+
+        return new ExecutionResult(executionId, overallStatus, results);
+    }
+
+    private boolean isSkipped(StepResult result) {
+        return result.capabilityResult().status() == ResultStatus.SKIPPED;
+    }
+
+    private void validateNoCycles(Plan plan) {
+        Map<String, Step> stepById = new HashMap<>();
+        for (Step step : plan.getSteps()) {
+            stepById.put(step.id(), step);
+        }
+        Map<String, Integer> color = new HashMap<>();
+        for (Step step : plan.getSteps()) {
+            if (!color.containsKey(step.id())) {
+                dfsCheckCycle(step.id(), stepById, color);
+            }
+        }
+    }
+
+    private void dfsCheckCycle(String stepId, Map<String, Step> stepById, Map<String, Integer> color) {
+        color.put(stepId, 1);
+        Step step = stepById.get(stepId);
+        if (step != null) {
+            for (String dep : step.dependsOn()) {
+                int depColor = color.getOrDefault(dep, 0);
+                if (depColor == 1) {
+                    throw new IllegalStateException("Cycle detected in plan dependency graph involving step: " + dep);
+                }
+                if (depColor == 0) {
+                    dfsCheckCycle(dep, stepById, color);
+                }
+            }
+        }
+        color.put(stepId, 2);
+    }
+}

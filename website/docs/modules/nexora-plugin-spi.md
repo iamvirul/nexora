@@ -58,7 +58,7 @@ public class ChargeCardCapability implements Capability {
 
 ## NexoraPlugin
 
-Entry point for a plugin JAR. Discovered via `ServiceLoader` from `META-INF/services/com.nexora.spi.NexoraPlugin`.
+Entry point for a plugin JAR. Discovered via `ServiceLoader` from `META-INF/services/me.virul.nexora.spi.NexoraPlugin`.
 
 ```java
 public class PaymentPlugin implements NexoraPlugin {

@@ -58,7 +58,7 @@
             <groupId>me.virul.nexora</groupId>
             <artifactId>nexora-saga</artifactId>
             </dependency>
-        <!-- Parses dashboard login bodies in com.nexora.api.auth. -->
+        <!-- Parses dashboard login bodies in me.virul.nexora.api.auth. -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>

@@ -43,7 +43,7 @@ public interface Span {
 Add the OpenTelemetry SDK and implement the two interfaces:
 
 ```java
-public class OtelTracer implements com.nexora.tracing.Tracer {
+public class OtelTracer implements me.virul.nexora.tracing.Tracer {
 
     private final io.opentelemetry.api.trace.Tracer otelTracer;
 
@@ -62,7 +62,7 @@ public class OtelTracer implements com.nexora.tracing.Tracer {
     }
 }
 
-public class OtelSpan implements com.nexora.tracing.Span {
+public class OtelSpan implements me.virul.nexora.tracing.Span {
 
     private final io.opentelemetry.api.trace.Span inner;
 

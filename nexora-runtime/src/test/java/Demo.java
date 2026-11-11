@@ -1,34 +1,34 @@
-import com.nexora.core.capability.CapabilityResult;
-import com.nexora.core.execution.ExecutionResult;
-import com.nexora.core.intent.Intent;
-import com.nexora.core.plan.InputBinding;
-import com.nexora.event.InProcessEventBus;
-import com.nexora.event.PlanCompletedEvent;
-import com.nexora.event.StepCompletedEvent;
-import com.nexora.event.StepFailedEvent;
-import com.nexora.executor.CapabilityInvoker;
-import com.nexora.executor.DagStepScheduler;
-import com.nexora.executor.InterceptorPipeline;
-import com.nexora.executor.interceptor.RetryInterceptor;
-import com.nexora.executor.interceptor.TimeoutInterceptor;
-import com.nexora.executor.interceptor.TracingInterceptor;
-import com.nexora.loader.PluginManager;
-import com.nexora.planner.engine.PlannerEngine;
-import com.nexora.planner.model.StepDefinition;
-import com.nexora.planner.registry.PlanRegistry;
-import com.nexora.registry.DefaultCapabilityRegistry;
-import com.nexora.retry.DefaultRetryPolicyRegistry;
-import com.nexora.retry.ExponentialBackoffPolicy;
-import com.nexora.retry.RetryPolicyRegistry;
-import com.nexora.runtime.engine.ExecutionEngine;
-import com.nexora.spi.*;
-import com.nexora.tracing.NoopTracer;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executors;
+import me.virul.nexora.core.capability.CapabilityResult;
+import me.virul.nexora.core.execution.ExecutionResult;
+import me.virul.nexora.core.intent.Intent;
+import me.virul.nexora.core.plan.InputBinding;
+import me.virul.nexora.event.InProcessEventBus;
+import me.virul.nexora.event.PlanCompletedEvent;
+import me.virul.nexora.event.StepCompletedEvent;
+import me.virul.nexora.event.StepFailedEvent;
+import me.virul.nexora.executor.CapabilityInvoker;
+import me.virul.nexora.executor.DagStepScheduler;
+import me.virul.nexora.executor.InterceptorPipeline;
+import me.virul.nexora.executor.interceptor.RetryInterceptor;
+import me.virul.nexora.executor.interceptor.TimeoutInterceptor;
+import me.virul.nexora.executor.interceptor.TracingInterceptor;
+import me.virul.nexora.loader.PluginManager;
+import me.virul.nexora.planner.engine.PlannerEngine;
+import me.virul.nexora.planner.model.StepDefinition;
+import me.virul.nexora.planner.registry.PlanRegistry;
+import me.virul.nexora.registry.DefaultCapabilityRegistry;
+import me.virul.nexora.retry.DefaultRetryPolicyRegistry;
+import me.virul.nexora.retry.ExponentialBackoffPolicy;
+import me.virul.nexora.retry.RetryPolicyRegistry;
+import me.virul.nexora.runtime.engine.ExecutionEngine;
+import me.virul.nexora.spi.*;
+import me.virul.nexora.tracing.NoopTracer;
 
 /**
  * Integration demo showing the full v2 architecture:
@@ -126,13 +126,13 @@ public class Demo {
                 .build());
 
         // 4. EXECUTION PIPELINE
-        List<com.nexora.executor.ExecutionInterceptor> interceptors = List.of(
+        List<me.virul.nexora.executor.ExecutionInterceptor> interceptors = List.of(
                 new TracingInterceptor(NoopTracer.INSTANCE),
                 new RetryInterceptor(retryPolicyRegistry),
                 new TimeoutInterceptor(executor, Duration.ofSeconds(10)));
         InterceptorPipeline pipeline = new InterceptorPipeline(
                 interceptors,
-                new CapabilityInvoker(capabilityRegistry, new com.nexora.executor.CapabilityContractMonitor()));
+                new CapabilityInvoker(capabilityRegistry, new me.virul.nexora.executor.CapabilityContractMonitor()));
         DagStepScheduler scheduler =
                 new DagStepScheduler(pipeline, retryPolicyRegistry, eventBus, executor, capabilityRegistry);
 
@@ -180,9 +180,10 @@ public class Demo {
                 null));
 
         PlannerEngine plannerEngine = new PlannerEngine(planRegistry);
-        com.nexora.planner.engine.RulePlanner rulePlanner = new com.nexora.planner.engine.RulePlanner(plannerEngine);
-        com.nexora.planner.engine.CompositePlanner compositePlanner =
-                new com.nexora.planner.engine.CompositePlanner(List.of(), rulePlanner);
+        me.virul.nexora.planner.engine.RulePlanner rulePlanner =
+                new me.virul.nexora.planner.engine.RulePlanner(plannerEngine);
+        me.virul.nexora.planner.engine.CompositePlanner compositePlanner =
+                new me.virul.nexora.planner.engine.CompositePlanner(List.of(), rulePlanner);
 
         // 6. EXECUTION ENGINE
         ExecutionEngine engine = new ExecutionEngine(compositePlanner, capabilityRegistry, scheduler, eventBus);
