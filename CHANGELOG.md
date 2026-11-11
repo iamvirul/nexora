@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ---
 
 ## [Unreleased]
+### Added
+
+#### Integrations
+- **Spring Boot starter** - New module `nexora-spring-boot-starter` auto-configures a `NexoraEngine` bean on Spring Boot 4 from `nexora.*` properties: tenant id, default step timeout and plan deadline, saga, webhook secret, step output cap, plugin JARs, a default exponential backoff retry policy (`nexora.retry.*`) and a JDBC execution store with pool settings (`nexora.persistence.*`). `NexoraPlugin`, `StepDefinition` and `Planner` beans are registered automatically, plugins in `@Order` order; an `ExecutionStore`, `Tracer` or `RetryPolicy` bean replaces the one built from properties, and `NexoraEngineBuilderCustomizer` beans adjust the builder last. Unset properties keep the builder defaults, and invalid ones fail startup. An application-defined `NexoraEngine` bean turns the auto-configuration off, as does `nexora.enabled=false`. With Actuator, the `nexora` health component reports `NexoraEngine.readiness()` with per-check details; turn it off with `management.health.nexora.enabled=false`. The webhook secret and JDBC URL are redacted from the properties' `toString()` ([#52](https://github.com/iamvirul/nexora/issues/52))
+
 ### Changed
 - **Java packages are now `me.virul.nexora.*`** - Every package moved from `com.nexora.*` to `me.virul.nexora.*`, matching the Maven group ID. Update imports (`com.nexora.api.NexoraEngine` becomes `me.virul.nexora.api.NexoraEngine`), logger names in logging configs, and the ServiceLoader file of a plugin JAR: rename `META-INF/services/com.nexora.spi.NexoraPlugin` to `META-INF/services/me.virul.nexora.spi.NexoraPlugin`. A plugin JAR built against 0.5.0 is not found by this engine until it is rebuilt. Class names and behaviour are unchanged
 
