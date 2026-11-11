@@ -14,6 +14,8 @@ You can define a `StepCondition` for any step in your plan. Just before the step
 
 If the condition evaluates to `false`, the step is marked as `SKIPPED`. Downstream steps that depend on this skipped step will proceed gracefully, but if they rely on the output of the skipped step, they might fail depending on their implementation.
 
+A step whose dependency *failed* is different: it is skipped with failure code `DEPENDENCY_FAILED` and its own dependents are skipped too, so you do not need a condition to stop work after a failure.
+
 ## Condition Types
 
 Nexora ships with several built-in condition types:

@@ -25,7 +25,7 @@ Three things set it apart from every other workflow engine:
 When you call `engine.execute("process order payment", context)`:
 
 1. The **planner** matches the goal against registered step definitions and builds a DAG
-2. The **scheduler** walks the DAG and starts every step whose dependencies are already done; independent steps run in parallel on virtual threads
+2. The **scheduler** walks the DAG and starts every step whose dependencies are already done; independent steps run in parallel on virtual threads. If a dependency failed, the step is skipped (`DEPENDENCY_FAILED`) instead of run, and so is everything downstream of it
 3. Each step flows through an **interceptor pipeline** (tracing -> retry -> timeout) before hitting the actual capability
 4. If a step returns **plan amendments**, the scheduler applies them before any dependent step begins
 5. The **contract monitor** tracks every call outcome; if a capability breaches its declared SLA, traffic is rerouted to its fallback
