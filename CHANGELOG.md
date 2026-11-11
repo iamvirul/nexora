@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - **Java packages are now `me.virul.nexora.*`** - Every package moved from `com.nexora.*` to `me.virul.nexora.*`, matching the Maven group ID. Update imports (`com.nexora.api.NexoraEngine` becomes `me.virul.nexora.api.NexoraEngine`), logger names in logging configs, and the ServiceLoader file of a plugin JAR: rename `META-INF/services/com.nexora.spi.NexoraPlugin` to `META-INF/services/me.virul.nexora.spi.NexoraPlugin`. A plugin JAR built against 0.5.0 is not found by this engine until it is rebuilt. Class names and behaviour are unchanged
+- **`withDefaultTimeout` rejects durations under 1ms** - The step timeout is applied in whole milliseconds, so `0ms` or a negative value made every step without its own timeout fail at once. `NexoraEngine.Builder.withDefaultTimeout` now throws `IllegalArgumentException` for them; `null` still means no default timeout
+- **Readiness checks the database once** - When persistence is DOWN, `NexoraEngine.readiness()` no longer runs the schema check and reports migrations DOWN as well. A probe against an unreachable or saturated pool now waits for a connection at most once instead of twice
 
 ## [0.5.0] - 2026-11-10
 ### Added
