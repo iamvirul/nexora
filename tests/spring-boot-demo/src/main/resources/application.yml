@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: nexora-spring-boot-demo
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: ${PORT:8080}
+
+nexora:
+  default-timeout: 5s
+  default-plan-deadline: 30s
+  retry:
+    max-attempts: 3
+    initial-delay: 100ms
+  persistence:
+    # In-memory H2 for the demo; point NEXORA_JDBC_URL at PostgreSQL 15+ to keep executions.
+    jdbc-url: ${NEXORA_JDBC_URL:jdbc:h2:mem:nexora-demo;DB_CLOSE_DELAY=-1}
+    pool:
+      maximum-pool-size: 5
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,nexora

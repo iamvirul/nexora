@@ -89,6 +89,7 @@
         <module>tests/login-demo</module>
         <module>tests/multi-tenant-demo</module>
         <module>tests/llm-planner-demo</module>
+        <module>tests/spring-boot-demo</module>
     </modules>
 
     <properties>
@@ -561,6 +562,7 @@
                                 <artifact>login-demo</artifact>
                                 <artifact>multi-tenant-demo</artifact>
                                 <artifact>payment-pipeline</artifact>
+                                <artifact>spring-boot-demo</artifact>
                             </excludeArtifacts>
                         </configuration>
                     </plugin>
