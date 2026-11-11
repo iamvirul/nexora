@@ -469,7 +469,7 @@ public final class NexoraEngine implements AutoCloseable {
         boolean persistenceUp = store == null || store.isHealthy();
         checks.put(ReadinessReport.CHECK_PERSISTENCE, HealthStatus.of(persistenceUp));
         // The schema check needs another connection: against an unreachable or saturated pool it would
-        // wait the full connection timeout a second time, for an answer that cannot be UP anyway.
+        // wait out its probe timeout a second time, for an answer that cannot be UP anyway.
         checks.put(
                 ReadinessReport.CHECK_MIGRATIONS,
                 HealthStatus.of(persistenceUp && (store == null || store.isSchemaCurrent())));
