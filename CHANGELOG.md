@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ---
 
 ## [Unreleased]
+### Changed
+- **Java packages are now `me.virul.nexora.*`** - Every package moved from `com.nexora.*` to `me.virul.nexora.*`, matching the Maven group ID. Update imports (`com.nexora.api.NexoraEngine` becomes `me.virul.nexora.api.NexoraEngine`), logger names in logging configs, and the ServiceLoader file of a plugin JAR: rename `META-INF/services/com.nexora.spi.NexoraPlugin` to `META-INF/services/me.virul.nexora.spi.NexoraPlugin`. A plugin JAR built against 0.5.0 is not found by this engine until it is rebuilt. Class names and behaviour are unchanged
+
+## [0.5.0] - 2026-11-10
 ### Added
 
 #### Deployment
