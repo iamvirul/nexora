@@ -108,6 +108,8 @@ public class CliConfig {
         public Integer minimumIdle;
         public Long connectionTimeoutMs;
         public Long idleTimeoutMs;
+        /** Bound on each readiness check, separate from {@code connectionTimeoutMs}. */
+        public Long probeTimeoutMs;
 
         /** @throws IllegalArgumentException if a value is out of range */
         public PoolConfig toPoolConfig() {
@@ -118,7 +120,8 @@ public class CliConfig {
                     maxSize,
                     minIdle,
                     connectionTimeoutMs != null ? connectionTimeoutMs : PoolConfig.DEFAULT_CONNECTION_TIMEOUT_MS,
-                    idleTimeoutMs != null ? idleTimeoutMs : PoolConfig.DEFAULT_IDLE_TIMEOUT_MS);
+                    idleTimeoutMs != null ? idleTimeoutMs : PoolConfig.DEFAULT_IDLE_TIMEOUT_MS,
+                    probeTimeoutMs != null ? probeTimeoutMs : PoolConfig.DEFAULT_PROBE_TIMEOUT_MS);
         }
     }
 

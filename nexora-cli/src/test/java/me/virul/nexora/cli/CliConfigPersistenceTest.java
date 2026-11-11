@@ -28,12 +28,13 @@ class CliConfigPersistenceTest {
                         "maximumPoolSize": 8,
                         "minimumIdle": 3,
                         "connectionTimeoutMs": 4000,
-                        "idleTimeoutMs": 120000
+                        "idleTimeoutMs": 120000,
+                        "probeTimeoutMs": 500
                     }
                 }
             }
             """;
-        PoolConfig expected = new PoolConfig(8, 3, 4_000, 120_000);
+        PoolConfig expected = new PoolConfig(8, 3, 4_000, 120_000, 500);
 
         CliConfig parsed = JSON.readValue(json, CliConfig.class);
         CliConfig reparsed = JSON.readValue(JSON.writeValueAsString(parsed), CliConfig.class);
@@ -63,6 +64,13 @@ class CliConfigPersistenceTest {
         CliConfig config = JSON.readValue("{\"persistence\": {\"pool\": {\"maximumPoolSize\": 1}}}", CliConfig.class);
 
         assertEquals(1, config.poolConfig().minimumIdle());
+    }
+
+    @Test
+    void probeTimeoutBelowMinimumIsRejected() throws Exception {
+        CliConfig config = JSON.readValue("{\"persistence\": {\"pool\": {\"probeTimeoutMs\": 10}}}", CliConfig.class);
+
+        assertThrows(IllegalArgumentException.class, config::poolConfig);
     }
 
     @Test
