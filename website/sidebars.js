@@ -52,6 +52,7 @@ const sidebars = {
       items: [
         'modules/overview',
         'modules/nexora-api',
+        'modules/nexora-spring-boot-starter',
         'modules/nexora-core',
         'modules/nexora-plugin-spi',
         'modules/nexora-planner',

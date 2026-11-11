@@ -246,6 +246,77 @@ ExecutionResult result = engine
     .get();
 ```
 
+## Spring Boot
+
+`nexora-spring-boot-starter` auto-configures a `NexoraEngine` bean from `application.yml` and the Nexora beans your application declares. It targets Spring Boot 4.
+
+```xml
+<dependency>
+    <groupId>me.virul.nexora</groupId>
+    <artifactId>nexora-spring-boot-starter</artifactId>
+</dependency>
+```
+
+```yaml
+nexora:
+  tenant-id: acme                # optional: bind the engine to one tenant
+  default-timeout: 5s            # per-step timeout when a step sets none
+  default-plan-deadline: 30s     # whole-execution deadline when the intent sets none
+  saga-enabled: true
+  webhook-secret: ${NEXORA_WEBHOOK_SECRET}
+  step-output-max-bytes: 65536
+  plugin-jars:
+    - /opt/nexora/plugins/payments.jar
+  retry:                         # default retry policy; no retries without max-attempts
+    max-attempts: 3
+    initial-delay: 200ms
+    multiplier: 2.0
+    max-delay: 10s
+  persistence:                   # JDBC store; no persistence without jdbc-url
+    jdbc-url: ${NEXORA_JDBC_URL}
+    pool:
+      maximum-pool-size: 10
+      minimum-idle: 2
+```
+
+Every key is optional; an unset key keeps the `NexoraEngine.Builder` default. An invalid value (a bad tenant id, a pool of 0 connections) fails application startup.
+
+Beans are picked up automatically:
+
+| Bean type | Effect |
+|---|---|
+| `NexoraPlugin` | Registered and activated, in `@Order` order (so required plugins go first) |
+| `StepDefinition` | Added to the rule planner |
+| `Planner` | Added ahead of the rule planner |
+| `ExecutionStore` | Used instead of the store built from `nexora.persistence.jdbc-url` |
+| `Tracer` | Used for step spans, for example an `OtelTracer` |
+| `RetryPolicy` | Used instead of the policy built from `nexora.retry.*` |
+| `NexoraEngineBuilderCustomizer` | Applied last, in `@Order` order, for anything without a property (such as a custom `Executor`) |
+
+```java
+@Configuration
+class NexoraConfig {
+
+    // The engine owns the plugin lifecycle; destroyMethod = "" stops Spring calling shutdown() a second time.
+    @Bean(destroyMethod = "")
+    NexoraPlugin paymentPlugin() {
+        return new PaymentPlugin();
+    }
+
+    @Bean
+    StepDefinition chargeStep() {
+        return StepDefinition.builder("charge", "charge_card")
+                .withMatcher(goal -> goal.contains("payment"))
+                .withInput("amount", InputBinding.fromContext("amount"))
+                .build();
+    }
+}
+```
+
+Define your own `NexoraEngine` bean to take over completely, or set `nexora.enabled=false` to turn the starter off. The engine is closed with the application context.
+
+With Spring Boot Actuator on the classpath, the `nexora` health component reports `NexoraEngine.readiness()`: UP only when persistence, its migrations, plugins and the executor are all UP, with each check, the active plugin ids and the bound tenant as details. Add it to the readiness probe with `management.endpoint.health.group.readiness.include=readinessState,nexora`, or turn it off with `management.health.nexora.enabled=false`.
+
 ## Pluggable planner
 
 The planner that converts a goal string into a DAG is itself a plugin. Implement `Planner` and return it from `plannerProviders()` in your `NexoraPlugin`:
@@ -773,6 +844,7 @@ nexora-planner        CompositePlanner, RulePlanner, StepDefinition, PlanRegistr
 nexora-runtime        ExecutionEngine (ties planner + scheduler together)
 nexora-api            NexoraEngine public facade, builder, NexoraObservability
 nexora-cli            PicoCLI command-line interface + ObserveCommand HTTP server
+nexora-spring-boot-starter  Spring Boot auto-configuration and Actuator health indicator
 ```
 
 Dependencies always point inward. `nexora-cli` knows about `nexora-api`. `nexora-api` knows about `nexora-runtime`. Neither knows anything about the CLI.
