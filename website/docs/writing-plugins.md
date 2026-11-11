@@ -6,7 +6,7 @@ sidebar_position: 5
 
 # Writing a plugin
 
-A plugin is a JAR that implements `NexoraPlugin` and declares itself in `META-INF/services/com.nexora.spi.NexoraPlugin`.
+A plugin is a JAR that implements `NexoraPlugin` and declares itself in `META-INF/services/me.virul.nexora.spi.NexoraPlugin`.
 
 ```java
 public class MyPlugin implements NexoraPlugin {

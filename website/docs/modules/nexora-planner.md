@@ -83,7 +83,7 @@ Chains multiple `Planner` implementations. Tries each planner in priority order 
 
 ### Implementing a custom Planner
 
-Implement `com.nexora.spi.Planner` and contribute it via a plugin:
+Implement `me.virul.nexora.spi.Planner` and contribute it via a plugin:
 
 ```java
 public class LlmPlanner implements Planner {

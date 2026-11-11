@@ -40,7 +40,7 @@ dependencies {
 }
 ```
 
-Add `nexora-tracing-otel` for OpenTelemetry tracing. A plugin built as its own JAR needs only `nexora-plugin-spi`, as `provided` (Gradle: `compileOnly`), since the engine supplies it at runtime. The Java packages are `com.nexora.*`. [nexora-api](./modules/nexora-api.md) shows how to build and run an engine.
+Add `nexora-tracing-otel` for OpenTelemetry tracing. A plugin built as its own JAR needs only `nexora-plugin-spi`, as `provided` (Gradle: `compileOnly`), since the engine supplies it at runtime. The Java packages are `me.virul.nexora.*`. [nexora-api](./modules/nexora-api.md) shows how to build and run an engine.
 
 The CLI (`nexora.jar`) and the LLM planner plugin JAR are not on Maven Central; download them from the [GitHub Releases](https://github.com/iamvirul/nexora/releases), or build them from source as below.
 

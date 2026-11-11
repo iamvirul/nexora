@@ -72,7 +72,7 @@ All active plugins are deactivated when the engine shuts down (`engine.shutdown(
 
 Each plugin gets a child `URLClassLoader` that:
 - Loads classes from the plugin JAR first (child-first strategy)
-- Falls back to the host classloader for `com.nexora.spi.*` and `java.*`
+- Falls back to the host classloader for `me.virul.nexora.spi.*` and `java.*`
 
 This ensures the plugin's dependencies (e.g. its own version of a HTTP client) do not conflict with other plugins or the host.
 
@@ -95,7 +95,7 @@ new PluginDescriptor(
 ## Writing a plugin JAR
 
 1. Create a JAR with a class that implements `NexoraPlugin`.
-2. Add a service descriptor file: `META-INF/services/com.nexora.spi.NexoraPlugin` containing the fully qualified class name.
+2. Add a service descriptor file: `META-INF/services/me.virul.nexora.spi.NexoraPlugin` containing the fully qualified class name.
 3. Pass the JAR path to `NexoraEngine.Builder.withPluginJar()` at startup, or to `engine.loadPlugin(path, pluginId)` on a running engine.
 
 See [Writing Plugins](../writing-plugins) for a step-by-step guide.

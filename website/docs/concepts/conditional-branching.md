@@ -64,8 +64,8 @@ In this example, `process_data` will only run if `fetch_data` completes and retu
 You can also construct conditions dynamically via the `StepDefinition.Builder` when embedding Nexora into your own applications:
 
 ```java
-import com.nexora.core.plan.condition.ContextValueEquals;
-import com.nexora.planner.model.StepDefinition;
+import me.virul.nexora.core.plan.condition.ContextValueEquals;
+import me.virul.nexora.planner.model.StepDefinition;
 
 StepDefinition step = StepDefinition.builder("send_email", "send_email_cap")
     .withMatcher(goal -> goal.contains("email"))
