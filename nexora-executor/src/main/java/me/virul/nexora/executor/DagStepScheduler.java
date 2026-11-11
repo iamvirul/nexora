@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -47,6 +48,12 @@ import org.slf4j.LoggerFactory;
  *   <li>SkipStepAmendment — marks a pending step as skipped</li>
  *   <li>ModifyInputAmendment — overrides an input for a pending step</li>
  * </ul>
+ *
+ * <p>A step starts once every step it depends on has finished. If one of them failed (including
+ * a timeout, an exception or a halt), the step is not run: it is SKIPPED with
+ * {@link CapabilityResult#DEPENDENCY_FAILED}, and so is everything downstream of it. A dependency
+ * skipped by a condition or a skip amendment does not stop its dependents. Steps on other
+ * branches keep running, and the execution still ends FAILED.
  *
  * <p>Supports stopping an execution via the {@link HaltSignal} passed to
  * {@link #schedule(Plan, ExecutionContext, HaltSignal)}. Once halted, steps that have not
@@ -168,6 +175,17 @@ public final class DagStepScheduler {
                                 return suppressedResult(step, halt.reason().orElseThrow());
                             }
                             try {
+                                // Checked first: a skip for a failed dependency must reach this step's
+                                // own dependents, which an amendment or condition skip does not.
+                                Optional<String> failedDependency = failedDependency(step, futures);
+                                if (failedDependency.isPresent()) {
+                                    log.info(
+                                            "Step skipped, dependency failed id={} dependency={}",
+                                            step.id(),
+                                            failedDependency.get());
+                                    return new StepResult(
+                                            step.id(), CapabilityResult.dependencyFailed(failedDependency.get()));
+                                }
                                 if (skippedSteps.contains(step.id())) {
                                     log.info("Step skipped by amendment id={}", step.id());
                                     return new StepResult(
@@ -404,6 +422,18 @@ public final class DagStepScheduler {
         }
 
         return CompletableFuture.allOf(deps.toArray(new CompletableFuture[0]));
+    }
+
+    /**
+     * The first dependency of {@code step}, in id order, that failed or was skipped because its own
+     * dependency failed. Called once every dependency has finished, so the lookups never block.
+     */
+    private static Optional<String> failedDependency(
+            Step step, ConcurrentHashMap<String, CompletableFuture<StepResult>> futures) {
+        return step.dependsOn().stream()
+                .sorted()
+                .filter(depId -> futures.get(depId).join().capabilityResult().isDependencyFailure())
+                .findFirst();
     }
 
     private ExecutionResult collectResults(String executionId, ConcurrentHashMap<String, StepResult> completedResults) {
