@@ -202,7 +202,8 @@ By default Nexora looks for `nexora.json` in the working directory. Point to a d
       "maximumPoolSize": 10,
       "minimumIdle": 2,
       "connectionTimeoutMs": 30000,
-      "idleTimeoutMs": 600000
+      "idleTimeoutMs": 600000,
+      "probeTimeoutMs": 1000
     },
     "stepOutputMaxBytes": 65536
   },
@@ -217,7 +218,7 @@ By default Nexora looks for `nexora.json` in the working directory. Point to a d
 }
 ```
 
-`persistence.pool` sizes the HikariCP connection pool behind `executionStore`. Every key is optional and the values above are the defaults (`minimumIdle` defaults to 2, or to `maximumPoolSize` if that is smaller). `connectionTimeoutMs` must be at least 250 and `idleTimeoutMs` must be 0 (never retire idle connections) or at least 10000; out-of-range values fail at startup.
+`persistence.pool` sizes the HikariCP connection pool behind `executionStore`. Every key is optional and the values above are the defaults (`minimumIdle` defaults to 2, or to `maximumPoolSize` if that is smaller). `connectionTimeoutMs` must be at least 250 and `idleTimeoutMs` must be 0 (never retire idle connections) or at least 10000; out-of-range values fail at startup. `probeTimeoutMs` (at least 100) bounds each database check behind `/health/ready` on its own, so a saturated pool reports DOWN within it while normal work still waits up to `connectionTimeoutMs`. A readiness probe runs two checks, so it takes at most about twice this value.
 
 `persistence.stepOutputMaxBytes` caps the output stored for each completed step, in UTF-8 JSON bytes (default 65536). A larger output is stored as a truncated `preview` and logged at `WARN`; the step still completes, and later steps still receive the whole output. Values from 1 to 255 fail at startup. Set it to `0` to store no outputs, for example when steps return data that must not be written to the database.
 
@@ -244,6 +245,97 @@ engine.subscribe(StepCompletedEvent.class, e ->
 ExecutionResult result = engine
     .execute("process order payment", Map.of("orderId", "ORD-99"))
     .get();
+```
+
+## Spring Boot
+
+`nexora-spring-boot-starter` auto-configures a `NexoraEngine` bean from `application.yml` and the Nexora beans your application declares. It targets Spring Boot 4 and is available from 0.6.0: import the `nexora-all` BOM (see [Use it as a library](#use-it-as-a-library)) at 0.6.0 or later, since 0.5.0 does not include the starter.
+
+```xml
+<dependency>
+    <groupId>me.virul.nexora</groupId>
+    <artifactId>nexora-spring-boot-starter</artifactId>
+</dependency>
+```
+
+```yaml
+nexora:
+  tenant-id: acme                # optional: bind the engine to one tenant
+  default-timeout: 5s            # per-step timeout when a step sets none
+  default-plan-deadline: 30s     # whole-execution deadline when the intent sets none
+  saga-enabled: true
+  webhook-secret: ${NEXORA_WEBHOOK_SECRET}
+  step-output-max-bytes: 65536
+  plugin-jars:
+    - /opt/nexora/plugins/payments.jar
+  retry:                         # default retry policy; no retries without max-attempts
+    max-attempts: 3
+    initial-delay: 200ms
+    multiplier: 2.0
+    max-delay: 10s
+  persistence:                   # JDBC store; no persistence without jdbc-url
+    jdbc-url: ${NEXORA_JDBC_URL}
+    pool:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      probe-timeout: 1s          # bound on each health check, separate from connection-timeout
+```
+
+The H2 driver comes with the starter. For PostgreSQL 15 or later, add its driver as well; Spring Boot manages the version:
+
+```xml
+<dependency>
+    <groupId>org.postgresql</groupId>
+    <artifactId>postgresql</artifactId>
+    <scope>runtime</scope>
+</dependency>
+```
+
+Every key is optional; an unset key keeps the `NexoraEngine.Builder` default. An invalid value (a bad tenant id, a pool of 0 connections) fails application startup.
+
+Beans are picked up automatically:
+
+| Bean type | Effect |
+|---|---|
+| `NexoraPlugin` | Registered and activated, in `@Order` order (so required plugins go first) |
+| `StepDefinition` | Added to the rule planner |
+| `Planner` | Added ahead of the rule planner |
+| `ExecutionStore` | Used instead of the store built from `nexora.persistence.jdbc-url` |
+| `Tracer` | Used for step spans, for example an `OtelTracer` |
+| `RetryPolicy` | Used instead of the policy built from `nexora.retry.*` |
+| `NexoraEngineBuilderCustomizer` | Applied last, in `@Order` order, for anything without a property (such as a custom `Executor`) |
+
+```java
+@Configuration
+class NexoraConfig {
+
+    // The engine owns the plugin lifecycle; destroyMethod = "" stops Spring calling shutdown() a second time.
+    @Bean(destroyMethod = "")
+    NexoraPlugin paymentPlugin() {
+        return new PaymentPlugin();
+    }
+
+    @Bean
+    StepDefinition chargeStep() {
+        return StepDefinition.builder("charge", "charge_card")
+                .withMatcher(goal -> goal.contains("payment"))
+                .withInput("amount", InputBinding.fromContext("intent.context.amount"))
+                .build();
+    }
+}
+```
+
+Define your own `NexoraEngine` bean to take over completely, or set `nexora.enabled=false` to turn the starter off. The engine is closed with the application context.
+
+With Spring Boot Actuator on the classpath, the `nexora` health component reports `NexoraEngine.readiness()`: UP only when persistence, its migrations, plugins and the executor are all UP, with each check, the active plugin ids and the bound tenant as details. Add it to the readiness probe with `management.endpoint.health.group.readiness.include=readinessState,nexora`, or turn it off with `management.health.nexora.enabled=false`.
+
+`tests/spring-boot-demo` is a runnable order API built this way: a plugin and two step definitions as beans, H2 persistence, retry, and the `nexora` check in the readiness probe.
+
+```bash
+mvn install -DskipTests -DskipITs
+java -jar tests/spring-boot-demo/target/spring-boot-demo.jar
+curl -s localhost:8080/v1/orders -H 'Content-Type: application/json' -d '{"orderId":"ORD-1","amount":42.50}'
+curl -s localhost:8080/actuator/health/readiness
 ```
 
 ## Pluggable planner
@@ -773,6 +865,7 @@ nexora-planner        CompositePlanner, RulePlanner, StepDefinition, PlanRegistr
 nexora-runtime        ExecutionEngine (ties planner + scheduler together)
 nexora-api            NexoraEngine public facade, builder, NexoraObservability
 nexora-cli            PicoCLI command-line interface + ObserveCommand HTTP server
+nexora-spring-boot-starter  Spring Boot auto-configuration and Actuator health indicator
 ```
 
 Dependencies always point inward. `nexora-cli` knows about `nexora-api`. `nexora-api` knows about `nexora-runtime`. Neither knows anything about the CLI.

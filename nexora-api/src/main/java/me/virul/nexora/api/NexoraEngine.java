@@ -455,6 +455,8 @@ public final class NexoraEngine implements AutoCloseable {
      * Reports readiness of the engine's own dependencies: persistence, its schema migrations,
      * plugins, and the shared executor. A {@code null} persistence store (persistence disabled)
      * reports both persistence checks UP — there is nothing to check, not a degraded dependency.
+     * When persistence is DOWN the schema is not checked and migrations report DOWN too, so a probe
+     * waits for a database connection at most once.
      *
      * <p>Capability circuit breaker state is deliberately not part of readiness: an OPEN
      * circuit means a downstream is failing, and pulling every instance out of rotation
@@ -464,8 +466,13 @@ public final class NexoraEngine implements AutoCloseable {
         Map<String, HealthStatus> checks = new LinkedHashMap<>();
 
         ExecutionStore store = engine.getStore();
-        checks.put(ReadinessReport.CHECK_PERSISTENCE, HealthStatus.of(store == null || store.isHealthy()));
-        checks.put(ReadinessReport.CHECK_MIGRATIONS, HealthStatus.of(store == null || store.isSchemaCurrent()));
+        boolean persistenceUp = store == null || store.isHealthy();
+        checks.put(ReadinessReport.CHECK_PERSISTENCE, HealthStatus.of(persistenceUp));
+        // The schema check needs another connection: against an unreachable or saturated pool it would
+        // wait out its probe timeout a second time, for an answer that cannot be UP anyway.
+        checks.put(
+                ReadinessReport.CHECK_MIGRATIONS,
+                HealthStatus.of(persistenceUp && (store == null || store.isSchemaCurrent())));
 
         checks.put(
                 ReadinessReport.CHECK_PLUGINS,
@@ -664,7 +671,16 @@ public final class NexoraEngine implements AutoCloseable {
             return this;
         }
 
+        /**
+         * Per-step timeout for steps that set none; {@code null} (the default) means no timeout.
+         *
+         * @throws IllegalArgumentException if {@code timeout} is under 1ms: the timeout is applied in
+         *     whole milliseconds, so a shorter one would fail every step at once
+         */
         public Builder withDefaultTimeout(Duration timeout) {
+            if (timeout != null && timeout.toMillis() < 1) {
+                throw new IllegalArgumentException("defaultTimeout must be at least 1ms, got: " + timeout);
+            }
             this.defaultTimeout = timeout;
             return this;
         }

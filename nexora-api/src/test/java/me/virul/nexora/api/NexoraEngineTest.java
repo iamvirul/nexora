@@ -2,6 +2,9 @@ package me.virul.nexora.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 
 import java.sql.Connection;
 import java.sql.Statement;
@@ -32,6 +35,42 @@ class NexoraEngineTest {
         assertThatThrownBy(() -> builder.withDefaultPlanDeadline(Duration.ofSeconds(-5)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("defaultPlanDeadline must be a positive duration");
+    }
+
+    @Test
+    void builderRejectsDefaultTimeoutBelowOneMillisecond() {
+        NexoraEngine.Builder builder = NexoraEngine.builder();
+
+        for (Duration invalid : new Duration[] {Duration.ZERO, Duration.ofSeconds(-1), Duration.ofNanos(500_000)}) {
+            assertThatThrownBy(() -> builder.withDefaultTimeout(invalid))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("defaultTimeout must be at least 1ms");
+        }
+    }
+
+    @Test
+    void builderAcceptsNullDefaultTimeoutAsNoDefault() {
+        try (NexoraEngine engine =
+                NexoraEngine.builder().withDefaultTimeout(null).build()) {
+            assertThat(engine.readiness().ready()).isTrue();
+        }
+    }
+
+    @Test
+    void readinessSkipsSchemaCheckWhenPersistenceIsUnreachable() {
+        JdbcExecutionStore store = spy(JdbcExecutionStore.h2InMemory());
+        try (NexoraEngine engine =
+                NexoraEngine.builder().withExecutionStore(store).build()) {
+            store.close();
+
+            ReadinessReport report = engine.readiness();
+
+            // A second connection wait would double how long a probe takes against a saturated pool.
+            verify(store, never()).isSchemaCurrent();
+            assertThat(report.checks())
+                    .containsEntry(ReadinessReport.CHECK_PERSISTENCE, HealthStatus.DOWN)
+                    .containsEntry(ReadinessReport.CHECK_MIGRATIONS, HealthStatus.DOWN);
+        }
     }
 
     @Test

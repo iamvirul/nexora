@@ -7,8 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ---
 
 ## [Unreleased]
+### Added
+
+#### Integrations
+- **Spring Boot starter** - New module `nexora-spring-boot-starter` auto-configures a `NexoraEngine` bean on Spring Boot 4 from `nexora.*` properties: tenant id, default step timeout and plan deadline, saga, webhook secret, step output cap, plugin JARs, a default exponential backoff retry policy (`nexora.retry.*`) and a JDBC execution store with pool settings (`nexora.persistence.*`). `NexoraPlugin`, `StepDefinition` and `Planner` beans are registered automatically, plugins in `@Order` order; an `ExecutionStore`, `Tracer` or `RetryPolicy` bean replaces the one built from properties, and `NexoraEngineBuilderCustomizer` beans adjust the builder last. Unset properties keep the builder defaults, and invalid ones fail startup. An application-defined `NexoraEngine` bean turns the auto-configuration off, as does `nexora.enabled=false`. With Actuator, the `nexora` health component reports `NexoraEngine.readiness()` with per-check details; turn it off with `management.health.nexora.enabled=false`. The webhook secret and JDBC URL are redacted from the properties' `toString()` ([#52](https://github.com/iamvirul/nexora/issues/52))
+
 ### Changed
 - **Java packages are now `me.virul.nexora.*`** - Every package moved from `com.nexora.*` to `me.virul.nexora.*`, matching the Maven group ID. Update imports (`com.nexora.api.NexoraEngine` becomes `me.virul.nexora.api.NexoraEngine`), logger names in logging configs, and the ServiceLoader file of a plugin JAR: rename `META-INF/services/com.nexora.spi.NexoraPlugin` to `META-INF/services/me.virul.nexora.spi.NexoraPlugin`. A plugin JAR built against 0.5.0 is not found by this engine until it is rebuilt. Class names and behaviour are unchanged
+- **`withDefaultTimeout` rejects durations under 1ms** - The step timeout is applied in whole milliseconds, so `0ms` or a negative value made every step without its own timeout fail at once. `NexoraEngine.Builder.withDefaultTimeout` now throws `IllegalArgumentException` for them; `null` still means no default timeout
+- **Readiness checks the database once** - When persistence is DOWN, `NexoraEngine.readiness()` no longer runs the schema check and reports migrations DOWN as well. A probe against an unreachable or saturated pool now waits for a connection at most once instead of twice
+- **Readiness checks have their own timeout** - `JdbcExecutionStore.isHealthy()` and `isSchemaCurrent()` now give up after a probe timeout (default 1s) instead of the pool's connection timeout (default 30s), so `/health/ready` and the starter's `nexora` health component report a saturated pool DOWN quickly without making normal work give up sooner. Each check runs on its own virtual thread and is interrupted on timeout, so no probe is left waiting for a connection. Set it with `persistence.pool.probeTimeoutMs` in `nexora.json`, `nexora.persistence.pool.probe-timeout` in the starter, `PoolConfig`'s new `probeTimeoutMs` component, or the new `JdbcExecutionStore(DataSource, Duration)` constructor; the existing four-argument `PoolConfig` constructor keeps the default ([#192](https://github.com/iamvirul/nexora/issues/192))
 
 ## [0.5.0] - 2026-11-10
 ### Added

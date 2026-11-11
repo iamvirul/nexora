@@ -44,6 +44,27 @@ class PoolConfigTest {
     }
 
     @Test
+    void fourArgumentConstructorUsesDefaultProbeTimeout() {
+        assertEquals(PoolConfig.DEFAULT_PROBE_TIMEOUT_MS, new PoolConfig(2, 1, 1_000, 0).probeTimeoutMs());
+        assertEquals(PoolConfig.DEFAULT_PROBE_TIMEOUT_MS, PoolConfig.defaults().probeTimeoutMs());
+        assertEquals(
+                PoolConfig.DEFAULT_PROBE_TIMEOUT_MS,
+                PoolConfig.singleConnection().probeTimeoutMs());
+    }
+
+    @Test
+    void acceptsProbeTimeoutAtMinimum() {
+        assertDoesNotThrow(() -> new PoolConfig(2, 1, 1_000, 0, PoolConfig.MIN_PROBE_TIMEOUT_MS));
+    }
+
+    @Test
+    void rejectsProbeTimeoutBelowMinimum() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new PoolConfig(2, 1, 1_000, 0, PoolConfig.MIN_PROBE_TIMEOUT_MS - 1));
+    }
+
+    @Test
     void rejectsIdleTimeoutBelowHikariFloor() {
         assertThrows(IllegalArgumentException.class, () -> new PoolConfig(2, 1, 1_000, 5_000));
     }

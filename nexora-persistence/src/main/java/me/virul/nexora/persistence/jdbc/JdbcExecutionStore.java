@@ -9,6 +9,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -17,6 +18,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import javax.sql.DataSource;
 import me.virul.nexora.persistence.DeadLetterRecord;
 import me.virul.nexora.persistence.DeadLetterReviewState;
@@ -52,8 +57,6 @@ public final class JdbcExecutionStore implements ExecutionStore {
     private static final Logger log = LoggerFactory.getLogger(JdbcExecutionStore.class);
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
-    // Kept well under typical k8s probe timeouts so a stalled DB reports DOWN instead of hanging the probe.
-    private static final int HEALTH_CHECK_TIMEOUT_SECONDS = 2;
     // SQLSTATE for a unique or primary key violation; H2 and PostgreSQL both report it.
     private static final String UNIQUE_VIOLATION = "23505";
     // Once the racing insert has committed the row exists, so one retry always reaches WHEN MATCHED.
@@ -64,6 +67,8 @@ public final class JdbcExecutionStore implements ExecutionStore {
     private final HikariDataSource ownedPool;
 
     private final SchemaMigrator schema;
+    /** Upper bound on each readiness check, independent of how long normal work waits for a connection. */
+    private final Duration probeTimeout;
 
     /**
      * Uses a caller-managed DataSource. {@link #close()} leaves it open, since the caller may
@@ -73,13 +78,28 @@ public final class JdbcExecutionStore implements ExecutionStore {
      * @throws IllegalStateException if the database is unsupported or a schema migration fails
      */
     public JdbcExecutionStore(DataSource dataSource) {
-        this(dataSource, SchemaMigrator.DEFAULT_LOCATION);
+        this(dataSource, SchemaMigrator.DEFAULT_LOCATION, Duration.ofMillis(PoolConfig.DEFAULT_PROBE_TIMEOUT_MS));
+    }
+
+    /**
+     * Uses a caller-managed DataSource, with readiness checks bounded by {@code probeTimeout}.
+     *
+     * @throws IllegalArgumentException if {@code probeTimeout} is under {@link PoolConfig#MIN_PROBE_TIMEOUT_MS}ms
+     * @see #JdbcExecutionStore(DataSource)
+     */
+    public JdbcExecutionStore(DataSource dataSource, Duration probeTimeout) {
+        this(dataSource, SchemaMigrator.DEFAULT_LOCATION, probeTimeout);
     }
 
     /** Migrates from {@code migrationLocation} instead of the shipped migrations; lets tests supply broken ones. */
     JdbcExecutionStore(DataSource dataSource, String migrationLocation) {
+        this(dataSource, migrationLocation, Duration.ofMillis(PoolConfig.DEFAULT_PROBE_TIMEOUT_MS));
+    }
+
+    private JdbcExecutionStore(DataSource dataSource, String migrationLocation, Duration probeTimeout) {
         this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
         this.ownedPool = null;
+        this.probeTimeout = requireValidProbeTimeout(probeTimeout);
         DatabaseCompatibility.require(dataSource);
         this.schema = SchemaMigrator.migrate(dataSource, migrationLocation);
     }
@@ -98,6 +118,7 @@ public final class JdbcExecutionStore implements ExecutionStore {
         HikariDataSource pool = HikariCPDataSourceFactory.create(jdbcUrl, poolConfig);
         this.dataSource = pool;
         this.ownedPool = pool;
+        this.probeTimeout = Duration.ofMillis(poolConfig.probeTimeoutMs());
         try {
             DatabaseCompatibility.require(pool);
             // Migrate over separate connections: Flyway needs two at once, more than a single-connection pool has.
@@ -678,27 +699,73 @@ public final class JdbcExecutionStore implements ExecutionStore {
     }
 
     /**
-     * Borrows a connection and validates it. When every pooled connection is busy this waits up to
-     * the pool's connection timeout, then reports DOWN: a saturated pool cannot take new work.
+     * Borrows a connection and validates it, within the probe timeout. A saturated pool, where every
+     * connection is busy past that timeout, reports DOWN: it cannot take new work.
      */
     @Override
     public boolean isHealthy() {
-        try (Connection conn = dataSource.getConnection()) {
-            return conn.isValid(HEALTH_CHECK_TIMEOUT_SECONDS);
-        } catch (SQLException e) {
-            log.warn("Persistence health check failed sqlState={}", e.getSQLState(), e);
+        return probe("health", conn -> conn.isValid(probeTimeoutSeconds()));
+    }
+
+    /** Checks that every migration is applied, within the probe timeout. */
+    @Override
+    public boolean isSchemaCurrent() {
+        return probe("schema", schema::isCurrent);
+    }
+
+    @FunctionalInterface
+    private interface ConnectionCheck {
+        boolean test(Connection conn) throws SQLException;
+    }
+
+    /**
+     * Runs {@code check} on its own virtual thread and waits at most {@link #probeTimeout} for it.
+     * On timeout the thread is interrupted, which makes HikariCP abandon the connection wait, so no
+     * probe work outlives the probe.
+     */
+    private boolean probe(String check, ConnectionCheck body) {
+        FutureTask<Boolean> task = new FutureTask<>(() -> runCheck(check, body));
+        Thread.ofVirtual().name("nexora-probe-" + check).start(task);
+        try {
+            return task.get(probeTimeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            task.cancel(true);
+            log.warn("Persistence {} check timed out probeTimeoutMs={}", check, probeTimeout.toMillis());
+            return false;
+        } catch (InterruptedException e) {
+            task.cancel(true);
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (ExecutionException e) {
+            log.warn("Persistence {} check failed", check, e.getCause());
             return false;
         }
     }
 
-    @Override
-    public boolean isSchemaCurrent() {
+    private boolean runCheck(String check, ConnectionCheck body) {
         try (Connection conn = dataSource.getConnection()) {
-            return schema.isCurrent(conn);
+            return body.test(conn);
         } catch (SQLException e) {
-            log.warn("Persistence schema check failed sqlState={}", e.getSQLState(), e);
+            // A cancelled probe already logged its timeout; the interrupted borrow is not a second failure.
+            if (!Thread.currentThread().isInterrupted()) {
+                log.warn("Persistence {} check failed sqlState={}", check, e.getSQLState(), e);
+            }
             return false;
         }
+    }
+
+    /** {@link Connection#isValid(int)} takes whole seconds; at least 1, since 0 means no limit. */
+    private int probeTimeoutSeconds() {
+        return (int) Math.max(1, TimeUnit.MILLISECONDS.toSeconds(probeTimeout.toMillis()));
+    }
+
+    private static Duration requireValidProbeTimeout(Duration probeTimeout) {
+        Objects.requireNonNull(probeTimeout, "probeTimeout");
+        if (probeTimeout.toMillis() < PoolConfig.MIN_PROBE_TIMEOUT_MS) {
+            throw new IllegalArgumentException(
+                    "probeTimeout must be at least " + PoolConfig.MIN_PROBE_TIMEOUT_MS + "ms, got " + probeTimeout);
+        }
+        return probeTimeout;
     }
 
     private static final String HISTORY_COLUMNS =

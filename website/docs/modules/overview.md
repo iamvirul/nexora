@@ -22,4 +22,5 @@ nexora-planner-llm    LLM planner plugin (Anthropic, OpenAI, OpenRouter, Gemini)
 nexora-runtime        ExecutionEngine (ties planner + scheduler together)
 nexora-api            NexoraEngine public facade, builder, NexoraObservability
 nexora-cli            PicoCLI command-line interface + ObserveCommand HTTP server
+nexora-spring-boot-starter  Spring Boot auto-configuration and Actuator health indicator
 ```

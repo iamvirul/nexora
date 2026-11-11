@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.zaxxer.hikari.HikariDataSource;
+import java.sql.Connection;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -122,6 +124,39 @@ class JdbcExecutionStorePoolTest {
     }
 
     @Test
+    void probesOfASaturatedPoolReportDownWithinTheProbeTimeout() throws Exception {
+        long probeTimeoutMs = 300;
+        // The pool would make a borrower wait 10s; the probe must give up long before that.
+        try (HikariDataSource saturated = HikariCPDataSourceFactory.create(
+                "jdbc:h2:mem:probe_" + System.nanoTime(), new PoolConfig(POOL_SIZE, POOL_SIZE, 10_000, 0))) {
+            JdbcExecutionStore store = new JdbcExecutionStore(saturated, Duration.ofMillis(probeTimeoutMs));
+            List<Connection> held = new ArrayList<>();
+            for (int i = 0; i < POOL_SIZE; i++) {
+                held.add(saturated.getConnection());
+            }
+            try {
+                long started = System.nanoTime();
+                boolean healthy = store.isHealthy();
+                boolean schemaCurrent = store.isSchemaCurrent();
+                long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+
+                assertFalse(healthy);
+                assertFalse(schemaCurrent);
+                assertTrue(elapsedMs < 3_000, "two probes took " + elapsedMs + "ms");
+                // The timed-out probes were interrupted, so none is still queued for a connection.
+                awaitNoThreadsWaitingForAConnection(saturated);
+            } finally {
+                for (Connection connection : held) {
+                    connection.close();
+                }
+            }
+
+            assertTrue(store.isHealthy());
+            assertTrue(store.isSchemaCurrent());
+        }
+    }
+
+    @Test
     void closeLeavesACallerOwnedDataSourceOpen() {
         JdbcExecutionStore store = new JdbcExecutionStore(pool);
 
@@ -179,6 +214,14 @@ class JdbcExecutionStorePoolTest {
     }
 
     /** Eviction closes connections asynchronously; wait until none is open so H2 really sees the last one go. */
+    private static void awaitNoThreadsWaitingForAConnection(HikariDataSource pool) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (pool.getHikariPoolMXBean().getThreadsAwaitingConnection() > 0) {
+            assertTrue(System.nanoTime() < deadline, "a probe is still waiting for a connection");
+            Thread.sleep(10);
+        }
+    }
+
     private static void awaitNoOpenConnections(HikariDataSource pool) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (pool.getHikariPoolMXBean().getTotalConnections() > 0) {
