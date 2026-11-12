@@ -119,7 +119,7 @@
         <nexora-registry.version>0.6.0-SNAPSHOT</nexora-registry.version>
         <nexora-tracing.version>0.6.0-SNAPSHOT</nexora-tracing.version>
         <nexora-tracing-otel.version>0.6.0-SNAPSHOT</nexora-tracing-otel.version>
-        <opentelemetry.version>1.67.0</opentelemetry.version>
+        <opentelemetry.version>1.68.0</opentelemetry.version>
         <testcontainers.version>1.21.4</testcontainers.version>
         <postgresql.version>42.7.14</postgresql.version>
         <bucket4j.version>8.22.0</bucket4j.version>
