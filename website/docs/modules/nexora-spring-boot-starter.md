@@ -23,7 +23,7 @@ nexora:
   saga-enabled: true
   webhook-secret: ${NEXORA_WEBHOOK_SECRET}
   step-output-max-bytes: 65536
-  shutdown-drain-timeout: 15s    # wait for in-flight executions on shutdown before cancelling them
+  shutdown-drain-timeout: 10s    # wait for in-flight executions on shutdown before cancelling them
   plugin-jars:
     - /opt/nexora/plugins/payments.jar
   retry:                         # default retry policy; no retries without max-attempts

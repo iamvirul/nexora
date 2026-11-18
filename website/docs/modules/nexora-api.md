@@ -45,8 +45,8 @@ NexoraEngine engine = NexoraEngine.builder()
     // Plugin JARs (loaded + activated in build(), after withPlugin() plugins, in the order added)
     .withPluginJar(Path.of("/etc/nexora/plugins/payment-plugin-1.2.0.jar"))
 
-    // Graceful shutdown (defaults: 15s drain, JVM shutdown hook registered)
-    .withShutdownDrainTimeout(Duration.ofSeconds(15))
+    // Graceful shutdown (defaults: 10s drain, JVM shutdown hook registered)
+    .withShutdownDrainTimeout(Duration.ofSeconds(10))
     .withShutdownHook(true)
 
     .build();
@@ -190,4 +190,4 @@ Only the first call shuts down; later and concurrent calls wait for it and retur
 
 By default `build()` registers a JVM shutdown hook that calls `shutdown()`, so SIGTERM drains the engine too. Turn it off with `withShutdownHook(false)` when a container such as Spring already closes the engine on exit. During JVM shutdown an asynchronous subscriber may not get to run before the process exits; use `subscribeSync(EngineShutdownEvent.class, ...)` to be sure of seeing the event.
 
-The default drain timeout of 15s keeps the whole shutdown within the 30s Kubernetes `terminationGracePeriodSeconds`. If you raise it, raise the grace period to more than twice the drain timeout.
+Set the Kubernetes `terminationGracePeriodSeconds` to more than twice the drain timeout, plus headroom for closing the scheduler, synchronous `EngineShutdownEvent` subscribers, releasing plugins and closing the store and tracer. The default drain timeout of 10s drains for at most 20s, leaving 10s of the default 30s grace period for the rest. If you raise the drain timeout, raise the grace period with it: for a 30s drain, allow at least 70s.
