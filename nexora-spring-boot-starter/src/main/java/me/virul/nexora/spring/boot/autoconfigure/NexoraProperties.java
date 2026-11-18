@@ -22,6 +22,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param webhookSecret       HMAC secret for signing webhook callbacks; never logged
  * @param stepOutputMaxBytes  cap on each recorded step output, 0 records none
  * @param pluginJars          plugin JARs to load and activate at startup, in order
+ * @param shutdownDrainTimeout how long closing the application context waits for in-flight
+ *                            executions before cancelling them
  * @param retry               engine-wide default retry policy
  * @param persistence         the built-in JDBC execution store
  */
@@ -35,6 +37,7 @@ public record NexoraProperties(
         String webhookSecret,
         Integer stepOutputMaxBytes,
         List<Path> pluginJars,
+        Duration shutdownDrainTimeout,
         @DefaultValue Retry retry,
         @DefaultValue Persistence persistence) {
 
@@ -57,6 +60,7 @@ public record NexoraProperties(
                 + ", webhookSecret=" + (webhookSecret == null ? null : REDACTED)
                 + ", stepOutputMaxBytes=" + stepOutputMaxBytes
                 + ", pluginJars=" + pluginJars
+                + ", shutdownDrainTimeout=" + shutdownDrainTimeout
                 + ", retry=" + retry
                 + ", persistence=" + persistence + "]";
     }
