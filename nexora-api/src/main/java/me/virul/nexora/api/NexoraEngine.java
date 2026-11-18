@@ -2,6 +2,7 @@ package me.virul.nexora.api;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
@@ -15,11 +16,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 import me.virul.nexora.core.context.TraceContext;
 import me.virul.nexora.core.execution.ExecutionHandle;
 import me.virul.nexora.core.execution.ExecutionResult;
 import me.virul.nexora.core.intent.Intent;
 import me.virul.nexora.core.tenant.TenantId;
+import me.virul.nexora.event.EngineShutdownEvent;
 import me.virul.nexora.event.EventHandler;
 import me.virul.nexora.event.ExecutionEvent;
 import me.virul.nexora.event.ExecutionEventBus;
@@ -53,6 +56,8 @@ import me.virul.nexora.registry.DefaultCapabilityRegistry;
 import me.virul.nexora.retry.DefaultRetryPolicyRegistry;
 import me.virul.nexora.retry.RetryPolicy;
 import me.virul.nexora.retry.RetryPolicyRegistry;
+import me.virul.nexora.runtime.engine.DrainResult;
+import me.virul.nexora.runtime.engine.EngineShuttingDownException;
 import me.virul.nexora.runtime.engine.ExecutionEngine;
 import me.virul.nexora.runtime.scheduler.CronScheduler;
 import me.virul.nexora.runtime.scheduler.ScheduledExecution;
@@ -81,10 +86,23 @@ import org.slf4j.LoggerFactory;
  * engine.execute(new Intent("process_order", Map.of("orderId", "123")))
  *       .thenAccept(result -> System.out.println(result.status()));
  * }</pre>
+ *
+ * <p>By default the engine registers a JVM shutdown hook that calls {@link #shutdown()}, so in-flight
+ * executions are drained rather than abandoned when the process receives SIGTERM. See
+ * {@link #shutdown(Duration)} and {@link Builder#withShutdownHook(boolean)}.
  */
 public final class NexoraEngine implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(NexoraEngine.class);
+
+    /**
+     * How long {@link #shutdown()} waits for in-flight executions by default. With the cancel and
+     * compensation wait that may follow, shutdown takes at most twice this, which fits the 30 second
+     * Kubernetes termination grace period.
+     */
+    public static final Duration DEFAULT_SHUTDOWN_DRAIN_TIMEOUT = Duration.ofSeconds(15);
+
+    private static final String SHUTDOWN_HOOK_THREAD_NAME = "nexora-engine-shutdown";
 
     private final ExecutionEngine engine;
     private final PluginManager pluginManager;
@@ -95,6 +113,10 @@ public final class NexoraEngine implements AutoCloseable {
     private final Tracer tracer;
     private final Executor executor;
     private final String tenantScope; // null = serves every tenant
+    private final Duration shutdownDrainTimeout;
+    // Set by the first shutdown call; later and concurrent calls wait on it instead of shutting down twice.
+    private final AtomicReference<CompletableFuture<DrainResult>> shutdownResult = new AtomicReference<>();
+    private volatile Thread shutdownHook; // null = no JVM hook registered
 
     private NexoraEngine(
             ExecutionEngine engine,
@@ -105,7 +127,8 @@ public final class NexoraEngine implements AutoCloseable {
             CronScheduler cronScheduler,
             Tracer tracer,
             Executor executor,
-            String tenantScope) {
+            String tenantScope,
+            Duration shutdownDrainTimeout) {
         this.engine = engine;
         this.pluginManager = pluginManager;
         this.eventBus = eventBus;
@@ -115,6 +138,7 @@ public final class NexoraEngine implements AutoCloseable {
         this.tracer = tracer;
         this.executor = executor;
         this.tenantScope = tenantScope;
+        this.shutdownDrainTimeout = shutdownDrainTimeout;
     }
 
     /**
@@ -163,6 +187,7 @@ public final class NexoraEngine implements AutoCloseable {
         }
     }
 
+    /** @throws EngineShuttingDownException if {@link #shutdown(Duration)} has begun */
     public CompletableFuture<ExecutionResult> execute(Intent intent) {
         return engine.execute(scoped(intent));
     }
@@ -179,6 +204,8 @@ public final class NexoraEngine implements AutoCloseable {
      * Starts {@code intent} and returns immediately with its execution id and result future.
      * Use this instead of {@link #execute(Intent)} when the id is needed before the execution
      * finishes, for example to report it to a client or to {@link #cancel(String)} it.
+     *
+     * @throws EngineShuttingDownException if {@link #shutdown(Duration)} has begun
      */
     public ExecutionHandle submit(Intent intent) {
         return engine.submit(scoped(intent), TraceContext.root());
@@ -225,6 +252,7 @@ public final class NexoraEngine implements AutoCloseable {
      * @throws ExecutionNotFoundException       if no execution has this id
      * @throws ExecutionNotReplayableException  if it succeeded or is still running or compensating
      * @throws IllegalStateException            if the engine has no persistence store
+     * @throws EngineShuttingDownException      if shutdown has begun
      */
     public ExecutionHandle replay(String executionId) {
         return replay(null, executionId);
@@ -238,6 +266,10 @@ public final class NexoraEngine implements AutoCloseable {
     public ExecutionHandle replay(String tenantId, String executionId) {
         if (executionId == null || executionId.isBlank()) {
             throw new IllegalArgumentException("executionId must not be blank");
+        }
+        // Before the store lookup: once shutdown has released the store, a lookup would fail instead.
+        if (!engine.isAcceptingExecutions()) {
+            throw new EngineShuttingDownException();
         }
         ExecutionStore store = engine.getStore();
         if (store == null) {
@@ -453,7 +485,8 @@ public final class NexoraEngine implements AutoCloseable {
 
     /**
      * Reports readiness of the engine's own dependencies: persistence, its schema migrations,
-     * plugins, and the shared executor. A {@code null} persistence store (persistence disabled)
+     * plugins, and the shared executor. The executor check also reports DOWN once shutdown has begun,
+     * so a load balancer stops routing work the engine would reject. A {@code null} persistence store (persistence disabled)
      * reports both persistence checks UP — there is nothing to check, not a degraded dependency.
      * When persistence is DOWN the schema is not checked and migrations report DOWN too, so a probe
      * waits for a database connection at most once.
@@ -478,7 +511,8 @@ public final class NexoraEngine implements AutoCloseable {
                 ReadinessReport.CHECK_PLUGINS,
                 HealthStatus.of(pluginManager.nonActivePluginIds().isEmpty()));
 
-        boolean executorUp = !(executor instanceof ExecutorService service) || !service.isShutdown();
+        boolean executorUp = engine.isAcceptingExecutions()
+                && (!(executor instanceof ExecutorService service) || !service.isShutdown());
         checks.put(ReadinessReport.CHECK_EXECUTOR, HealthStatus.of(executorUp));
 
         return new ReadinessReport(checks);
@@ -586,15 +620,72 @@ public final class NexoraEngine implements AutoCloseable {
         return owned;
     }
 
+    /** False once shutdown has begun; from then on every new execution is rejected. */
+    public boolean isAcceptingExecutions() {
+        return engine.isAcceptingExecutions();
+    }
+
     /**
-     * Shuts down the engine. Deactivates all plugins, stops the cron scheduler,
-     * and closes the execution store. Safe to call multiple times.
+     * {@link #shutdown(Duration)} with the drain timeout set by
+     * {@link Builder#withShutdownDrainTimeout(Duration)}, {@link #DEFAULT_SHUTDOWN_DRAIN_TIMEOUT} unless set.
      */
     public void shutdown() {
-        pluginManager.activePluginIds().forEach(pluginManager::deactivatePlugin);
+        shutdown(shutdownDrainTimeout);
+    }
+
+    /**
+     * Shuts the engine down gracefully:
+     * <ol>
+     *   <li>New executions, replays and cron firings are rejected with {@link EngineShuttingDownException},
+     *       and {@link #readiness()} reports DOWN.</li>
+     *   <li>In-flight executions get up to {@code drainTimeout} to finish on their own.</li>
+     *   <li>Any still running are cancelled: running steps are interrupted and, when saga is enabled,
+     *       completed steps are compensated. Shutdown waits up to {@code drainTimeout} again for that.</li>
+     *   <li>An {@link EngineShutdownEvent} carrying the drain counts is published.</li>
+     *   <li>Plugins are deactivated and the execution store and tracer are closed.</li>
+     * </ol>
+     *
+     * <p>Only the first call shuts down; later and concurrent calls, including the JVM shutdown hook,
+     * wait for it and return its result. An executor passed with {@link Builder#withExecutor} is the
+     * caller's and is not shut down.
+     *
+     * @param drainTimeout how long to wait for in-flight executions; zero cancels them at once
+     * @return what happened to the executions in flight
+     * @throws IllegalArgumentException if {@code drainTimeout} is negative
+     */
+    public DrainResult shutdown(Duration drainTimeout) {
+        requireValidDrainTimeout(drainTimeout);
+        CompletableFuture<DrainResult> mine = new CompletableFuture<>();
+        CompletableFuture<DrainResult> first = shutdownResult.compareAndExchange(null, mine);
+        if (first != null) {
+            return first.join();
+        }
+        try {
+            mine.complete(drainAndRelease(drainTimeout));
+        } catch (RuntimeException | Error e) {
+            mine.completeExceptionally(e);
+            throw e;
+        }
+        return mine.join();
+    }
+
+    private DrainResult drainAndRelease(Duration drainTimeout) {
+        log.info("Engine shutdown started drainTimeout={}", drainTimeout);
+        removeShutdownHook();
+        // The scheduler goes first so no cron firing races the drain into a rejection.
         if (cronScheduler != null) {
             cronScheduler.close();
         }
+        DrainResult drain = engine.drain(drainTimeout);
+        eventBus.publish(new EngineShutdownEvent(
+                drain.inFlight(),
+                drain.completed(),
+                drain.cancelled(),
+                drain.unfinished(),
+                drain.elapsed(),
+                Instant.now()));
+        // Plugins are released only now: in-flight steps and compensations still call their capabilities.
+        pluginManager.activePluginIds().forEach(pluginManager::deactivatePlugin);
         if (engine.getStore() != null) {
             try {
                 engine.getStore().close();
@@ -609,8 +700,57 @@ public final class NexoraEngine implements AutoCloseable {
                 log.warn("Error closing tracer during shutdown", e);
             }
         }
+        log.info(
+                "Engine shutdown complete inFlight={} completed={} cancelled={} unfinished={} elapsed={}ms",
+                drain.inFlight(),
+                drain.completed(),
+                drain.cancelled(),
+                drain.unfinished(),
+                drain.elapsed().toMillis());
+        return drain;
     }
 
+    private void installShutdownHook() {
+        Thread hook = Thread.ofPlatform().name(SHUTDOWN_HOOK_THREAD_NAME).unstarted(() -> {
+            try {
+                shutdown();
+            } catch (RuntimeException e) {
+                log.error("Engine shutdown from JVM shutdown hook failed", e);
+            }
+        });
+        Runtime.getRuntime().addShutdownHook(hook);
+        shutdownHook = hook;
+    }
+
+    /** Whether a JVM shutdown hook is registered for this engine. */
+    boolean shutdownHookRegistered() {
+        return shutdownHook != null;
+    }
+
+    /** Unregisters the JVM hook so an engine shut down explicitly is not kept reachable until exit. */
+    private void removeShutdownHook() {
+        Thread hook = shutdownHook;
+        if (hook == null || hook == Thread.currentThread()) {
+            return;
+        }
+        try {
+            Runtime.getRuntime().removeShutdownHook(hook);
+        } catch (IllegalStateException e) {
+            // The JVM is already shutting down and will run the hook, which then joins this shutdown.
+            log.debug("JVM shutdown in progress; shutdown hook left registered");
+        }
+        shutdownHook = null;
+    }
+
+    private static Duration requireValidDrainTimeout(Duration drainTimeout) {
+        Objects.requireNonNull(drainTimeout, "drainTimeout must not be null");
+        if (drainTimeout.isNegative()) {
+            throw new IllegalArgumentException("drainTimeout must not be negative, got: " + drainTimeout);
+        }
+        return drainTimeout;
+    }
+
+    /** {@link #shutdown()}. */
     @Override
     public void close() {
         shutdown();
@@ -650,6 +790,8 @@ public final class NexoraEngine implements AutoCloseable {
         private String webhookSecret = null;
         private int stepOutputMaxBytes = StepOutput.DEFAULT_MAX_BYTES;
         private String tenantId = null;
+        private Duration shutdownDrainTimeout = DEFAULT_SHUTDOWN_DRAIN_TIMEOUT;
+        private boolean shutdownHookEnabled = true;
 
         private final List<NexoraPlugin> plugins = new ArrayList<>();
         private final List<Path> pluginJars = new ArrayList<>();
@@ -739,6 +881,27 @@ public final class NexoraEngine implements AutoCloseable {
          */
         public Builder withTenantId(String tenantId) {
             this.tenantId = TenantId.requireValid(tenantId);
+            return this;
+        }
+
+        /**
+         * How long {@link NexoraEngine#shutdown()}, {@link NexoraEngine#close()} and the JVM shutdown
+         * hook wait for in-flight executions before cancelling them. Defaults to
+         * {@link #DEFAULT_SHUTDOWN_DRAIN_TIMEOUT}; zero cancels them at once.
+         *
+         * @throws IllegalArgumentException if {@code drainTimeout} is negative
+         */
+        public Builder withShutdownDrainTimeout(Duration drainTimeout) {
+            this.shutdownDrainTimeout = requireValidDrainTimeout(drainTimeout);
+            return this;
+        }
+
+        /**
+         * Whether to register a JVM shutdown hook that calls {@link NexoraEngine#shutdown()}. On by
+         * default; turn it off when a container such as Spring already closes the engine on exit.
+         */
+        public Builder withShutdownHook(boolean enabled) {
+            this.shutdownHookEnabled = enabled;
             return this;
         }
 
@@ -839,7 +1002,7 @@ public final class NexoraEngine implements AutoCloseable {
             CronScheduler cronScheduler =
                     executionStore != null ? new CronScheduler(engine, executionStore, eventBus, tenantId) : null;
 
-            return new NexoraEngine(
+            NexoraEngine built = new NexoraEngine(
                     engine,
                     pluginManager,
                     eventBus,
@@ -848,7 +1011,12 @@ public final class NexoraEngine implements AutoCloseable {
                     cronScheduler,
                     tracer,
                     executor,
-                    tenantId);
+                    tenantId,
+                    shutdownDrainTimeout);
+            if (shutdownHookEnabled) {
+                built.installShutdownHook();
+            }
+            return built;
         }
     }
 }
