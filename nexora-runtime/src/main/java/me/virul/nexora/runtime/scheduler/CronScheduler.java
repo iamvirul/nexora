@@ -7,11 +7,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import me.virul.nexora.core.execution.ExecutionResult;
 import me.virul.nexora.core.intent.Intent;
 import me.virul.nexora.event.ExecutionEventBus;
 import me.virul.nexora.event.ScheduledExecutionFiredEvent;
@@ -20,6 +22,7 @@ import me.virul.nexora.persistence.ExecutionStore;
 import me.virul.nexora.persistence.MissedFirePolicy;
 import me.virul.nexora.persistence.ScheduleRecord;
 import me.virul.nexora.persistence.ScheduleStatus;
+import me.virul.nexora.runtime.engine.EngineShuttingDownException;
 import me.virul.nexora.runtime.engine.ExecutionEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -260,7 +263,15 @@ public final class CronScheduler implements AutoCloseable {
     private void executeAndPublish(ScheduleRecord record) {
         String scheduleId = record.id();
         Intent intent = new Intent(record.goal(), record.context(), null, null, null, record.tenantId());
-        engine.execute(intent).whenComplete((result, ex) -> {
+        CompletableFuture<ExecutionResult> execution;
+        try {
+            execution = engine.execute(intent);
+        } catch (EngineShuttingDownException e) {
+            // A firing racing engine shutdown: the slot is already claimed, so it is not retried.
+            log.warn("Scheduled execution skipped, engine is shutting down scheduleId={}", scheduleId);
+            return;
+        }
+        execution.whenComplete((result, ex) -> {
             if (ex != null) {
                 log.error("Scheduled execution failed scheduleId={}", scheduleId, ex);
                 store.updateScheduleStatus(scheduleId, ScheduleStatus.FAILED);
