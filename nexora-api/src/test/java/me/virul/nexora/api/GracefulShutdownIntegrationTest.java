@@ -222,6 +222,72 @@ class GracefulShutdownIntegrationTest {
     }
 
     @Test
+    void shutdownHookStaysRegisteredWhileDraining() throws Exception {
+        engine = buildEngine(false);
+        engine.execute(new Intent(ORDER_GOAL, Map.of()));
+        assertThat(workStarted.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+
+        CompletableFuture<DrainResult> shutdown = CompletableFuture.supplyAsync(() -> engine.shutdown(LONG_DRAIN));
+        awaitCondition(() -> !engine.isAcceptingExecutions());
+
+        assertThat(engine.shutdownHookRegistered())
+                .as("a SIGTERM during an explicit drain must still find the hook")
+                .isTrue();
+        workRelease.countDown();
+        shutdown.get(WAIT_SECONDS, TimeUnit.SECONDS);
+        assertThat(engine.shutdownHookRegistered()).isFalse();
+    }
+
+    // Two id pairs because the plugin manager's iteration order depends on the ids: one of them
+    // reaches the required plugin before its dependent, which a single pass cannot release.
+    @Test
+    void pluginsRequiredByOthersAreReleasedAfterTheirDependents() {
+        assertAllPluginsReleased("a-base", "z-addon");
+    }
+
+    @Test
+    void pluginsRequiredByOthersAreReleasedAfterTheirDependentsWithIdsReversed() {
+        assertAllPluginsReleased("z-base", "a-addon");
+    }
+
+    private void assertAllPluginsReleased(String baseId, String addonId) {
+        List<String> shutDown = new java.util.concurrent.CopyOnWriteArrayList<>();
+        engine = NexoraEngine.builder()
+                .withExecutionStore(store)
+                .withPlugin(namedPlugin(baseId, List.of(), shutDown))
+                .withPlugin(namedPlugin(addonId, List.of(baseId), shutDown))
+                .build();
+
+        engine.shutdown(Duration.ZERO);
+
+        assertThat(shutDown).containsExactly(addonId, baseId);
+        assertThat(engine.activePluginIds()).isEmpty();
+        assertThat(store.isHealthy()).as("store closed after plugins").isFalse();
+    }
+
+    private static NexoraPlugin namedPlugin(String id, List<String> requires, List<String> shutDown) {
+        return new NexoraPlugin() {
+            @Override
+            public PluginDescriptor descriptor() {
+                return new PluginDescriptor(id, "1.0", id, requires, null);
+            }
+
+            @Override
+            public void initialize(PluginContext ctx) {}
+
+            @Override
+            public List<CapabilityProvider> capabilityProviders() {
+                return List.of();
+            }
+
+            @Override
+            public void shutdown() {
+                shutDown.add(id);
+            }
+        };
+    }
+
+    @Test
     void shutdownHookCanBeDisabled() {
         engine = builder(false).withShutdownHook(false).build();
 

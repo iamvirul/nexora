@@ -97,10 +97,10 @@ public final class NexoraEngine implements AutoCloseable {
 
     /**
      * How long {@link #shutdown()} waits for in-flight executions by default. With the cancel and
-     * compensation wait that may follow, shutdown takes at most twice this, which fits the 30 second
-     * Kubernetes termination grace period.
+     * compensation wait that may follow, draining takes at most twice this, which leaves room within
+     * the 30 second Kubernetes termination grace period for releasing plugins, the store and the tracer.
      */
-    public static final Duration DEFAULT_SHUTDOWN_DRAIN_TIMEOUT = Duration.ofSeconds(15);
+    public static final Duration DEFAULT_SHUTDOWN_DRAIN_TIMEOUT = Duration.ofSeconds(10);
 
     private static final String SHUTDOWN_HOOK_THREAD_NAME = "nexora-engine-shutdown";
 
@@ -665,13 +665,16 @@ public final class NexoraEngine implements AutoCloseable {
         } catch (RuntimeException | Error e) {
             mine.completeExceptionally(e);
             throw e;
+        } finally {
+            // Only now: while draining, a SIGTERM must still find the hook, which joins this shutdown.
+            // Without it the JVM would exit as soon as the other hooks finish, abandoning the drain.
+            removeShutdownHook();
         }
         return mine.join();
     }
 
     private DrainResult drainAndRelease(Duration drainTimeout) {
         log.info("Engine shutdown started drainTimeout={}", drainTimeout);
-        removeShutdownHook();
         // The scheduler goes first so no cron firing races the drain into a rejection.
         if (cronScheduler != null) {
             cronScheduler.close();
@@ -685,7 +688,7 @@ public final class NexoraEngine implements AutoCloseable {
                 drain.elapsed(),
                 Instant.now()));
         // Plugins are released only now: in-flight steps and compensations still call their capabilities.
-        pluginManager.activePluginIds().forEach(pluginManager::deactivatePlugin);
+        releasePlugins();
         if (engine.getStore() != null) {
             try {
                 engine.getStore().close();
@@ -708,6 +711,32 @@ public final class NexoraEngine implements AutoCloseable {
                 drain.unfinished(),
                 drain.elapsed().toMillis());
         return drain;
+    }
+
+    /**
+     * Deactivates every active plugin, dependents before the plugins they require. The manager keeps no
+     * activation order and refuses to release a plugin an active one still requires, so each pass
+     * retries the refused ones until a pass releases nothing. What is left is logged, and shutdown
+     * goes on to close the store and tracer either way.
+     */
+    private void releasePlugins() {
+        List<String> remaining = pluginManager.activePluginIds();
+        while (!remaining.isEmpty()) {
+            Map<String, RuntimeException> refused = new LinkedHashMap<>();
+            for (String pluginId : remaining) {
+                try {
+                    pluginManager.deactivatePlugin(pluginId);
+                } catch (RuntimeException e) {
+                    refused.put(pluginId, e);
+                }
+            }
+            if (refused.size() == remaining.size()) {
+                refused.forEach((pluginId, e) ->
+                        log.warn("Plugin deactivation failed during shutdown pluginId={}", pluginId, e));
+                return;
+            }
+            remaining = List.copyOf(refused.keySet());
+        }
     }
 
     private void installShutdownHook() {
