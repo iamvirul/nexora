@@ -32,6 +32,7 @@ import me.virul.nexora.core.execution.ExecutionHandle;
 import me.virul.nexora.core.intent.Intent;
 import me.virul.nexora.persistence.MissedFirePolicy;
 import me.virul.nexora.persistence.ScheduleRecord;
+import me.virul.nexora.runtime.engine.EngineShuttingDownException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
@@ -401,6 +402,13 @@ public class ObserveCommand implements Callable<Integer> {
                                 exchange,
                                 409,
                                 Map.of("error", "Original execution is " + e.state() + " and cannot be replayed yet"));
+                    } catch (Exception ignored) {
+                    }
+                    return;
+                } catch (EngineShuttingDownException e) {
+                    // The dead letter stays PENDING, so it can be replayed on another instance.
+                    try {
+                        sendJson(exchange, 503, Map.of("error", "Engine is shutting down"));
                     } catch (Exception ignored) {
                     }
                     return;

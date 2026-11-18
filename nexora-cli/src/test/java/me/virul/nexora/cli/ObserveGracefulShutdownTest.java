@@ -14,6 +14,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -24,6 +25,11 @@ import me.virul.nexora.core.capability.CapabilityResult;
 import me.virul.nexora.core.execution.ExecutionResult;
 import me.virul.nexora.core.execution.ExecutionStatus;
 import me.virul.nexora.core.intent.Intent;
+import me.virul.nexora.core.tenant.TenantId;
+import me.virul.nexora.event.EngineShutdownEvent;
+import me.virul.nexora.persistence.DeadLetterRecord;
+import me.virul.nexora.persistence.DeadLetterReviewState;
+import me.virul.nexora.persistence.jdbc.JdbcExecutionStore;
 import me.virul.nexora.planner.model.StepDefinition;
 import me.virul.nexora.spi.Capability;
 import me.virul.nexora.spi.CapabilityDescriptor;
@@ -111,6 +117,58 @@ class ObserveGracefulShutdownTest {
         ObserveCommand.stopGracefully(engine, server);
 
         assertThrows(IOException.class, () -> get("/health/live"));
+    }
+
+    @Test
+    void deadLetterReplayDuringShutdownAnswers503AndLeavesItPending() throws Exception {
+        JdbcExecutionStore store = JdbcExecutionStore.h2InMemory();
+        store.createDeadLetter(DeadLetterRecord.pending(
+                "dl-1", "exec-1", "process order", Map.of(), "STEP_FAILED", "boom", Instant.now(), TenantId.DEFAULT));
+        NexoraEngine stored = NexoraEngine.builder()
+                .withShutdownHook(false)
+                .withExecutionStore(store)
+                .withPlugin(plugin())
+                .build();
+        int[] ports = freePorts();
+        ObserveServer storedServer = ObserveServer.start(
+                stored,
+                TestAuth.auth(),
+                new ObserveServer.Config(
+                        LOOPBACK,
+                        ports[0],
+                        ports[1],
+                        ObserveServer.Config.DEFAULT_MAX_EXECUTIONS,
+                        ObserveServer.Config.DEFAULT_MAX_EVENTS));
+        CompletableFuture<Integer> status = new CompletableFuture<>();
+        CompletableFuture<DeadLetterReviewState> stateAfter = new CompletableFuture<>();
+        // Admission is closed but the store is still open: the window where the replay itself is refused.
+        stored.subscribeSync(EngineShutdownEvent.class, e -> {
+            try {
+                URI uri = URI.create(
+                        "http://" + LOOPBACK + ":" + storedServer.httpPort() + "/api/dead-letters/dl-1/replay");
+                status.complete(client.send(
+                                TestAuth.authorized(uri)
+                                        .POST(HttpRequest.BodyPublishers.noBody())
+                                        .build(),
+                                HttpResponse.BodyHandlers.ofString())
+                        .statusCode());
+                stateAfter.complete(
+                        store.findDeadLetterById("dl-1").orElseThrow().reviewState());
+            } catch (IOException | RuntimeException ex) {
+                status.completeExceptionally(ex);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                status.completeExceptionally(ex);
+            }
+        });
+        try {
+            stored.shutdown(Duration.ZERO);
+        } finally {
+            storedServer.close();
+        }
+
+        assertEquals(503, status.get(WAIT_SECONDS, TimeUnit.SECONDS));
+        assertEquals(DeadLetterReviewState.PENDING, stateAfter.get(WAIT_SECONDS, TimeUnit.SECONDS));
     }
 
     private void awaitDraining() throws InterruptedException {
