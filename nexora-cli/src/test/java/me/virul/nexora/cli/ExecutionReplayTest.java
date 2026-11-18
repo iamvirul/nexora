@@ -15,6 +15,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -127,6 +128,35 @@ class ExecutionReplayTest {
                 bare.stop(0);
             }
         }
+    }
+
+    @Test
+    void replayAfterEngineShutdownReturns503() throws Exception {
+        ExecutionResult failed = run();
+        engine.shutdown(Duration.ZERO);
+
+        HttpResponse<String> response = post(failed.executionId());
+
+        assertEquals(503, response.statusCode());
+        assertEquals("Engine is shutting down", json(response).get("error").asText());
+    }
+
+    @Test
+    void executeAfterEngineShutdownReturns503() throws Exception {
+        engine.shutdown(Duration.ZERO);
+        URI uri = URI.create("http://" + LOOPBACK + ":" + server.getAddress().getPort() + "/api/execute");
+
+        HttpResponse<String> response = client.send(
+                TestAuth.authorized(uri)
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString("{\"goal\":\"process order\"}"))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(503, response.statusCode());
+        JsonNode body = json(response);
+        assertEquals(false, body.get("accepted").asBoolean());
+        assertEquals("Engine is shutting down", body.get("error").asText());
     }
 
     @Test

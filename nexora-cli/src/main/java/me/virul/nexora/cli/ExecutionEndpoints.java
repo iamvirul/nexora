@@ -32,6 +32,7 @@ import me.virul.nexora.persistence.ExecutionFilter;
 import me.virul.nexora.persistence.ExecutionRecord;
 import me.virul.nexora.persistence.ExecutionState;
 import me.virul.nexora.persistence.ExecutionStore;
+import me.virul.nexora.runtime.engine.EngineShuttingDownException;
 import me.virul.nexora.tracing.otel.W3CTraceparent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -82,6 +83,7 @@ final class ExecutionEndpoints {
     private static final int STATUS_CONFLICT = 409;
     private static final int STATUS_INTERNAL_ERROR = 500;
     private static final int STATUS_UNAVAILABLE = 503;
+    private static final String SHUTTING_DOWN_ERROR = "Engine is shutting down";
 
     private final NexoraEngine engine;
     private final TenantResolver tenants;
@@ -212,10 +214,17 @@ final class ExecutionEndpoints {
                 request.webhookUrl(),
                 request.webhookEvents(),
                 scope.tenantId());
-        ExecutionHandle handle = W3CTraceparent.parse(
-                        exchange.getRequestHeaders().getFirst("traceparent"))
-                .map(parsed -> engine.submit(intent, W3CTraceparent.toTraceContext(parsed)))
-                .orElseGet(() -> engine.submit(intent));
+        ExecutionHandle handle;
+        try {
+            handle = W3CTraceparent.parse(exchange.getRequestHeaders().getFirst("traceparent"))
+                    .map(parsed -> engine.submit(intent, W3CTraceparent.toTraceContext(parsed)))
+                    .orElseGet(() -> engine.submit(intent));
+        } catch (EngineShuttingDownException e) {
+            // 503 tells a client or load balancer to send the work to another instance.
+            ObserveCommand.sendJson(
+                    exchange, STATUS_UNAVAILABLE, Map.of("accepted", false, "error", SHUTTING_DOWN_ERROR));
+            return;
+        }
         handle.result().whenComplete((result, ex) -> {
             if (ex != null) {
                 log.error("Execution failed executionId={} goal={}", handle.executionId(), request.goal(), ex);
@@ -279,6 +288,8 @@ final class ExecutionEndpoints {
                     Map.of("accepted", true, "executionId", replay.executionId(), "replayOf", executionId));
         } catch (ExecutionNotFoundException e) {
             sendError(exchange, STATUS_NOT_FOUND, executionId, "Execution not found");
+        } catch (EngineShuttingDownException e) {
+            sendError(exchange, STATUS_UNAVAILABLE, executionId, SHUTTING_DOWN_ERROR);
         } catch (ExecutionNotReplayableException e) {
             ObserveCommand.sendJson(
                     exchange,
