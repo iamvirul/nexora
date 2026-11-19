@@ -38,3 +38,19 @@ jobs:
             **/target/surefire-reports/*.xml
             **/target/failsafe-reports/*.xml
           retention-days: 7
+
+  javadoc-site:
+    name: JavaDoc site
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: "21"
+          distribution: temurin
+
+      - name: Build JavaDoc site
+        run: website/scripts/build-javadoc.sh HEAD "${RUNNER_TEMP}/javadoc"

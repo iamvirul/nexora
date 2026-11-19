@@ -20,6 +20,7 @@ import java.util.regex.Pattern;
  */
 public final class ClientAddress {
 
+    /** The header trusted proxies name the client in. */
     public static final String FORWARDED_FOR = "X-Forwarded-For";
 
     private static final String OCTET = "(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
@@ -29,7 +30,14 @@ public final class ClientAddress {
     private ClientAddress() {}
 
     /**
-     * @param forwardedFor every {@value #FORWARDED_FOR} header value, in order; may be null or empty
+     * The address a request counts against, by the rules described on this class.
+     *
+     * @param remote         the connecting address; {@code null} or unresolved counts as
+     *                       {@code "unknown"}
+     * @param forwardedFor   every {@value #FORWARDED_FOR} header value, in order; may be null or empty
+     * @param trustedProxies the canonical addresses of trusted proxies, as
+     *                       {@link RateLimitConfig#trustedProxies()} holds them
+     * @return the canonical client address
      */
     public static String resolve(InetSocketAddress remote, List<String> forwardedFor, Set<String> trustedProxies) {
         String connecting = remote == null || remote.getAddress() == null
@@ -47,7 +55,6 @@ public final class ClientAddress {
         for (int i = hops.size() - 1; i >= 0; i--) {
             Optional<String> hop = parseLiteral(hops.get(i));
             if (hop.isEmpty()) {
-                // A malformed hop: nothing to its left can be trusted, so the proxy itself is the client.
                 return connecting;
             }
             if (!trustedProxies.contains(hop.get())) {
@@ -75,7 +82,6 @@ public final class ClientAddress {
         try {
             return Optional.of(InetAddress.getByName(candidate).getHostAddress());
         } catch (UnknownHostException e) {
-            // A string with ':' that is not a valid IPv6 literal: rejected without any lookup.
             return Optional.empty();
         }
     }

@@ -30,6 +30,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class TenantResolver {
 
+    /** The request header that names the tenant. */
     public static final String HEADER = "X-Tenant-ID";
 
     static final int STATUS_BAD_REQUEST = 400;
@@ -44,25 +45,59 @@ public final class TenantResolver {
         this.multiTenant = multiTenant;
     }
 
+    /**
+     * A resolver that scopes nothing and ignores {@value #HEADER}.
+     *
+     * @return the resolver
+     */
     public static TenantResolver singleTenant() {
         return new TenantResolver(false);
     }
 
+    /**
+     * A resolver that scopes every request to one tenant, by the rules described on this class.
+     *
+     * @return the resolver
+     */
     public static TenantResolver multiTenant() {
         return new TenantResolver(true);
     }
 
+    /**
+     * Whether requests are scoped to a tenant.
+     *
+     * @return {@code true} for {@link #multiTenant()}
+     */
     public boolean isMultiTenant() {
         return multiTenant;
     }
 
     /** The outcome of resolving a request's tenant. */
     public sealed interface Resolution {
+        /**
+         * The request may go ahead.
+         *
+         * @param scope the tenant it acts for
+         */
         record Scoped(TenantScope scope) implements Resolution {}
 
+        /**
+         * The request must be refused.
+         *
+         * @param status  the HTTP status to answer with
+         * @param code    the error code, such as {@code TENANT_FORBIDDEN}
+         * @param message the error message for the client
+         */
         record Rejected(int status, String code, String message) implements Resolution {}
     }
 
+    /**
+     * Decides the tenant of a request.
+     *
+     * @param caller the authenticated caller
+     * @param header the value of {@value #HEADER}, or {@code null} when absent
+     * @return the scope, or why the request is refused
+     */
     public Resolution resolve(ApiAuth.Caller caller, String header) {
         if (!multiTenant) {
             return new Resolution.Scoped(TenantScope.UNSCOPED);
@@ -94,12 +129,14 @@ public final class TenantResolver {
     /**
      * Resolves the tenant of a request already let through by {@link ApiAuth#protect}. A rejected
      * request is answered here, and the result is empty: the handler must return without writing.
+     *
+     * @param exchange the request
+     * @return the scope, or empty when the request was refused and answered
+     * @throws IOException if writing the refusal fails
      */
     public Optional<TenantScope> scope(HttpExchange exchange) throws IOException {
         ApiAuth.Caller caller = ApiAuth.callerOf(exchange);
         if (!caller.authenticated()) {
-            // Only reachable from a route registered without ApiAuth.protect: refuse rather than let an
-            // anonymous caller name any tenant, as the server key may.
             ApiAuth.rejectUnauthorized(exchange);
             return Optional.empty();
         }

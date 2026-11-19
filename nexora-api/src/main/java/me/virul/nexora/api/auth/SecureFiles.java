@@ -18,6 +18,11 @@ public final class SecureFiles {
      * Writes {@code content} through a temp file and an atomic move, so a crash never leaves a
      * half-written file. On POSIX systems the directory is created {@code rwx------} and the file
      * {@code rw-------}.
+     *
+     * @param file    the file to write; replaced if it exists
+     * @param content the text to write, as UTF-8
+     * @throws IOException if the directory, the temp file or the move fails; the target is then
+     *                     left as it was
      */
     public static void writeOwnerOnly(Path file, String content) throws IOException {
         Path dir = file.toAbsolutePath().getParent();

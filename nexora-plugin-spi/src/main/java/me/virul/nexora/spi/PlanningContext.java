@@ -8,9 +8,19 @@ import java.util.Map;
  */
 public interface PlanningContext {
 
-    /** All capabilities currently registered in the engine. */
+    /**
+     * The capabilities the planner may use: those registered in the engine that the intent's tenant
+     * may use.
+     *
+     * @return the descriptors
+     */
     List<CapabilityDescriptor> availableCapabilities();
 
-    /** Engine-level config passed through from the builder. */
+    /**
+     * Planner configuration. The engine currently passes an empty map; a context built by other code
+     * may carry values.
+     *
+     * @return the configuration; never null
+     */
     Map<String, Object> config();
 }

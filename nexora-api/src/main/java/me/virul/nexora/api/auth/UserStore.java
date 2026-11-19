@@ -34,11 +34,13 @@ import org.slf4j.LoggerFactory;
  */
 public final class UserStore {
 
+    /** The shortest password accepted, in characters. */
     public static final int MIN_PASSWORD_LENGTH = 12;
+
+    /** The longest password accepted, in characters. */
     public static final int MAX_PASSWORD_LENGTH = 128;
 
     private static final Logger log = LoggerFactory.getLogger(UserStore.class);
-    // Lowercase, starts alphanumeric, 3 to 32 characters; ':' can never appear, so lines always split cleanly.
     private static final Pattern USERNAME = Pattern.compile("[a-z0-9][a-z0-9._-]{2,31}");
     private static final char SEPARATOR = ':';
 
@@ -64,6 +66,11 @@ public final class UserStore {
     }
 
     /**
+     * Opens the store and reads the file, if it exists.
+     *
+     * @param file   the users file; created on the first write
+     * @param hasher hashes new passwords and checks logins
+     * @throws NullPointerException  if either argument is null
      * @throws IllegalStateException if the file exists but cannot be read or holds a malformed line
      */
     public UserStore(Path file, PasswordHasher hasher) {
@@ -72,20 +79,41 @@ public final class UserStore {
         this.snapshot = load();
     }
 
+    /**
+     * The users file.
+     *
+     * @return its path
+     */
     public Path file() {
         return file;
     }
 
+    /**
+     * The hasher passwords are hashed and checked with.
+     *
+     * @return the hasher
+     */
     public PasswordHasher hasher() {
         return hasher;
     }
 
-    /** Usernames are case-insensitive; this is the form they are stored and logged in. */
+    /**
+     * Usernames are case-insensitive; this is the form they are stored and logged in.
+     *
+     * @param username the username as typed, or {@code null}
+     * @return it stripped and lowercased; empty for {@code null}
+     */
     public static String normalize(String username) {
         return username == null ? "" : username.strip().toLowerCase(Locale.ROOT);
     }
 
-    /** @throws IllegalArgumentException if {@code username} is not 3 to 32 of a-z, 0-9, '.', '_', '-' */
+    /**
+     * Normalizes a username and checks it can be stored.
+     *
+     * @param username the username as typed
+     * @return the normalized username
+     * @throws IllegalArgumentException if {@code username} is not 3 to 32 of a-z, 0-9, '.', '_', '-'
+     */
     public static String requireValidUsername(String username) {
         String normalized = normalize(username);
         if (!USERNAME.matcher(normalized).matches()) {
@@ -95,7 +123,13 @@ public final class UserStore {
         return normalized;
     }
 
-    /** @throws IllegalArgumentException if the password is too short, too long, or the username itself */
+    /**
+     * Checks a new password against the password rules.
+     *
+     * @param username the user the password is for
+     * @param password the new password
+     * @throws IllegalArgumentException if the password is too short, too long, or the username itself
+     */
     public static void requireAcceptablePassword(String username, char[] password) {
         if (password.length < MIN_PASSWORD_LENGTH || password.length > MAX_PASSWORD_LENGTH) {
             throw new IllegalArgumentException("Password must be " + MIN_PASSWORD_LENGTH + " to " + MAX_PASSWORD_LENGTH
@@ -106,10 +140,24 @@ public final class UserStore {
         }
     }
 
+    /**
+     * Every username, as the file holds them now. If a changed file is malformed or cannot be read,
+     * the failure is logged and the last list read successfully is returned. If the file has been
+     * deleted, the list is empty.
+     *
+     * @return the normalized usernames, sorted
+     */
     public List<String> usernames() {
         return List.copyOf(current().users().keySet());
     }
 
+    /**
+     * Whether the store has no users. If a changed file is malformed or cannot be read, the failure
+     * is logged and the last list read successfully is used. If the file has been deleted, the store
+     * is empty.
+     *
+     * @return {@code true} when there are none
+     */
     public boolean isEmpty() {
         return current().users().isEmpty();
     }
@@ -118,7 +166,12 @@ public final class UserStore {
         return account(username).map(Account::hash);
     }
 
-    /** The tenant {@code username} belongs to, if the user exists. */
+    /**
+     * The tenant {@code username} belongs to, if the user exists.
+     *
+     * @param username the username, normalized before lookup
+     * @return the tenant id, or empty
+     */
     public Optional<String> tenantOf(String username) {
         return account(username).map(Account::tenantId);
     }
@@ -127,12 +180,27 @@ public final class UserStore {
         return Optional.ofNullable(current().users().get(normalize(username)));
     }
 
-    /** Adds a user of the {@link TenantId#DEFAULT} tenant. */
+    /**
+     * Adds a user of the {@link TenantId#DEFAULT} tenant.
+     *
+     * @param username the new username
+     * @param password the password; not cleared by this method
+     * @throws IllegalArgumentException if the user exists, or the username or password is invalid
+     * @throws IllegalStateException    if the file cannot be read or written
+     */
     public synchronized void add(String username, char[] password) {
         add(username, password, TenantId.DEFAULT);
     }
 
-    /** @throws IllegalArgumentException if the user exists, or the username, password or tenant is invalid */
+    /**
+     * Adds a user of a tenant.
+     *
+     * @param username the new username
+     * @param password the password; not cleared by this method
+     * @param tenantId the tenant the user belongs to
+     * @throws IllegalArgumentException if the user exists, or the username, password or tenant is invalid
+     * @throws IllegalStateException    if the file cannot be read or written
+     */
     public synchronized void add(String username, char[] password, String tenantId) {
         String name = requireValidUsername(username);
         requireAcceptablePassword(name, password);
@@ -145,7 +213,14 @@ public final class UserStore {
         save(users);
     }
 
-    /** Moves the user to another tenant; the user's existing sessions stop working. */
+    /**
+     * Moves the user to another tenant; the user's existing sessions stop working.
+     *
+     * @param username the user
+     * @param tenantId the new tenant
+     * @throws IllegalArgumentException if there is no such user or the tenant id is invalid
+     * @throws IllegalStateException    if the file cannot be read or written
+     */
     public synchronized void setTenant(String username, String tenantId) {
         String name = normalize(username);
         TenantId.requireValid(tenantId);
@@ -158,7 +233,14 @@ public final class UserStore {
         save(users);
     }
 
-    /** Replaces the password; the user's existing sessions stop working. */
+    /**
+     * Replaces the password; the user's existing sessions stop working.
+     *
+     * @param username the user
+     * @param password the new password; not cleared by this method
+     * @throws IllegalArgumentException if there is no such user or the password is not acceptable
+     * @throws IllegalStateException    if the file cannot be read or written
+     */
     public synchronized void setPassword(String username, char[] password) {
         String name = normalize(username);
         requireAcceptablePassword(name, password);
@@ -171,7 +253,13 @@ public final class UserStore {
         save(users);
     }
 
-    /** Deletes the account; the user's existing sessions stop working. */
+    /**
+     * Deletes the account; the user's existing sessions stop working.
+     *
+     * @param username the user
+     * @throws IllegalArgumentException if there is no such user
+     * @throws IllegalStateException    if the file cannot be read or written
+     */
     public synchronized void remove(String username) {
         String name = normalize(username);
         Map<String, Account> users = new TreeMap<>(reloadForWrite().users());
@@ -243,7 +331,6 @@ public final class UserStore {
         try {
             return PasswordHasher.Hash.decode(encoded);
         } catch (IllegalArgumentException e) {
-            // The message names only the location: the line itself holds hash material.
             throw new IllegalStateException("Malformed password hash at " + file + ":" + lineNumber);
         }
     }

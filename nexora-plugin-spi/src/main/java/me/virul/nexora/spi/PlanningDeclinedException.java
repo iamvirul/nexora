@@ -10,12 +10,21 @@ package me.virul.nexora.spi;
  */
 public class PlanningDeclinedException extends PlanningException {
 
-    /** @param message why the planner could not plan; logged by the composite planner */
+    /**
+     * Creates the exception.
+     *
+     * @param message why the planner could not plan; logged by the composite planner
+     */
     public PlanningDeclinedException(String message) {
         super(message);
     }
 
-    /** @param cause the failure that made the planner decline, such as a failed model call */
+    /**
+     * Creates the exception with the failure that caused it.
+     *
+     * @param message why the planner could not plan; logged by the composite planner
+     * @param cause   the failure that made the planner decline, such as a failed model call
+     */
     public PlanningDeclinedException(String message, Throwable cause) {
         super(message, cause);
     }

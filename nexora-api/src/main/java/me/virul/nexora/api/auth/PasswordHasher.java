@@ -28,9 +28,22 @@ public final class PasswordHasher {
     private static final Base64.Encoder ENCODER = Base64.getEncoder().withoutPadding();
     private static final Base64.Decoder DECODER = Base64.getDecoder();
 
-    /** A stored password: the iteration count, salt and derived hash, all needed to check a guess. */
+    /**
+     * A stored password: the iteration count, salt and derived hash, all needed to check a guess.
+     * The arrays are copied in and out, so a hash cannot be changed after it is made.
+     *
+     * @param iterations the PBKDF2 iteration count
+     * @param salt       the random salt
+     * @param hash       the derived key
+     */
     public record Hash(int iterations, byte[] salt, byte[] hash) {
 
+        /**
+         * Validates the hash and copies its arrays.
+         *
+         * @throws IllegalArgumentException if {@code iterations} is not positive
+         * @throws NullPointerException     if {@code salt} or {@code hash} is null
+         */
         public Hash {
             if (iterations < 1) {
                 throw new IllegalArgumentException("iterations must be positive, got " + iterations);
@@ -39,11 +52,21 @@ public final class PasswordHasher {
             hash = hash.clone();
         }
 
+        /**
+         * The salt.
+         *
+         * @return a copy of the salt
+         */
         @Override
         public byte[] salt() {
             return salt.clone();
         }
 
+        /**
+         * The derived key.
+         *
+         * @return a copy of the derived key
+         */
         @Override
         public byte[] hash() {
             return hash.clone();
@@ -82,7 +105,6 @@ public final class PasswordHasher {
 
         @Override
         public String toString() {
-            // Never print hash material, even by accident in a log line.
             return "Hash[iterations=" + iterations + "]";
         }
     }
@@ -91,6 +113,7 @@ public final class PasswordHasher {
     /** Checked against for unknown users, so a missing account costs the same time as a wrong password. */
     private final Hash decoy;
 
+    /** A hasher at {@value #DEFAULT_ITERATIONS} iterations. */
     public PasswordHasher() {
         this(DEFAULT_ITERATIONS);
     }
@@ -101,13 +124,25 @@ public final class PasswordHasher {
         this.decoy = hash("decoy password that matches nothing".toCharArray());
     }
 
+    /**
+     * Hashes a password with a fresh random salt.
+     *
+     * @param password the password; not cleared by this method
+     * @return the hash to store
+     */
     public Hash hash(char[] password) {
         byte[] salt = new byte[SALT_BYTES];
         RANDOM.nextBytes(salt);
         return new Hash(iterations, salt, derive(password, salt, iterations));
     }
 
-    /** Recomputes with the stored salt and iterations and compares in constant time. */
+    /**
+     * Recomputes with the stored salt and iterations and compares in constant time.
+     *
+     * @param password the guess; not cleared by this method
+     * @param stored   the stored hash
+     * @return {@code true} when the guess is the password
+     */
     public boolean matches(char[] password, Hash stored) {
         byte[] candidate = derive(password, stored.salt(), stored.iterations());
         return MessageDigest.isEqual(candidate, stored.hash());
@@ -123,7 +158,6 @@ public final class PasswordHasher {
         try {
             return SecretKeyFactory.getInstance(ALGORITHM).generateSecret(spec).getEncoded();
         } catch (NoSuchAlgorithmException | InvalidKeySpecException e) {
-            // Every Java platform is required to provide PBKDF2WithHmacSHA256.
             throw new IllegalStateException(ALGORITHM + " is unavailable", e);
         } finally {
             spec.clearPassword();

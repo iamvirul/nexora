@@ -16,10 +16,16 @@ import java.util.Set;
  */
 public record RateLimitConfig(boolean enabled, int globalRpm, int executeRpm, Set<String> trustedProxies) {
 
+    /** The global limit of {@link #defaults()}, in requests per minute. */
     public static final int DEFAULT_GLOBAL_RPM = 60;
+
+    /** The {@code POST /api/execute} limit of {@link #defaults()}, in requests per minute. */
     public static final int DEFAULT_EXECUTE_RPM = 10;
 
     /**
+     * Validates the limits and normalises the trusted proxy addresses.
+     *
+     * @throws NullPointerException     if {@code trustedProxies} is null
      * @throws IllegalArgumentException if a limit is below 1, or a trusted proxy is not an IP address
      */
     public RateLimitConfig {
@@ -28,7 +34,6 @@ public record RateLimitConfig(boolean enabled, int globalRpm, int executeRpm, Se
                     + globalRpm + " executeRpm=" + executeRpm);
         }
         Objects.requireNonNull(trustedProxies, "trustedProxies");
-        // Normalised once here, so a lookup compares canonical forms ("::1" and "0:0:0:0:0:0:0:1" alike).
         Set<String> normalised = new LinkedHashSet<>();
         for (String proxy : trustedProxies) {
             normalised.add(ClientAddress.parseLiteral(proxy)
@@ -38,10 +43,21 @@ public record RateLimitConfig(boolean enabled, int globalRpm, int executeRpm, Se
         trustedProxies = Set.copyOf(normalised);
     }
 
+    /**
+     * Limits enabled at {@value #DEFAULT_GLOBAL_RPM} and {@value #DEFAULT_EXECUTE_RPM} requests per
+     * minute, with no trusted proxies.
+     *
+     * @return the configuration
+     */
     public static RateLimitConfig defaults() {
         return new RateLimitConfig(true, DEFAULT_GLOBAL_RPM, DEFAULT_EXECUTE_RPM, Set.of());
     }
 
+    /**
+     * No limits at all.
+     *
+     * @return the configuration
+     */
     public static RateLimitConfig disabled() {
         return new RateLimitConfig(false, DEFAULT_GLOBAL_RPM, DEFAULT_EXECUTE_RPM, Set.of());
     }

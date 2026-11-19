@@ -40,7 +40,10 @@ import org.slf4j.LoggerFactory;
  */
 public final class RequestRateLimiter {
 
+    /** The Prometheus counter of refused requests, labelled by {@code endpoint} and {@code client_ip}. */
     public static final String VIOLATIONS_METRIC = "nexora_rate_limit_violations_total";
+
+    /** The path the execute limit applies to, for {@code POST} requests. */
     public static final String EXECUTE_PATH = "/api/execute";
 
     static final int MAX_TRACKED_CLIENTS = 100_000;
@@ -52,7 +55,7 @@ public final class RequestRateLimiter {
     private static final long NANOS_PER_SECOND = TimeUnit.SECONDS.toNanos(1);
 
     private final RateLimitConfig config;
-    private final Counter violations; // null when disabled: a disabled limiter registers nothing
+    private final Counter violations;
     private final Limit global;
     private final Limit execute;
 
@@ -71,7 +74,16 @@ public final class RequestRateLimiter {
         this.execute = new Limit("execute", config.executeRpm(), time);
     }
 
-    /** @param registry where {@value #VIOLATIONS_METRIC} is registered; unused when disabled */
+    /**
+     * Creates a limiter.
+     *
+     * @param config   the limits
+     * @param registry where {@value #VIOLATIONS_METRIC} is registered; unused when disabled
+     * @return the limiter
+     * @throws NullPointerException     if {@code config} is null, or {@code registry} is null while
+     *                                  the limits are enabled
+     * @throws IllegalArgumentException if {@value #VIOLATIONS_METRIC} is already registered there
+     */
     public static RequestRateLimiter create(RateLimitConfig config, CollectorRegistry registry) {
         return new RequestRateLimiter(config, registry, TimeMeter.SYSTEM_NANOTIME);
     }
@@ -81,6 +93,11 @@ public final class RequestRateLimiter {
         return new RequestRateLimiter(config, registry, time);
     }
 
+    /**
+     * The limits this limiter applies.
+     *
+     * @return the configuration
+     */
     public RateLimitConfig config() {
         return config;
     }
@@ -90,7 +107,13 @@ public final class RequestRateLimiter {
         return global.buckets.size();
     }
 
-    /** {@code next} behind the limits; {@code next} itself when the limiter is disabled. */
+    /**
+     * {@code next} behind the limits; {@code next} itself when the limiter is disabled.
+     *
+     * @param next the handler to protect
+     * @return a handler that answers {@code 429} over the limits and otherwise calls {@code next}
+     * @throws NullPointerException if {@code next} is null
+     */
     public HttpHandler limit(HttpHandler next) {
         Objects.requireNonNull(next, "next");
         if (!config.enabled()) {
@@ -140,7 +163,6 @@ public final class RequestRateLimiter {
     }
 
     private void reject(HttpExchange exchange, String client, Decision decision) throws IOException {
-        // The route's context path, not the full URI: ids in paths would make the label unbounded.
         String endpoint = exchange.getHttpContext().getPath();
         violations.labels(endpoint, client).inc();
         log.warn(
@@ -163,7 +185,6 @@ public final class RequestRateLimiter {
     }
 
     private static byte[] errorBody(long retryAfterSeconds) throws JsonProcessingException {
-        // Ordered like every other error body: code, then message, then this one's extra field.
         Map<String, Object> error = new LinkedHashMap<>();
         error.put("code", "RATE_LIMIT_EXCEEDED");
         error.put(
