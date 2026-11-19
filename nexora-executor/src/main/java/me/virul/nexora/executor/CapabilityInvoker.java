@@ -1,7 +1,6 @@
 package me.virul.nexora.executor;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Objects;
 import me.virul.nexora.core.capability.CapabilityContract;
 import me.virul.nexora.core.capability.CapabilityRequest;
@@ -48,9 +47,9 @@ public final class CapabilityInvoker {
             return CapabilityResult.failure("CAPABILITY_NOT_FOUND", "No capability registered with id: " + targetId);
         }
 
-        Instant start = Instant.now();
+        long start = System.nanoTime();
         CapabilityResult result = capability.execute(request);
-        Duration elapsed = Duration.between(start, Instant.now());
+        Duration elapsed = Duration.ofNanos(System.nanoTime() - start);
 
         if (result.succeeded()) {
             monitor.recordSuccess(targetId, elapsed);
