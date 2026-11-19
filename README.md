@@ -865,9 +865,9 @@ Baseline on an Apple M3 (8 cores), JDK 21.0.9, one fork, 3 warmup and 5 measured
 | ... with a modify-input amendment | `PlanAmendmentBenchmark` (`MODIFY_INPUT`) | 10.9 µs |
 | ... with a skip amendment | `PlanAmendmentBenchmark` (`SKIP_STEP`) | 9.6 µs (the skipped step does not run) |
 | ... with an add-step amendment | `PlanAmendmentBenchmark` (`ADD_STEP`) | 13.8 µs (one more step runs) |
-| Contract monitor, no thresholds | `ContractMonitorBenchmark.invoke` (`NONE`) | 26 ns per call |
-| Contract monitor, thresholds and fallback | `ContractMonitorBenchmark.invoke` (`WITH_FALLBACK`) | 93 ns per call |
-| ... 4 threads on one capability | `ContractMonitorBenchmark.invokeContended` | 243 ns and 357 ns per call |
+| Contract monitor, no thresholds | `ContractMonitorBenchmark.invoke` (`NONE`) | 34 ns per call |
+| Contract monitor, thresholds and fallback | `ContractMonitorBenchmark.invoke` (`WITH_FALLBACK`) | 94 ns per call |
+| ... 4 threads on one capability | `ContractMonitorBenchmark.invokeContended` | 270 ns and 397 ns per call |
 | Plugin JAR load, activate and deactivate | `PluginLoadBenchmark` | 209 µs |
 
 Applying an amendment costs well under a microsecond; the differences above are mostly the step it adds or skips. Recording a call takes no lock, but every thread calling one capability writes the same sliding window, so on several cores each call also pays for moving that window between them; calls to different capabilities do not share it. Numbers vary by machine, so compare them only against a run on the same hardware. See CONTRIBUTING.md for how to run the benchmarks.
