@@ -850,6 +850,28 @@ Without Helm: `kubectl apply -f deploy/k8s/namespace.yaml && kubectl --namespace
 
 To build the image yourself: `mvn -pl nexora-cli -am package -DskipTests && docker build -t nexora:dev .`
 
+## Performance
+
+`nexora-benchmarks` measures the engine's hot paths with [JMH](https://github.com/openjdk/jmh). Every capability in them does nothing, so the numbers are the engine's own cost per call, not what a real workflow takes. Each release tag runs the suite in CI and uploads the results as the `benchmarks-<tag>` artifact of the Benchmarks workflow.
+
+Baseline on an Apple M3 (8 cores), JDK 21.0.9, one fork, 3 warmup and 5 measured iterations of 2 seconds:
+
+| Path | Benchmark | Result |
+|---|---|---|
+| Single step execution | `SingleStepExecutionBenchmark` | 7.7 µs per execution, 128,000 executions/s |
+| DAG, 4 parallel steps | `DagExecutionBenchmark` (`stepCount=4`) | 12.9 µs per execution, 76,000 executions/s |
+| DAG, 8 parallel steps | `DagExecutionBenchmark` (`stepCount=8`) | 17.6 µs per execution, 56,000 executions/s |
+| Two-step plan, no amendment | `PlanAmendmentBenchmark` (`NONE`) | 10.8 µs |
+| ... with a modify-input amendment | `PlanAmendmentBenchmark` (`MODIFY_INPUT`) | 10.6 µs |
+| ... with a skip amendment | `PlanAmendmentBenchmark` (`SKIP_STEP`) | 9.4 µs (the skipped step does not run) |
+| ... with an add-step amendment | `PlanAmendmentBenchmark` (`ADD_STEP`) | 13.1 µs (one more step runs) |
+| Contract monitor, no thresholds | `ContractMonitorBenchmark.invoke` (`NONE`) | 75 ns per call |
+| Contract monitor, thresholds and fallback | `ContractMonitorBenchmark.invoke` (`WITH_FALLBACK`) | 218 ns per call |
+| ... 4 threads on one capability | `ContractMonitorBenchmark.invokeContended` | 831 ns and 2.1 µs per call |
+| Plugin JAR load, activate and deactivate | `PluginLoadBenchmark` | 181 µs |
+
+Applying an amendment costs well under a microsecond; the differences above are mostly the step it adds or skips. The contract monitor keeps one sliding window per capability behind a lock, so concurrent calls to the same capability wait for each other: plan for it on a capability with very high call rates. Numbers vary by machine, so compare them only against a run on the same hardware. See CONTRIBUTING.md for how to run the benchmarks.
+
 ## Module layout
 
 ```
@@ -866,6 +888,7 @@ nexora-runtime        ExecutionEngine (ties planner + scheduler together)
 nexora-api            NexoraEngine public facade, builder, NexoraObservability
 nexora-cli            PicoCLI command-line interface + ObserveCommand HTTP server
 nexora-spring-boot-starter  Spring Boot auto-configuration and Actuator health indicator
+nexora-benchmarks     JMH benchmarks for the core engine paths (not published)
 ```
 
 Dependencies always point inward. `nexora-cli` knows about `nexora-api`. `nexora-api` knows about `nexora-runtime`. Neither knows anything about the CLI.

@@ -12,6 +12,18 @@ mvn spotless:apply    # fix formatting (palantir-java-format)
 
 `mvn verify` fails on unformatted code, and CI runs the same check.
 
+### Benchmarks
+
+`nexora-benchmarks` holds JMH benchmarks for the engine's hot paths. Build the runnable jar and run every benchmark, or one by name:
+
+```bash
+mvn -pl nexora-benchmarks -am package -DskipTests
+java -jar nexora-benchmarks/target/benchmarks.jar
+java -jar nexora-benchmarks/target/benchmarks.jar DagExecutionBenchmark -p stepCount=8
+```
+
+`mvn verify` runs each benchmark once through the JMH harness and checks that it exercises its path, but does not measure anything; CI measures on each release tag (`Benchmarks` workflow). When a change could affect one of these paths, run the matching benchmark before and after it and put both numbers in the pull request. Compare numbers only from the same machine.
+
 ### JavaDoc
 
 `nexora-core`, `nexora-plugin-spi` and `nexora-api` are the API that applications and plugins build against, so every public and protected type, constructor, method, field and record component there needs a doc comment, with `@param`, `@return` and `@throws` for each one that applies. `mvn verify` runs javadoc with every doclint check and fails on any warning, missing comments included. To see the warnings of one module without running its tests:
