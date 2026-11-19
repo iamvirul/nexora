@@ -57,10 +57,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
-          if [ -z "$TAG" ]; then
-            echo "::warning::No published release yet; the site is deployed without JavaDoc"
-            exit 0
+          if ! TAG=$(gh release view --json tagName --jq .tagName 2>&1); then
+            if [ "$TAG" = "release not found" ]; then
+              echo "::warning::No published release yet; the site is deployed without JavaDoc"
+              exit 0
+            fi
+            echo "::error::Could not look up the latest release: ${TAG}"
+            exit 1
           fi
           echo "Building JavaDoc for ${TAG}"
           scripts/build-javadoc.sh "$TAG" build/javadoc
