@@ -125,7 +125,7 @@
         <bucket4j.version>8.22.0</bucket4j.version>
         <!-- Official LLM provider SDKs, used only by nexora-planner-llm and bundled into its plugin JAR. -->
         <anthropic-java.version>3.6.0</anthropic-java.version>
-        <openai-java.version>4.101.0</openai-java.version>
+        <openai-java.version>4.105.0</openai-java.version>
         <google-genai.version>1.80.0</google-genai.version>
         <!-- Pinned above what google-genai's auth library brings (33.4.0-android, CVE-2026-102554). -->
         <guava.version>33.8.0-jre</guava.version>
