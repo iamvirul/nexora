@@ -98,7 +98,8 @@ public final class CompositePlanner implements Planner {
         List<Planner> ordered = new ArrayList<>(fixedPlanners.size() + live.size() + 1);
         ordered.addAll(fixedPlanners);
         ordered.addAll(live);
-        ordered.sort(Comparator.comparingInt(p -> -p.descriptor().priority()));
+        ordered.sort(Comparator.comparingInt((Planner p) -> p.descriptor().priority())
+                .reversed());
         ordered.add(fallback);
         Ordering computed = new Ordering(live, List.copyOf(ordered));
         ordering = computed;

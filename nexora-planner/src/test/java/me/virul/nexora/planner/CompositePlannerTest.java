@@ -48,6 +48,17 @@ class CompositePlannerTest {
     }
 
     @Test
+    void ordersExtremePrioritiesWithoutOverflow() {
+        Planner lowest = new NamedPlanner("lowest", Integer.MIN_VALUE, false);
+        Planner neutral = new NamedPlanner("neutral", 0, false);
+        Planner highest = new NamedPlanner("highest", Integer.MAX_VALUE, false);
+
+        CompositePlanner composite = new CompositePlanner(List.of(lowest, neutral, highest), fallback);
+
+        assertThat(composite.planners()).containsExactly(highest, neutral, lowest, fallback);
+    }
+
+    @Test
     void readsLivePlannersOnEveryCall() {
         Planner fixed = new NamedPlanner("fixed", 5, false);
         Planner v1 = new NamedPlanner("plugin-v1", 10, true);
