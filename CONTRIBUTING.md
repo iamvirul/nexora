@@ -17,12 +17,12 @@ mvn spotless:apply    # fix formatting (palantir-java-format)
 `nexora-core`, `nexora-plugin-spi` and `nexora-api` are the API that applications and plugins build against, so every public and protected type, constructor, method, field and record component there needs a doc comment, with `@param`, `@return` and `@throws` for each one that applies. `mvn verify` runs javadoc with every doclint check and fails on any warning, missing comments included. To see the warnings of one module without running its tests:
 
 ```bash
-mvn -pl nexora-api compile javadoc:javadoc-no-fork@javadoc-lint
+mvn -pl nexora-api -am compile javadoc:javadoc-no-fork@javadoc-lint
 ```
 
 Say what a caller needs: what a `null` argument or result means, the unit and range of a number, what is copied or immutable, and when each exception is thrown. A new module joins the check by setting `nexora.javadoc.lint.skip` to `false` in its `pom.xml`.
 
-Each release publishes the JavaDoc of these three modules to the docs site at `/javadoc/` (see `website/scripts/build-javadoc.sh`). The site always shows the latest release, never `main`.
+Each release publishes the JavaDoc of these three modules to the docs site at `/javadoc/` (see `website/scripts/build-javadoc.sh`). The site always shows the latest published GitHub Release, never `main` or a tag whose publish failed.
 
 ### Integration tests
 
