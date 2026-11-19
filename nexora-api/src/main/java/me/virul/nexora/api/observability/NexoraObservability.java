@@ -498,7 +498,7 @@ public final class NexoraObservability implements AutoCloseable {
      *                       {@code CANCELLED}
      * @param startedAtMs    when it started, in epoch milliseconds
      * @param finishedAtMs   when it finished, in epoch milliseconds; {@code 0} while running
-     * @param totalSteps     the number of steps in its plan
+     * @param totalSteps     the number of steps observed so far, by a start, completion, failure or skip
      * @param runningSteps   the number of steps running
      * @param completedSteps the number of steps that completed
      * @param failedSteps    the number of steps that failed

@@ -21,7 +21,8 @@ import java.time.Duration;
  *                             window; also the default timeout of a step that sets none. {@code null}
  *                             means no latency threshold
  * @param maxErrorRate         the highest tolerated share of failed calls in the sliding window, from
- *                             {@code 0.0} to {@code 1.0}; a negative value means no error rate threshold
+ *                             {@code 0.0} to {@code 1.0}; a negative value means no error rate threshold.
+ *                             Not range-checked
  * @param slidingWindowSize    the number of most recent calls the error rate and p99 latency are
  *                             computed over; at least 5
  * @param fallbackCapabilityId the capability that serves calls while the breaker is open, or
@@ -190,7 +191,8 @@ public record CapabilityContract(
          * Builds the contract.
          *
          * @return the contract
-         * @throws IllegalArgumentException if a value is out of range, see {@link CapabilityContract}
+         * @throws IllegalArgumentException if the window size is under 5, the open duration is negative,
+         *                                  or the probe interval is not positive
          */
         public CapabilityContract build() {
             return new CapabilityContract(

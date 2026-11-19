@@ -61,7 +61,7 @@ public record CapabilityResult(
     }
 
     /**
-     * A failed result. The retry policy of the step decides whether the call is tried again.
+     * A failed result. The engine's default retry policy decides whether the call is tried again.
      *
      * @param code    a machine-readable reason
      * @param message a human-readable reason

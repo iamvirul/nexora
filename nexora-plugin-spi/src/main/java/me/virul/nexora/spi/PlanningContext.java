@@ -17,7 +17,8 @@ public interface PlanningContext {
     List<CapabilityDescriptor> availableCapabilities();
 
     /**
-     * Engine-level config passed through from the builder.
+     * Planner configuration. The engine currently passes an empty map; a context built by other code
+     * may carry values.
      *
      * @return the configuration; never null
      */

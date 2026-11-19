@@ -15,8 +15,9 @@ import java.util.Set;
  *                               {@code null} to write it nowhere but the step output
  * @param dependsOn              the ids of the steps that must complete before this one runs; never
  *                               null and immutable
- * @param retryPolicyId          the registered retry policy to use, or {@code null} for the engine
- *                               default
+ * @param retryPolicyId          the id of a registered retry policy, or {@code null}. Carried for
+ *                               planners and tooling; the engine currently retries every step with
+ *                               its default policy, whatever this names
  * @param timeout                the time limit of each attempt, or {@code null} for the capability's
  *                               p99 latency contract, else the engine default
  * @param compensateCapabilityId the capability invoked to undo this step on saga rollback, or

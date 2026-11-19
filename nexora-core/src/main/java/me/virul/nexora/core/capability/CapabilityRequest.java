@@ -15,7 +15,7 @@ import me.virul.nexora.core.tenant.TenantId;
  *                       that completed; capabilities with side effects use it to deduplicate
  * @param inputs         the resolved step inputs; {@code null} values are dropped, so test an absent
  *                       flag with {@code getOrDefault} or {@code Boolean.TRUE.equals}. Never null and
- *                       immutable
+ *                       unmodifiable; a shallow copy, so mutable values are shared, not copied
  * @param traceContext   the span this call runs in
  * @param timeout        the time limit for this call, or {@code null} to use the engine default
  * @param executionId    the execution this call belongs to

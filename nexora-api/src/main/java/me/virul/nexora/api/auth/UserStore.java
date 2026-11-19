@@ -141,20 +141,20 @@ public final class UserStore {
     }
 
     /**
-     * Every username, as the file holds them now.
+     * Every username, as the file holds them now. If a changed file cannot be read, the failure is
+     * logged and the last list read successfully is returned.
      *
      * @return the normalized usernames, sorted
-     * @throws IllegalStateException if a changed file cannot be read
      */
     public List<String> usernames() {
         return List.copyOf(current().users().keySet());
     }
 
     /**
-     * Whether the store has no users.
+     * Whether the store has no users. If a changed file cannot be read, the failure is logged and the
+     * last list read successfully is used.
      *
      * @return {@code true} when there are none
-     * @throws IllegalStateException if a changed file cannot be read
      */
     public boolean isEmpty() {
         return current().users().isEmpty();

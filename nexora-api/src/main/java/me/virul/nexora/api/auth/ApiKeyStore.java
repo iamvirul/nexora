@@ -112,7 +112,9 @@ public final class ApiKeyStore {
     }
 
     /**
-     * Replaces the stored digest with a new key's. The old key stops working on the next start.
+     * Replaces the stored digest with a new key's. The old key stops working on the next start that
+     * reads the digest file. A key supplied through {@code --api-key} or {@value #ENV_VAR} takes
+     * precedence over the file, so update or remove those separately.
      *
      * @param digestFile where the digest is kept
      * @return the new key's digest and the plain key, to show the operator once

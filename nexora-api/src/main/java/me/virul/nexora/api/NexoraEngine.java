@@ -1062,7 +1062,7 @@ public final class NexoraEngine implements AutoCloseable {
         }
 
         /**
-         * The retry policy of steps that name none. Defaults to {@link RetryPolicy#noRetry()}.
+         * The retry policy of every step. Defaults to {@link RetryPolicy#noRetry()}.
          *
          * @param policy the policy
          * @return this builder
