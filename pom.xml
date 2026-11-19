@@ -84,6 +84,7 @@
         <!-- Spring Boot auto-configuration over nexora-api -->
         <module>nexora-spring-boot-starter</module>
         <module>nexora-all</module>
+        <module>nexora-benchmarks</module>
         <module>tests/payment-pipeline</module>
         <module>tests/json-config-demo</module>
         <module>tests/login-demo</module>
@@ -108,6 +109,7 @@
         <jackson.datatype.jsr310.version>2.23.0</jackson.datatype.jsr310.version>
         <websocket.version>1.6.0</websocket.version>
         <logback.version>1.6.7</logback.version>
+        <jmh.version>1.37</jmh.version>
         <prometheus.version>0.16.0</prometheus.version>
         <h2.version>2.5.252</h2.version>
         <hikaricp.version>7.1.0</hikaricp.version>
@@ -584,6 +586,7 @@
                                 <artifact>nexora-cli</artifact>
                                 <artifact>nexora-planner-llm</artifact>
                                 <artifact>nexora-capabilities</artifact>
+                                <artifact>nexora-benchmarks</artifact>
                                 <artifact>json-config-demo</artifact>
                                 <artifact>llm-planner-demo</artifact>
                                 <artifact>login-demo</artifact>
