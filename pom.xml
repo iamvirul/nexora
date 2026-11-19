@@ -131,6 +131,7 @@
         <guava.version>33.8.0-jre</guava.version>
         <!-- Set -DskipITs to skip integration tests, -DskipUTs to run only integration tests. -->
         <skipUTs>false</skipUTs>
+        <nexora.javadoc.lint.skip>true</nexora.javadoc.lint.skip>
         <nexora-retry.version>0.6.0-SNAPSHOT</nexora-retry.version>
         <nexora-event.version>0.6.0-SNAPSHOT</nexora-event.version>
         <nexora-executor.version>0.6.0-SNAPSHOT</nexora-executor.version>
@@ -224,6 +225,32 @@
                         <goals>
                             <goal>check</goal>
                         </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>${maven-javadoc-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>javadoc-lint</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>javadoc-no-fork</goal>
+                        </goals>
+                        <configuration>
+                            <skip>${nexora.javadoc.lint.skip}</skip>
+                            <source>${java.version}</source>
+                            <doclint>all</doclint>
+                            <failOnWarnings>true</failOnWarnings>
+                            <failOnError>true</failOnError>
+                            <quiet>true</quiet>
+                            <additionalOptions>
+                                <additionalOption>-Xmaxwarns</additionalOption>
+                                <additionalOption>10000</additionalOption>
+                            </additionalOptions>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
