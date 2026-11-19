@@ -10,7 +10,6 @@ on:
       - 'nexora-cli/src/main/resources/openapi.yaml'
       - '.github/workflows/deploy-docs.yml'
 
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
@@ -47,6 +46,22 @@ jobs:
         run: npm ci
       - name: Build website
         run: npm run build
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+      - name: Build JavaDoc of the latest release
+        run: |
+          TAG=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
+          if [ -z "$TAG" ]; then
+            echo "::warning::No release tag yet; the site is deployed without JavaDoc"
+            exit 0
+          fi
+          echo "Building JavaDoc for ${TAG}"
+          scripts/build-javadoc.sh "$TAG" build/javadoc
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
         with:

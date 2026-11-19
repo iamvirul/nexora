@@ -64,6 +64,12 @@ const config = {
             position: 'left',
           },
           {
+            to: 'pathname:///javadoc/',
+            target: '_self',
+            label: 'Java API',
+            position: 'left',
+          },
+          {
             href: 'https://github.com/iamvirul/nexora',
             label: 'GitHub',
             position: 'right',
