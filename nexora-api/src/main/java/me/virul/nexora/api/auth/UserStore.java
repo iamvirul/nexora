@@ -141,8 +141,9 @@ public final class UserStore {
     }
 
     /**
-     * Every username, as the file holds them now. If a changed file cannot be read, the failure is
-     * logged and the last list read successfully is returned.
+     * Every username, as the file holds them now. If a changed file is malformed or cannot be read,
+     * the failure is logged and the last list read successfully is returned. If the file has been
+     * deleted, the list is empty.
      *
      * @return the normalized usernames, sorted
      */
@@ -151,8 +152,9 @@ public final class UserStore {
     }
 
     /**
-     * Whether the store has no users. If a changed file cannot be read, the failure is logged and the
-     * last list read successfully is used.
+     * Whether the store has no users. If a changed file is malformed or cannot be read, the failure
+     * is logged and the last list read successfully is used. If the file has been deleted, the store
+     * is empty.
      *
      * @return {@code true} when there are none
      */
