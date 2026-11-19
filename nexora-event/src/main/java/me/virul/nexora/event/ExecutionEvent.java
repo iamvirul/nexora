@@ -26,4 +26,5 @@ public sealed interface ExecutionEvent
                 CapabilityCircuitClosedEvent,
                 ExecutionDeadLetteredEvent,
                 ScheduledExecutionFiredEvent,
-                ScheduledExecutionMissedEvent {}
+                ScheduledExecutionMissedEvent,
+                EngineShutdownEvent {}

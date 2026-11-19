@@ -2,6 +2,8 @@ package me.virul.nexora.runtime.engine;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -10,6 +12,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import me.virul.nexora.core.capability.ResultStatus;
 import me.virul.nexora.core.context.ExecutionContext;
 import me.virul.nexora.core.context.TraceContext;
@@ -61,9 +65,21 @@ public final class ExecutionEngine {
     private final int stepOutputMaxBytes;
     // Executions currently running on this engine; entries are removed once terminal handling is done.
     private final ConcurrentHashMap<String, RunningExecution> runningExecutions = new ConcurrentHashMap<>();
+    // Readers are submits registering an execution; the writer is drain() closing admission. Holding the
+    // read lock across check-and-register means no submit can slip in after drain() takes its snapshot.
+    private final ReentrantReadWriteLock admission = new ReentrantReadWriteLock();
+    private volatile boolean accepting = true;
 
-    /** An execution this engine is running, with the tenant that owns it for tenant-scoped cancels. */
-    private record RunningExecution(HaltSignal halt, String tenantId) {}
+    /**
+     * An execution this engine is running, with the tenant that owns it for tenant-scoped cancels.
+     * {@code finished} completes once it is no longer tracked, which is what a drain waits on.
+     */
+    private record RunningExecution(
+            String executionId, HaltSignal halt, String tenantId, CompletableFuture<Void> finished) {
+        RunningExecution(String executionId, HaltSignal halt, String tenantId) {
+            this(executionId, halt, tenantId, new CompletableFuture<>());
+        }
+    }
 
     private static final int STATE_WRITE_ATTEMPTS = 3;
     private static final Duration STATE_WRITE_RETRY_DELAY = Duration.ofMillis(100);
@@ -354,6 +370,128 @@ public final class ExecutionEngine {
                 : CancellationOutcome.ALREADY_TERMINAL;
     }
 
+    /** False once {@link #drain(Duration)} has begun: every later submit is rejected. */
+    public boolean isAcceptingExecutions() {
+        return accepting;
+    }
+
+    /**
+     * Stops accepting executions and waits for the ones in flight. Each later submit throws
+     * {@link EngineShuttingDownException}.
+     *
+     * <p>Executions that finish within {@code timeout} are left alone. Any still running then are
+     * cancelled exactly as {@link #cancel(String)} does, so completed steps are compensated when saga
+     * is enabled, and the drain waits up to {@code timeout} again for that terminal handling to
+     * finish. The whole call therefore takes at most twice {@code timeout}.
+     *
+     * <p>Calling it again drains whatever is still tracked; the engine never accepts work again.
+     *
+     * @param timeout how long to wait for in-flight executions, zero to cancel them at once
+     * @throws IllegalArgumentException if {@code timeout} is negative
+     */
+    public DrainResult drain(Duration timeout) {
+        Objects.requireNonNull(timeout, "timeout must not be null");
+        if (timeout.isNegative()) {
+            throw new IllegalArgumentException("drain timeout must not be negative, got: " + timeout);
+        }
+        admission.writeLock().lock();
+        try {
+            accepting = false;
+        } finally {
+            admission.writeLock().unlock();
+        }
+        Instant start = Instant.now();
+        List<RunningExecution> inFlight = List.copyOf(runningExecutions.values());
+        log.info("Draining in-flight executions count={} drainTimeout={}", inFlight.size(), timeout);
+
+        awaitFinished(inFlight, timeout);
+        List<RunningExecution> stragglers =
+                inFlight.stream().filter(r -> !r.finished().isDone()).toList();
+        int cancelled = 0;
+        for (RunningExecution running : stragglers) {
+            if (running.halt().halt(HaltSignal.Reason.CANCELLED)) {
+                cancelled++;
+                log.warn(
+                        "Cancelling execution still running after drain timeout executionId={} tenantId={}",
+                        running.executionId(),
+                        running.tenantId());
+            }
+        }
+
+        awaitFinished(stragglers, timeout);
+        List<String> unfinished = stragglers.stream()
+                .filter(r -> !r.finished().isDone())
+                .map(RunningExecution::executionId)
+                .toList();
+        Duration elapsed = Duration.between(start, Instant.now());
+        if (!unfinished.isEmpty()) {
+            log.error(
+                    "Drain gave up on executions that did not finish count={} executionIds={} elapsed={}ms",
+                    unfinished.size(),
+                    unfinished,
+                    elapsed.toMillis());
+        }
+        DrainResult result = new DrainResult(
+                inFlight.size(), inFlight.size() - stragglers.size(), cancelled, unfinished.size(), elapsed);
+        log.info(
+                "Drain finished inFlight={} completed={} cancelled={} unfinished={} elapsed={}ms",
+                result.inFlight(),
+                result.completed(),
+                result.cancelled(),
+                result.unfinished(),
+                elapsed.toMillis());
+        return result;
+    }
+
+    /** Waits until every execution has finished or {@code timeout} passes; an interrupt ends the wait early. */
+    private static void awaitFinished(Collection<RunningExecution> executions, Duration timeout) {
+        if (executions.isEmpty()) {
+            return;
+        }
+        CompletableFuture<Void> all = CompletableFuture.allOf(
+                executions.stream().map(RunningExecution::finished).toArray(CompletableFuture[]::new));
+        try {
+            all.get(saturatedNanos(timeout), TimeUnit.NANOSECONDS);
+        } catch (TimeoutException e) {
+            // Expected when executions outlive the timeout; the caller checks which ones did.
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Interrupted while draining executions; not waiting any longer");
+        } catch (java.util.concurrent.ExecutionException e) {
+            // finished() is only ever completed normally, so this is a bug in this class.
+            throw new IllegalStateException("Execution completion future failed", e.getCause());
+        }
+    }
+
+    /** {@link Duration#toNanos()} without overflow for timeouts beyond about 292 years. */
+    private static long saturatedNanos(Duration timeout) {
+        try {
+            return timeout.toNanos();
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
+    }
+
+    /** Tracks the execution unless the engine is draining, atomically with respect to {@link #drain}. */
+    private void track(RunningExecution running) {
+        admission.readLock().lock();
+        try {
+            if (!accepting) {
+                throw new EngineShuttingDownException();
+            }
+            runningExecutions.put(running.executionId(), running);
+        } finally {
+            admission.readLock().unlock();
+        }
+    }
+
+    private void untrack(String executionId) {
+        RunningExecution running = runningExecutions.remove(executionId);
+        if (running != null) {
+            running.finished().complete(null);
+        }
+    }
+
     /** True while the execution is running on this engine, including its terminal handling. */
     public boolean isRunning(String executionId) {
         return runningExecutions.containsKey(executionId);
@@ -396,6 +534,10 @@ public final class ExecutionEngine {
      * keys. Used by replay so steps that completed before are not repeated by idempotent capabilities.
      */
     public ExecutionHandle submit(Intent intent, TraceContext traceContext, Map<String, String> reusedIdempotencyKeys) {
+        // Checked again when the execution is tracked; this early check only spares a planner call.
+        if (!accepting) {
+            throw new EngineShuttingDownException();
+        }
         ExecutionContext ctx = new ExecutionContext(intent, traceContext, reusedIdempotencyKeys);
 
         PlanningContext planningContext =
@@ -413,7 +555,7 @@ public final class ExecutionEngine {
         // Shared between the deadline watchdog, cancel(), and the scheduler. Registered before the
         // store record is written so a cancel never sees a RUNNING record it cannot reach.
         HaltSignal halt = new HaltSignal();
-        runningExecutions.put(ctx.getExecutionId(), new RunningExecution(halt, intent.getTenantId()));
+        track(new RunningExecution(ctx.getExecutionId(), halt, intent.getTenantId()));
 
         log.info(
                 "Starting execution executionId={} traceId={} tenantId={} goal={}",
@@ -443,7 +585,7 @@ public final class ExecutionEngine {
         try {
             session = scheduler.schedule(plan, ctx, halt);
         } catch (RuntimeException e) {
-            runningExecutions.remove(ctx.getExecutionId());
+            untrack(ctx.getExecutionId());
             throw e;
         }
         CompletableFuture<ExecutionResult> scheduledFuture = session.future();
@@ -475,12 +617,12 @@ public final class ExecutionEngine {
             try {
                 compensation = handleTerminalResult(r, ex, plan, ctx, intent, planStart, effectiveDeadline);
             } catch (RuntimeException e) {
-                runningExecutions.remove(ctx.getExecutionId());
+                untrack(ctx.getExecutionId());
                 throw e;
             }
             // Stays tracked until the terminal state is persisted and any saga compensation has
             // finished: cancel() and replay() then see a live execution, never a half-written record.
-            compensation.whenComplete((v, err) -> runningExecutions.remove(ctx.getExecutionId()));
+            compensation.whenComplete((v, err) -> untrack(ctx.getExecutionId()));
         });
         return new ExecutionHandle(ctx.getExecutionId(), result);
     }

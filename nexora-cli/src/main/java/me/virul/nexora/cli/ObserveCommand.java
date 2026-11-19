@@ -32,6 +32,9 @@ import me.virul.nexora.core.execution.ExecutionHandle;
 import me.virul.nexora.core.intent.Intent;
 import me.virul.nexora.persistence.MissedFirePolicy;
 import me.virul.nexora.persistence.ScheduleRecord;
+import me.virul.nexora.runtime.engine.EngineShuttingDownException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Option;
@@ -43,6 +46,8 @@ import picocli.CommandLine.Spec;
         // description loaded from help/observe.help at startup via HelpLoader
         mixinStandardHelpOptions = true)
 public class ObserveCommand implements Callable<Integer> {
+
+    private static final Logger log = LoggerFactory.getLogger(ObserveCommand.class);
 
     static final ObjectMapper JSON = new ObjectMapper()
             .findAndRegisterModules()
@@ -185,7 +190,7 @@ public class ObserveCommand implements Callable<Integer> {
         CountDownLatch shutdownLatch = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
-                server.close();
+                stopGracefully(engine, server);
             } finally {
                 shutdownLatch.countDown();
             }
@@ -212,6 +217,21 @@ public class ObserveCommand implements Callable<Integer> {
 
         shutdownLatch.await();
         return 0;
+    }
+
+    /**
+     * Drains the engine while HTTP is still up, then stops the server. During the drain clients get
+     * {@code 503} for new work and {@code /health/ready} reports DOWN, rather than connection refused.
+     * The engine's own JVM shutdown hook may run alongside; both wait on the same shutdown.
+     */
+    static void stopGracefully(NexoraEngine engine, ObserveServer server) {
+        try {
+            engine.shutdown();
+        } catch (RuntimeException e) {
+            log.error("Engine shutdown failed; stopping the observe server anyway", e);
+        } finally {
+            server.close();
+        }
     }
 
     /**
@@ -382,6 +402,13 @@ public class ObserveCommand implements Callable<Integer> {
                                 exchange,
                                 409,
                                 Map.of("error", "Original execution is " + e.state() + " and cannot be replayed yet"));
+                    } catch (Exception ignored) {
+                    }
+                    return;
+                } catch (EngineShuttingDownException e) {
+                    // The dead letter stays PENDING, so it can be replayed on another instance.
+                    try {
+                        sendJson(exchange, 503, Map.of("error", "Engine is shutting down"));
                     } catch (Exception ignored) {
                     }
                     return;

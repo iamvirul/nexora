@@ -45,6 +45,10 @@ NexoraEngine engine = NexoraEngine.builder()
     // Plugin JARs (loaded + activated in build(), after withPlugin() plugins, in the order added)
     .withPluginJar(Path.of("/etc/nexora/plugins/payment-plugin-1.2.0.jar"))
 
+    // Graceful shutdown (defaults: 10s drain, JVM shutdown hook registered)
+    .withShutdownDrainTimeout(Duration.ofSeconds(10))
+    .withShutdownHook(true)
+
     .build();
 ```
 
@@ -160,18 +164,30 @@ See [Cron Scheduling](../concepts/cron-scheduling) for the full reference.
 
 ## Shutdown
 
-Always close the engine to drain in-flight executions and shut down plugins cleanly:
+Shutdown drains in-flight executions instead of abandoning them:
+
+1. New executions, replays and cron firings are rejected with `EngineShuttingDownException`, and `readiness()` reports the `executor` check DOWN so a load balancer stops routing to the instance. The HTTP API answers `POST /api/execute` and replays with `503`.
+2. In-flight executions get up to the drain timeout to finish on their own.
+3. Any still running are cancelled as by `cancel()`: running steps are interrupted and, with saga enabled, completed steps are compensated. Shutdown waits up to the drain timeout again for that, so it takes at most twice the drain timeout.
+4. An `EngineShutdownEvent` with the drain counts is published.
+5. Plugins are deactivated and the execution store and tracer are closed.
 
 ```java
 try (NexoraEngine engine = NexoraEngine.builder()...build()) {
     engine.execute(intent).join();
-} // shutdown() called automatically
+} // close() calls shutdown() with the configured drain timeout
+
+// Or with an explicit drain timeout; Duration.ZERO cancels in-flight work at once
+DrainResult drain = engine.shutdown(Duration.ofSeconds(10));
+if (!drain.clean()) {
+    log.warn("{} executions did not finish", drain.unfinished());
+}
 ```
 
-Or explicitly:
+`DrainResult` and `EngineShutdownEvent` report `inFlight`, `completed` (finished within the timeout), `cancelled` (cancelled after it), `unfinished` (still running when shutdown stopped waiting, for example a step that ignores interrupts) and `elapsed`. A cancelled execution ends `CANCELLED`, or `COMPENSATED` with saga, and can be [replayed](../concepts/execution-replay) on another instance.
 
-```java
-engine.shutdown();
-```
+Only the first call shuts down; later and concurrent calls wait for it and return the same result.
 
-Shutdown waits for all in-flight executions to complete before closing plugin class loaders and the execution store.
+By default `build()` registers a JVM shutdown hook that calls `shutdown()`, so SIGTERM drains the engine too. Turn it off with `withShutdownHook(false)` when a container such as Spring already closes the engine on exit. During JVM shutdown an asynchronous subscriber may not get to run before the process exits; use `subscribeSync(EngineShutdownEvent.class, ...)` to be sure of seeing the event.
+
+Set the Kubernetes `terminationGracePeriodSeconds` to more than twice the drain timeout, plus headroom for closing the scheduler, synchronous `EngineShutdownEvent` subscribers, releasing plugins and closing the store and tracer. The default drain timeout of 10s drains for at most 20s, leaving 10s of the default 30s grace period for the rest. If you raise the drain timeout, raise the grace period with it: for a 30s drain, allow at least 70s.

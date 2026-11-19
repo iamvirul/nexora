@@ -23,6 +23,7 @@ nexora:
   saga-enabled: true
   webhook-secret: ${NEXORA_WEBHOOK_SECRET}
   step-output-max-bytes: 65536
+  shutdown-drain-timeout: 10s    # wait for in-flight executions on shutdown before cancelling them
   plugin-jars:
     - /opt/nexora/plugins/payments.jar
   retry:                         # default retry policy; no retries without max-attempts
@@ -82,7 +83,7 @@ class NexoraConfig {
 }
 ```
 
-Define your own `NexoraEngine` bean to take over completely, or set `nexora.enabled=false` to turn the starter off. The engine is closed with the application context.
+Define your own `NexoraEngine` bean to take over completely, or set `nexora.enabled=false` to turn the starter off. The engine is closed with the application context, which drains its in-flight executions for up to `nexora.shutdown-drain-timeout` (see [Shutdown](nexora-api.md#shutdown)). The starter does not register the engine's own JVM shutdown hook, since Spring's hook already closes the context.
 
 With Spring Boot Actuator on the classpath, the `nexora` health component reports `NexoraEngine.readiness()`: UP only when persistence, its migrations, plugins and the executor are all UP, with each check, the active plugin ids and the bound tenant as details. Add it to the readiness probe with `management.endpoint.health.group.readiness.include=readinessState,nexora`, or turn it off with `management.health.nexora.enabled=false`.
 

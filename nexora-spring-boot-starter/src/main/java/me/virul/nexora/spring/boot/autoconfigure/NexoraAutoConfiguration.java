@@ -28,7 +28,8 @@ import org.springframework.context.annotation.Bean;
  *
  * <p>Backs off when the application defines its own {@code NexoraEngine}, and is switched off
  * entirely with {@code nexora.enabled=false}. The engine is closed with the application context,
- * which deactivates its plugins and closes its store and tracer.
+ * which drains its in-flight executions, deactivates its plugins and closes its store and tracer.
+ * The engine's own JVM shutdown hook is not registered: the context already closes it on exit.
  */
 @AutoConfiguration
 @ConditionalOnClass(NexoraEngine.class)
@@ -119,6 +120,11 @@ public class NexoraAutoConfiguration {
         }
         if (properties.stepOutputMaxBytes() != null) {
             builder.withStepOutputMaxBytes(properties.stepOutputMaxBytes());
+        }
+        // Spring's own shutdown hook closes the context and with it the engine; a second hook would race it.
+        builder.withShutdownHook(false);
+        if (properties.shutdownDrainTimeout() != null) {
+            builder.withShutdownDrainTimeout(properties.shutdownDrainTimeout());
         }
         builder.withSagaEnabled(properties.sagaEnabled());
         builder.withWebhookSecret(properties.webhookSecret());

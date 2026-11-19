@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import me.virul.nexora.api.NexoraEngine;
 import me.virul.nexora.core.execution.ExecutionResult;
 import me.virul.nexora.core.execution.ExecutionStatus;
@@ -77,6 +78,24 @@ class NexoraAutoConfigurationTest {
                         .getFailure()
                         .rootCause()
                         .hasMessageContaining("defaultTimeout"));
+    }
+
+    @Test
+    void failsStartupWhenShutdownDrainTimeoutIsNegative() {
+        runner.withPropertyValues("nexora.shutdown-drain-timeout=-1s")
+                .run(context ->
+                        assertThat(context).hasFailed().getFailure().rootCause().hasMessageContaining("drainTimeout"));
+    }
+
+    @Test
+    void closingTheContextShutsTheEngineDown() {
+        AtomicReference<NexoraEngine> engine = new AtomicReference<>();
+        runner.withPropertyValues("nexora.shutdown-drain-timeout=0s").run(context -> {
+            engine.set(context.getBean(NexoraEngine.class));
+            assertThat(engine.get().isAcceptingExecutions()).isTrue();
+        });
+
+        assertThat(engine.get().isAcceptingExecutions()).isFalse();
     }
 
     @Test

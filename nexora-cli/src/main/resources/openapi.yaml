@@ -121,6 +121,15 @@ paths:
                   value: { accepted: false, error: "Field 'goal' is required" }
         '405':
           $ref: '#/components/responses/MethodNotAllowedText'
+        '503':
+          description: The engine is shutting down and accepts no new executions; send the request to another instance.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecuteRejected'
+              examples:
+                shuttingDown:
+                  value: { accepted: false, error: Engine is shutting down }
 
   /api/executions:
     get:
@@ -406,7 +415,16 @@ paths:
                 failed:
                   value: { error: Replay request failed, executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c }
         '503':
-          $ref: '#/components/responses/PersistenceDisabled'
+          description: The server has no persistence store configured, or the engine is shutting down.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                disabled:
+                  value: { error: Persistence disabled }
+                shuttingDown:
+                  value: { error: Engine is shutting down, executionId: 4f3a1c2d-8b6e-4c1f-9a2b-0d4e5f6a7b8c }
 
   /api/plugins/{pluginId}/reload:
     parameters:
