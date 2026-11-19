@@ -57,11 +57,12 @@ jobs:
           mkdir -p results
           {
             echo "tag: ${TAG}"
-            echo "commit: ${GITHUB_SHA}"
+            echo "commit: $(git rev-parse HEAD)"
             echo "runner: ${RUNNER_OS} ${RUNNER_ARCH}, $(nproc) CPUs"
             java -version 2>&1
           } > results/environment.txt
           java -jar nexora-benchmarks/target/benchmarks.jar \
+            -foe true \
             -rf json -rff results/benchmarks.json \
             -o results/benchmarks.txt
           tail -n 40 results/benchmarks.txt
