@@ -5,76 +5,53 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import me.virul.nexora.spi.Capability;
 import me.virul.nexora.spi.CapabilityDescriptor;
 import me.virul.nexora.spi.CapabilityRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * A {@link CapabilityRegistry} backed by a {@link ConcurrentHashMap}. Every operation is a single
+ * atomic map operation, so lookups never lock and never wait for each other. {@link #listAll()} is a
+ * weakly consistent snapshot: it may or may not include a capability registered while it runs, and
+ * every descriptor it returns belongs to a capability that was registered.
+ */
 public final class DefaultCapabilityRegistry implements CapabilityRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultCapabilityRegistry.class);
 
     private final ConcurrentHashMap<String, CapabilityEntry> entries = new ConcurrentHashMap<>();
-    private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
     @Override
     public void register(CapabilityDescriptor descriptor, Capability capability) {
         Objects.requireNonNull(descriptor, "descriptor must not be null");
         Objects.requireNonNull(capability, "capability must not be null");
-        lock.writeLock().lock();
-        try {
-            entries.put(descriptor.id(), new CapabilityEntry(descriptor, capability, Instant.now()));
-            log.info("Registered capability id={}", descriptor.id());
-        } finally {
-            lock.writeLock().unlock();
-        }
+        entries.put(descriptor.id(), new CapabilityEntry(descriptor, capability, Instant.now()));
+        log.info("Registered capability id={}", descriptor.id());
     }
 
     @Override
     public void deregister(String capabilityId) {
         Objects.requireNonNull(capabilityId, "capabilityId must not be null");
-        lock.writeLock().lock();
-        try {
-            CapabilityEntry removed = entries.remove(capabilityId);
-            if (removed != null) {
-                log.info("Deregistered capability id={}", capabilityId);
-            }
-        } finally {
-            lock.writeLock().unlock();
+        if (entries.remove(capabilityId) != null) {
+            log.info("Deregistered capability id={}", capabilityId);
         }
     }
 
     @Override
     public Optional<Capability> find(String capabilityId) {
-        lock.readLock().lock();
-        try {
-            return Optional.ofNullable(entries.get(capabilityId)).map(CapabilityEntry::capability);
-        } finally {
-            lock.readLock().unlock();
-        }
+        return Optional.ofNullable(entries.get(capabilityId)).map(CapabilityEntry::capability);
     }
 
     @Override
     public Optional<CapabilityDescriptor> findDescriptor(String capabilityId) {
-        lock.readLock().lock();
-        try {
-            return Optional.ofNullable(entries.get(capabilityId)).map(CapabilityEntry::descriptor);
-        } finally {
-            lock.readLock().unlock();
-        }
+        return Optional.ofNullable(entries.get(capabilityId)).map(CapabilityEntry::descriptor);
     }
 
     @Override
     public List<CapabilityDescriptor> listAll() {
-        lock.readLock().lock();
-        try {
-            return entries.values().stream().map(CapabilityEntry::descriptor).toList();
-        } finally {
-            lock.readLock().unlock();
-        }
+        return entries.values().stream().map(CapabilityEntry::descriptor).toList();
     }
 
     private record CapabilityEntry(CapabilityDescriptor descriptor, Capability capability, Instant registeredAt) {}
