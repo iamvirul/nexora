@@ -129,7 +129,6 @@ public final class DagStepScheduler {
             return new ScheduleSession(CompletableFuture.completedFuture(result), partialSnapshot);
         }
 
-        // Mutable futures map — grows as AddStepAmendments inject new steps
         ConcurrentHashMap<String, CompletableFuture<StepResult>> futures = new ConcurrentHashMap<>();
         Set<String> skippedSteps = ConcurrentHashMap.newKeySet();
 
@@ -148,13 +147,29 @@ public final class DagStepScheduler {
         };
 
         for (Step step : plan.getSteps()) {
-            submitStep(step, futures, completedResults, skippedSteps, pending, onStepDone, ctx, halt);
+            futures.put(step.id(), new CompletableFuture<>());
+        }
+        for (Step step : plan.getSteps()) {
+            startStep(step, futures, completedResults, skippedSteps, pending, onStepDone, ctx, halt);
         }
 
         return new ScheduleSession(done, partialSnapshot);
     }
 
-    private void submitStep(
+    private void submitAddedStep(
+            Step step,
+            ConcurrentHashMap<String, CompletableFuture<StepResult>> futures,
+            ConcurrentHashMap<String, StepResult> completedResults,
+            Set<String> skippedSteps,
+            AtomicInteger pending,
+            Runnable onStepDone,
+            ExecutionContext ctx,
+            HaltSignal halt) {
+        futures.put(step.id(), new CompletableFuture<>());
+        startStep(step, futures, completedResults, skippedSteps, pending, onStepDone, ctx, halt);
+    }
+
+    private void startStep(
             Step step,
             ConcurrentHashMap<String, CompletableFuture<StepResult>> futures,
             ConcurrentHashMap<String, StepResult> completedResults,
@@ -164,9 +179,10 @@ public final class DagStepScheduler {
             ExecutionContext ctx,
             HaltSignal halt) {
 
+        CompletableFuture<StepResult> stepFuture = futures.get(step.id());
         CompletableFuture<Void> prerequisite = buildPrerequisite(step, futures);
 
-        CompletableFuture<StepResult> stepFuture = prerequisite
+        prerequisite
                 .thenApplyAsync(
                         ignored -> {
                             // Registering and checking the halt is one atomic step, so a cancel either
@@ -224,21 +240,27 @@ public final class DagStepScheduler {
                 .whenComplete((result, ex) -> {
                     if (result != null) {
                         completedResults.put(step.id(), result);
-                        // Process amendments before decrementing — keeps pending count consistent
-                        applyAmendments(
-                                result.capabilityResult().amendments(),
-                                futures,
-                                completedResults,
-                                skippedSteps,
-                                pending,
-                                onStepDone,
-                                ctx,
-                                halt);
+                        try {
+                            applyAmendments(
+                                    result.capabilityResult().amendments(),
+                                    futures,
+                                    completedResults,
+                                    skippedSteps,
+                                    pending,
+                                    onStepDone,
+                                    ctx,
+                                    halt);
+                        } catch (RuntimeException e) {
+                            log.error(
+                                    "Plan amendments failed stepId={} executionId={}",
+                                    step.id(),
+                                    ctx.getExecutionId(),
+                                    e);
+                        }
                     }
                     onStepDone.run();
+                    stepFuture.complete(result);
                 });
-
-        futures.put(step.id(), stepFuture);
     }
 
     private void applyAmendments(
@@ -260,37 +282,59 @@ public final class DagStepScheduler {
                                 add.step().id());
                         continue;
                     }
+                    Optional<String> missingDependency = add.step().dependsOn().stream()
+                            .filter(dependency -> !futures.containsKey(dependency))
+                            .sorted()
+                            .findFirst();
+                    if (missingDependency.isPresent()) {
+                        log.warn(
+                                "AddStepAmendment ignored, dependency not in the plan stepId={} dependency={}",
+                                add.step().id(),
+                                missingDependency.get());
+                        continue;
+                    }
                     log.info("Plan amendment: adding step id={}", add.step().id());
                     pending.incrementAndGet();
-                    eventBus.publish(new PlanAmendedEvent(
-                            ctx.getExecutionId(),
-                            ctx.getTraceContext().traceId(),
-                            "ADD_STEP",
-                            add.step().id(),
-                            Instant.now()));
-                    submitStep(add.step(), futures, completedResults, skippedSteps, pending, onStepDone, ctx, halt);
+                    try {
+                        submitAddedStep(
+                                add.step(), futures, completedResults, skippedSteps, pending, onStepDone, ctx, halt);
+                    } catch (RuntimeException e) {
+                        pending.decrementAndGet();
+                        futures.remove(add.step().id());
+                        log.error(
+                                "AddStepAmendment could not be scheduled stepId={} executionId={}",
+                                add.step().id(),
+                                ctx.getExecutionId(),
+                                e);
+                        continue;
+                    }
+                    publishAmended(ctx, "ADD_STEP", add.step().id());
                 }
                 case SkipStepAmendment skip -> {
                     log.info("Plan amendment: skipping step id={}", skip.stepId());
                     skippedSteps.add(skip.stepId());
-                    eventBus.publish(new PlanAmendedEvent(
-                            ctx.getExecutionId(),
-                            ctx.getTraceContext().traceId(),
-                            "SKIP_STEP",
-                            skip.stepId(),
-                            Instant.now()));
+                    publishAmended(ctx, "SKIP_STEP", skip.stepId());
                 }
                 case ModifyInputAmendment modify -> {
                     log.info("Plan amendment: modifying input stepId={} key={}", modify.stepId(), modify.inputKey());
                     ctx.putInputOverride(modify.stepId(), modify.inputKey(), modify.value());
-                    eventBus.publish(new PlanAmendedEvent(
-                            ctx.getExecutionId(),
-                            ctx.getTraceContext().traceId(),
-                            "MODIFY_INPUT",
-                            modify.stepId(),
-                            Instant.now()));
+                    publishAmended(ctx, "MODIFY_INPUT", modify.stepId());
                 }
             }
+        }
+    }
+
+    private void publishAmended(ExecutionContext ctx, String amendmentType, String stepId) {
+        try {
+            eventBus.publish(new PlanAmendedEvent(
+                    ctx.getExecutionId(), ctx.getTraceContext().traceId(), amendmentType, stepId, Instant.now()));
+        } catch (RuntimeException e) {
+            log.warn(
+                    "PlanAmendedEvent not published, the amendment still applies type={} stepId={} executionId={}",
+                    amendmentType,
+                    stepId,
+                    ctx.getExecutionId(),
+                    e);
         }
     }
 

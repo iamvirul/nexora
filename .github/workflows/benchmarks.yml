@@ -1,0 +1,75 @@
+name: Benchmarks
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to benchmark (e.g. v0.6.0)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmarks-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: JMH benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Resolve release tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Not a release tag (vMAJOR.MINOR.PATCH[-suffix]): ${TAG}"
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: "21"
+          distribution: temurin
+
+      - name: Build benchmarks
+        run: mvn -B -ntp -pl nexora-benchmarks -am package -DskipTests -DskipITs
+
+      - name: Run benchmarks
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          mkdir -p results
+          {
+            echo "tag: ${TAG}"
+            echo "commit: $(git rev-parse HEAD)"
+            echo "runner: ${RUNNER_OS} ${RUNNER_ARCH}, $(nproc) CPUs"
+            java -version 2>&1
+          } > results/environment.txt
+          java -jar nexora-benchmarks/target/benchmarks.jar \
+            -foe true \
+            -rf json -rff results/benchmarks.json \
+            -o results/benchmarks.txt
+          tail -n 40 results/benchmarks.txt
+
+      - name: Upload results
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmarks-${{ steps.tag.outputs.tag }}
+          path: results/
+          retention-days: 90

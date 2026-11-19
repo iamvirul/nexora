@@ -95,6 +95,112 @@ class DagStepSchedulerTest {
     }
 
     @Test
+    void runsStepAddedByAStepThatCompletesBeforeItIsRegistered() throws Exception {
+        CapabilityRegistry registry = new DefaultCapabilityRegistry();
+        AtomicBoolean addedExecuted = new AtomicBoolean(false);
+        Step added = new Step("added", "added", Map.of(), null, Set.of("first"), null, null, null, null);
+        registry.register(
+                descriptor("first"),
+                request -> CapabilityResult.success(Map.of(), List.of(new AddStepAmendment(added))));
+        registry.register(descriptor("added"), request -> {
+            addedExecuted.set(true);
+            return CapabilityResult.success("added");
+        });
+        DagStepScheduler scheduler = synchronousScheduler(registry);
+
+        ExecutionResult result = scheduler
+                .schedule(new Plan(List.of(Step.of("first", "first"))), context())
+                .get(5, TimeUnit.SECONDS);
+
+        assertEquals(ExecutionStatus.COMPLETED, result.status());
+        assertEquals(Set.of("first", "added"), stepIds(result));
+        assertTrue(addedExecuted.get());
+    }
+
+    @Test
+    void ignoresAddedStepWithUnknownDependencyInsteadOfHanging() throws Exception {
+        CapabilityRegistry registry = new DefaultCapabilityRegistry();
+        AtomicBoolean orphanExecuted = new AtomicBoolean(false);
+        Step orphan = new Step("orphan", "orphan", Map.of(), null, Set.of("missing"), null, null, null, null);
+        registry.register(
+                descriptor("first"),
+                request -> CapabilityResult.success(Map.of(), List.of(new AddStepAmendment(orphan))));
+        registry.register(descriptor("orphan"), request -> {
+            orphanExecuted.set(true);
+            return CapabilityResult.success("orphan");
+        });
+
+        try (TestHarness harness = new TestHarness(registry)) {
+            ExecutionResult result = harness.scheduler
+                    .schedule(new Plan(List.of(Step.of("first", "first"))), context())
+                    .get(5, TimeUnit.SECONDS);
+
+            assertEquals(ExecutionStatus.COMPLETED, result.status());
+            assertEquals(Set.of("first"), stepIds(result));
+            assertFalse(orphanExecuted.get());
+        }
+    }
+
+    @Test
+    void addedStepMayDependOnAStepListedLaterInThePlan() throws Exception {
+        CapabilityRegistry registry = new DefaultCapabilityRegistry();
+        AtomicBoolean addedExecuted = new AtomicBoolean(false);
+        Step added = new Step("added", "added", Map.of(), null, Set.of("later"), null, null, null, null);
+        registry.register(
+                descriptor("first"),
+                request -> CapabilityResult.success(Map.of(), List.of(new AddStepAmendment(added))));
+        registry.register(descriptor("later"), request -> CapabilityResult.success("later"));
+        registry.register(descriptor("added"), request -> {
+            addedExecuted.set(true);
+            return CapabilityResult.success("added");
+        });
+        DagStepScheduler scheduler = synchronousScheduler(registry);
+        Plan plan = new Plan(List.of(
+                Step.of("first", "first"),
+                new Step("later", "later", Map.of(), null, Set.of("first"), null, null, null, null)));
+
+        ExecutionResult result = scheduler.schedule(plan, context()).get(5, TimeUnit.SECONDS);
+
+        assertEquals(ExecutionStatus.COMPLETED, result.status());
+        assertEquals(Set.of("first", "later", "added"), stepIds(result));
+        assertTrue(addedExecuted.get());
+    }
+
+    @Test
+    void amendmentsStillApplyWhenTheirEventCannotBePublished() throws Exception {
+        CapabilityRegistry registry = new DefaultCapabilityRegistry();
+        AtomicBoolean addedExecuted = new AtomicBoolean(false);
+        AtomicInteger legacyCalls = new AtomicInteger();
+        Step added = new Step("added", "added", Map.of(), null, Set.of("first"), null, null, null, null);
+        registry.register(
+                descriptor("first"),
+                request -> CapabilityResult.success(
+                        Map.of(), List.of(new AddStepAmendment(added), new SkipStepAmendment("legacy"))));
+        registry.register(descriptor("added"), request -> {
+            addedExecuted.set(true);
+            return CapabilityResult.success("added");
+        });
+        registry.register(descriptor("legacy"), request -> {
+            legacyCalls.incrementAndGet();
+            return CapabilityResult.success("legacy");
+        });
+        InterceptorPipeline pipeline =
+                new InterceptorPipeline(List.of(), new CapabilityInvoker(registry, new CapabilityContractMonitor()));
+        DagStepScheduler scheduler = new DagStepScheduler(
+                pipeline, new DefaultRetryPolicyRegistry(), new AmendmentEventsFailBus(), Runnable::run, registry);
+        Plan plan = new Plan(List.of(
+                Step.of("first", "first"),
+                new Step("legacy", "legacy", Map.of(), null, Set.of("first"), null, null, null, null)));
+
+        ExecutionResult result = scheduler.schedule(plan, context()).get(5, TimeUnit.SECONDS);
+
+        assertEquals(ExecutionStatus.COMPLETED, result.status());
+        assertEquals(Set.of("first", "added", "legacy"), stepIds(result));
+        assertTrue(addedExecuted.get());
+        assertEquals(0, legacyCalls.get());
+    }
+
+    @Test
     void skipsPendingStepWhenSkipAmendmentIsReturned() {
         CapabilityRegistry registry = new DefaultCapabilityRegistry();
         AtomicInteger legacyCalls = new AtomicInteger();
@@ -345,12 +451,38 @@ class DagStepSchedulerTest {
         return new ExecutionContext(new Intent("goal", Map.of()), TraceContext.root());
     }
 
+    private static DagStepScheduler synchronousScheduler(CapabilityRegistry registry) {
+        InterceptorPipeline pipeline =
+                new InterceptorPipeline(List.of(), new CapabilityInvoker(registry, new CapabilityContractMonitor()));
+        return new DagStepScheduler(
+                pipeline,
+                new DefaultRetryPolicyRegistry(),
+                new InProcessEventBus(Runnable::run),
+                Runnable::run,
+                registry);
+    }
+
     private static CapabilityDescriptor descriptor(String id) {
         return new CapabilityDescriptor(id, id, List.of(), List.of(), true, false);
     }
 
     private static Set<String> stepIds(ExecutionResult result) {
         return result.stepResults().stream().map(StepResult::stepId).collect(Collectors.toSet());
+    }
+
+    private static final class AmendmentEventsFailBus implements me.virul.nexora.event.ExecutionEventBus {
+        @Override
+        public <E extends me.virul.nexora.event.ExecutionEvent> void publish(E event) {
+            if (event instanceof me.virul.nexora.event.PlanAmendedEvent) {
+                throw new IllegalStateException("event bus unavailable");
+            }
+        }
+
+        @Override
+        public <E extends me.virul.nexora.event.ExecutionEvent> me.virul.nexora.event.Subscription subscribe(
+                Class<E> eventType, me.virul.nexora.event.EventHandler<E> handler) {
+            return () -> {};
+        }
     }
 
     private static final class TestHarness implements AutoCloseable {
