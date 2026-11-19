@@ -47,12 +47,14 @@ import org.slf4j.LoggerFactory;
  */
 public final class SessionEndpoints {
 
+    /** The path of the dashboard session endpoint. */
     public static final String PATH = "/api/session";
+
+    /** The path of the endpoint that mints user API keys. */
     public static final String KEYS_PATH = "/api/keys";
 
     private static final Logger log = LoggerFactory.getLogger(SessionEndpoints.class);
     private static final ObjectMapper JSON = new ObjectMapper();
-    // Comfortably above a 32-character username plus a 128-character password, far below anything abusive.
     private static final int MAX_LOGIN_BODY_BYTES = 4_096;
     private static final int STATUS_OK = 200;
     private static final int STATUS_CREATED = 201;
@@ -65,15 +67,34 @@ public final class SessionEndpoints {
     private final ApiAuth auth;
     private final TenantResolver tenants;
 
+    /**
+     * Endpoints for a single-tenant server.
+     *
+     * @param auth the authenticator that checks passwords and mints keys
+     * @throws NullPointerException if {@code auth} is null
+     */
     public SessionEndpoints(ApiAuth auth) {
         this(auth, TenantResolver.singleTenant());
     }
 
+    /**
+     * Endpoints that bind each new key and session to a tenant as {@code tenants} decides.
+     *
+     * @param auth    the authenticator that checks passwords and mints keys
+     * @param tenants decides the tenant of a key-holder session
+     * @throws NullPointerException if either argument is null
+     */
     public SessionEndpoints(ApiAuth auth, TenantResolver tenants) {
         this.auth = Objects.requireNonNull(auth, "auth");
         this.tenants = Objects.requireNonNull(tenants, "tenants");
     }
 
+    /**
+     * Adds {@value #PATH} and {@value #KEYS_PATH} to a server. They authenticate requests
+     * themselves, so do not wrap them in {@link ApiAuth#protect}.
+     *
+     * @param server the server
+     */
     public void register(HttpServer server) {
         server.createContext(PATH, this::handle);
         server.createContext(KEYS_PATH, this::handleKeys);
@@ -109,7 +130,6 @@ public final class SessionEndpoints {
 
     private void handle(HttpExchange exchange) throws IOException {
         if (!PATH.equals(exchange.getRequestURI().getPath())) {
-            // HttpServer contexts match by prefix; "/api/sessionX" must not log anyone in.
             auth.protect(notFound -> Responses.send(notFound, STATUS_NOT_FOUND, Responses.TEXT, "Not Found"))
                     .handle(exchange);
             return;
@@ -153,7 +173,6 @@ public final class SessionEndpoints {
         }
         String tenantId = null;
         if (tenants.isMultiTenant()) {
-            // The key may act for any tenant; the session it opens is pinned to the one named now.
             ApiAuth.Caller keyHolder = new ApiAuth.Caller(ApiAuth.Credential.API_KEY, ApiAuth.API_KEY_PRINCIPAL);
             switch (tenants.resolve(keyHolder, exchange.getRequestHeaders().getFirst(TenantResolver.HEADER))) {
                 case TenantResolver.Resolution.Scoped scoped ->
@@ -190,7 +209,6 @@ public final class SessionEndpoints {
         }
         String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
         if (contentType == null) {
-            // Nothing offered to authenticate with: unauthorized, like any other bare request.
             ApiAuth.rejectUnauthorized(exchange);
             return Optional.empty();
         }

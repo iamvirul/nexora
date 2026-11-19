@@ -39,15 +39,19 @@ import org.slf4j.LoggerFactory;
  */
 public final class ApiAuth {
 
+    /** The name of the dashboard session cookie. */
     public static final String SESSION_COOKIE = "nexora_session";
+
     private static final String COOKIE_ATTRIBUTES = "; Path=/; HttpOnly; SameSite=Strict";
+    /** How long a session or user API key is accepted after it is issued. */
     public static final Duration SESSION_TTL = Duration.ofHours(12);
+
+    /** The most live sessions and user keys kept; issuing one more drops the one closest to expiring. */
     public static final int MAX_SESSIONS = 1_000;
 
     private static final Logger log = LoggerFactory.getLogger(ApiAuth.class);
     private static final String BEARER_SCHEME = "bearer";
     private static final int SESSION_TOKEN_BYTES = 32;
-    // The prefix plus base64url of 32 bytes without padding; anything else cannot be a key this server issued.
     private static final Pattern SESSION_TOKEN = Pattern.compile("nxu_[A-Za-z0-9_-]{43}");
     private static final Set<String> SAFE_METHODS = Set.of("GET", "HEAD", "OPTIONS");
     private static final int STATUS_UNAUTHORIZED = 401;
@@ -64,6 +68,7 @@ public final class ApiAuth {
         USER_KEY,
         /** A user API key from login, sent as the HttpOnly session cookie by the dashboard. */
         SESSION,
+        /** No valid credential: the request is anonymous. */
         NONE
     }
 
@@ -77,14 +82,30 @@ public final class ApiAuth {
      * Who made a request: how they authenticated, the name the audit log records, and the tenant
      * their credential is bound to. {@code tenantId} is null for the server's own API key, which
      * may act for any tenant, and for a key-holder session opened without one.
+     *
+     * @param credential how the caller authenticated
+     * @param name       the audit name: the username, or {@link #API_KEY_PRINCIPAL}; {@code null} when
+     *                   anonymous
+     * @param tenantId   the tenant the credential is bound to, or {@code null} for none
      */
     public record Caller(Credential credential, String name, String tenantId) {
         static final Caller ANONYMOUS = new Caller(Credential.NONE, null, null);
 
+        /**
+         * A caller whose credential is bound to no tenant.
+         *
+         * @param credential how the caller authenticated
+         * @param name       the audit name
+         */
         public Caller(Credential credential, String name) {
             this(credential, name, null);
         }
 
+        /**
+         * Whether the caller presented a valid credential.
+         *
+         * @return {@code false} for {@link Credential#NONE}
+         */
         public boolean authenticated() {
             return credential != Credential.NONE;
         }
@@ -95,18 +116,32 @@ public final class ApiAuth {
 
     /** Outcome of a username and password login. */
     public sealed interface LoginResult {
+        /**
+         * The password was right.
+         *
+         * @param session the user API key issued for the login
+         * @param user    the normalized username
+         */
         record Accepted(Session session, String user) implements LoginResult {}
 
         /** Wrong username or password; deliberately does not say which. */
         record Rejected() implements LoginResult {}
 
-        /** Too many attempts for this username or from this client; try again after {@code retryAfter}. */
+        /**
+         * Too many attempts for this username or from this client; try again after {@code retryAfter}.
+         *
+         * @param retryAfter how long to wait before the next attempt
+         */
         record Throttled(Duration retryAfter) implements LoginResult {}
     }
 
     /**
      * A live session as seen by {@code GET /api/session}; {@code user} is null for API key sessions,
      * {@code tenantId} null for a key-holder session bound to no tenant.
+     *
+     * @param user      the username, or {@code null} for an API key session
+     * @param expiresAt when the session stops being accepted
+     * @param tenantId  the tenant the session is bound to, or {@code null}
      */
     public record SessionInfo(String user, Instant expiresAt, String tenantId) {}
 
@@ -118,9 +153,21 @@ public final class ApiAuth {
     /**
      * The parts of a request that carry credentials. {@code host} is the authority the client
      * addressed (Host header); {@code origin} is the page that sent it, when a browser says so.
+     *
+     * @param method        the HTTP method
+     * @param authorization the {@code Authorization} header, or {@code null}
+     * @param cookie        the {@code Cookie} header, or {@code null}
+     * @param origin        the {@code Origin} header, or {@code null}
+     * @param host          the {@code Host} header, or {@code null}
      */
     public record Request(String method, String authorization, String cookie, String origin, String host) {
 
+        /**
+         * Reads the credential-carrying parts of an exchange.
+         *
+         * @param exchange the request
+         * @return its method and first value of each header
+         */
         public static Request of(HttpExchange exchange) {
             Headers headers = exchange.getRequestHeaders();
             return new Request(
@@ -140,7 +187,13 @@ public final class ApiAuth {
     private final Map<String, SessionEntry> sessions = new ConcurrentHashMap<>();
 
     /**
-     * @param users dashboard accounts for username and password login, or null to allow only the API key
+     * Creates an authenticator.
+     *
+     * @param keyDigest the SHA-256 digest of the server's API key, see {@link ApiKeyStore#digest(String)};
+     *                  copied
+     * @param users     dashboard accounts for username and password login, or null to allow only the API key
+     * @param clock     the clock sessions expire and logins are throttled by
+     * @throws NullPointerException if {@code keyDigest} or {@code clock} is null
      */
     public ApiAuth(byte[] keyDigest, UserStore users, Clock clock) {
         this.keyDigest = Objects.requireNonNull(keyDigest, "keyDigest").clone();
@@ -149,29 +202,64 @@ public final class ApiAuth {
         this.throttle = new LoginThrottle(clock);
     }
 
+    /**
+     * Creates an authenticator on the system clock.
+     *
+     * @param keyDigest the SHA-256 digest of the server's API key
+     * @param users     dashboard accounts, or null to allow only the API key
+     */
     public ApiAuth(byte[] keyDigest, UserStore users) {
         this(keyDigest, users, Clock.systemUTC());
     }
 
+    /**
+     * Creates an authenticator that accepts only the API key and sessions opened with it.
+     *
+     * @param keyDigest the SHA-256 digest of the server's API key
+     * @param clock     the clock sessions expire by
+     */
     public ApiAuth(byte[] keyDigest, Clock clock) {
         this(keyDigest, null, clock);
     }
 
+    /**
+     * Creates an authenticator on the system clock that accepts only the API key and sessions opened
+     * with it.
+     *
+     * @param keyDigest the SHA-256 digest of the server's API key
+     */
     public ApiAuth(byte[] keyDigest) {
         this(keyDigest, null, Clock.systemUTC());
     }
 
-    /** The tenant of a dashboard account, if this server has users and that user exists. */
+    /**
+     * The tenant of a dashboard account, if this server has users and that user exists.
+     *
+     * @param username the username
+     * @return the tenant id, or empty
+     */
     public Optional<String> tenantOf(String username) {
         return users.flatMap(store -> store.tenantOf(username));
     }
 
-    /** Whether this server has a user store, and so offers username and password login. */
+    /**
+     * Whether this server has a user store, and so offers username and password login.
+     *
+     * @return {@code true} when a user store was given
+     */
     public boolean passwordLoginEnabled() {
         return users.isPresent();
     }
 
-    /** Wraps {@code handler} so it only runs for an authenticated request; others get 401 first. */
+    /**
+     * Wraps {@code handler} so it only runs for an authenticated request; others get 401 first.
+     * State-changing requests are logged with their caller for the audit trail, and the caller is
+     * available to the handler through {@link #callerOf(HttpExchange)}.
+     *
+     * @param handler the handler to protect
+     * @return the protected handler
+     * @throws NullPointerException if {@code handler} is null
+     */
     public HttpHandler protect(HttpHandler handler) {
         Objects.requireNonNull(handler, "handler");
         return exchange -> {
@@ -186,7 +274,6 @@ public final class ApiAuth {
                 return;
             }
             if (!SAFE_METHODS.contains(exchange.getRequestMethod().toUpperCase(Locale.ROOT))) {
-                // Audit trail for state changes: who (user, or the shared key), what, and from where.
                 log.info(
                         "Authorized API request method={} path={} principal={} credential={} remote={}",
                         exchange.getRequestMethod(),
@@ -200,18 +287,27 @@ public final class ApiAuth {
         };
     }
 
-    /** The caller {@link #protect} let through; anonymous when the handler was not wrapped by it. */
+    /**
+     * The caller {@link #protect} let through; anonymous when the handler was not wrapped by it.
+     *
+     * @param exchange the request
+     * @return the caller; never null
+     */
     public static Caller callerOf(HttpExchange exchange) {
         return exchange.getAttribute(CALLER_ATTRIBUTE) instanceof Caller caller ? caller : Caller.ANONYMOUS;
     }
 
-    /** Bearer key first; a session cookie only counts when the Origin rule above is met. */
+    /**
+     * Bearer key first; a session cookie only counts when the Origin rule above is met.
+     *
+     * @param request the credential-carrying parts of the request
+     * @return the caller, anonymous when no credential is valid; never null
+     */
     public Caller authenticate(Request request) {
         Optional<String> bearer = bearerToken(request.authorization());
         if (bearer.filter(this::isApiKey).isPresent()) {
             return new Caller(Credential.API_KEY, API_KEY_PRINCIPAL);
         }
-        // A bearer header is never sent by a browser on its own, so no Origin rule applies to it.
         Optional<SessionEntry> userKey =
                 bearer.filter(token -> SESSION_TOKEN.matcher(token).matches()).flatMap(this::liveToken);
         if (userKey.isPresent()) {
@@ -231,19 +327,19 @@ public final class ApiAuth {
      * Checks a username and password and opens a session for that user. Throttled before any
      * hashing; an unknown username costs the same time and counts the same as a wrong password.
      *
-     * @param client the caller's address, for the per-client attempt limit
+     * @param username the username, normalized before lookup
+     * @param password the password; not cleared by this method
+     * @param client   the caller's address, for the per-client attempt limit
+     * @return whether the login was accepted, rejected or throttled
      */
     public LoginResult passwordLogin(String username, char[] password, String client) {
         String name = UserStore.normalize(username);
-        // Reserved before hashing and counted as a failure until proven right, so parallel guesses cannot outrun the
-        // lock.
         Optional<Duration> wait = throttle.reserve(name, client);
         if (wait.isPresent()) {
             log.warn("Throttled dashboard login user={} client={}", loggable(name), client);
             return new LoginResult.Throttled(wait.get());
         }
         if (users.isEmpty()) {
-            // No accounts at all on this server, so nothing to time against: reject outright.
             return new LoginResult.Rejected();
         }
         UserStore store = users.get();
@@ -271,12 +367,22 @@ public final class ApiAuth {
         return new LoginResult.Accepted(session, name);
     }
 
-    /** Whether the request's Origin names exactly the host and port it was sent to. */
+    /**
+     * Whether the request's Origin names exactly the host and port it was sent to.
+     *
+     * @param request the request
+     * @return {@code false} when either header is missing or they differ
+     */
     public static boolean isSameOrigin(Request request) {
         return sameAuthority(request.origin(), request.host());
     }
 
-    /** The session named by the cookie, if it is still live. */
+    /**
+     * The session named by the cookie, if it is still live.
+     *
+     * @param cookieHeader the {@code Cookie} header, or {@code null}
+     * @return the session, or empty
+     */
     public Optional<SessionInfo> currentSession(String cookieHeader) {
         return liveSession(cookieHeader).map(ApiAuth::sessionInfo);
     }
@@ -284,13 +390,29 @@ public final class ApiAuth {
     /**
      * Admits a WebSocket handshake on {@code bearer} or on a session cookie sent from the dashboard,
      * which lives on {@code dashboardPort} of the host the socket was opened on.
+     *
+     * @param authorization the {@code Authorization} header, or {@code null}
+     * @param cookie        the {@code Cookie} header, or {@code null}
+     * @param origin        the {@code Origin} header, or {@code null}
+     * @param host          the {@code Host} header, or {@code null}
+     * @param dashboardPort the port the dashboard is served on
+     * @return whether to accept the handshake
      */
     public boolean allowsWebSocket(String authorization, String cookie, String origin, String host, int dashboardPort) {
         return authenticateWebSocket(authorization, cookie, origin, host, dashboardPort)
                 .isPresent();
     }
 
-    /** {@link #allowsWebSocket} returning who opened the socket, for streams scoped to a tenant. */
+    /**
+     * {@link #allowsWebSocket} returning who opened the socket, for streams scoped to a tenant.
+     *
+     * @param authorization the {@code Authorization} header, or {@code null}
+     * @param cookie        the {@code Cookie} header, or {@code null}
+     * @param origin        the {@code Origin} header, or {@code null}
+     * @param host          the {@code Host} header, or {@code null}
+     * @param dashboardPort the port the dashboard is served on
+     * @return the caller, or empty to refuse the handshake
+     */
     public Optional<Caller> authenticateWebSocket(
             String authorization, String cookie, String origin, String host, int dashboardPort) {
         Optional<String> bearer = bearerToken(authorization);
@@ -309,15 +431,29 @@ public final class ApiAuth {
         return liveSession(cookie).map(entry -> new Caller(Credential.SESSION, principal(entry), entry.tenantId()));
     }
 
-    /** Compares digests, not keys: equal-length inputs to {@link MessageDigest#isEqual}, so timing reveals nothing. */
+    /**
+     * Compares digests, not keys: equal-length inputs to {@link MessageDigest#isEqual}, so timing reveals nothing.
+     *
+     * @param presented the key a client sent
+     * @return {@code true} when it is the server's API key
+     */
     public boolean isApiKey(String presented) {
         return MessageDigest.isEqual(ApiKeyStore.digest(presented), keyDigest);
     }
 
-    /** A newly issued session: the token to set as the cookie, and when it stops being accepted. */
+    /**
+     * A newly issued session: the token to set as the cookie, and when it stops being accepted.
+     *
+     * @param token     the user API key, prefixed {@value #USER_KEY_PREFIX}
+     * @param expiresAt when it stops being accepted
+     */
     public record Session(String token, Instant expiresAt) {}
 
-    /** Issues a session for the API key holder; the caller sets {@link Session#token()} as the cookie. */
+    /**
+     * Issues a session for the API key holder; the caller sets {@link Session#token()} as the cookie.
+     *
+     * @return the session, bound to no tenant
+     */
     public Session createSession() {
         return issue(null, null, null);
     }
@@ -325,6 +461,10 @@ public final class ApiAuth {
     /**
      * Issues a key-holder session bound to {@code tenantId}, which then reaches only that tenant,
      * like a user's session does.
+     *
+     * @param tenantId the tenant
+     * @return the session
+     * @throws IllegalArgumentException if {@code tenantId} is null or not a valid tenant id
      */
     public Session createSession(String tenantId) {
         return issue(null, null, TenantId.requireValid(tenantId));
@@ -334,7 +474,6 @@ public final class ApiAuth {
         Instant now = clock.instant();
         sessions.values().removeIf(entry -> !entry.expiresAt().isAfter(now));
         while (sessions.size() >= MAX_SESSIONS) {
-            // Bounded memory: drop the session closest to expiring rather than refuse to log in.
             sessions.entrySet().stream()
                     .min(Map.Entry.comparingByValue(Comparator.comparing(SessionEntry::expiresAt)))
                     .ifPresent(oldest -> sessions.remove(oldest.getKey()));
@@ -347,19 +486,32 @@ public final class ApiAuth {
         return new Session(token, expiresAt);
     }
 
-    /** Ends the session named by the request's cookie, if any. */
+    /**
+     * Ends the session named by the request's cookie, if any.
+     *
+     * @param cookieHeader the {@code Cookie} header, or {@code null}
+     */
     public void revokeSession(String cookieHeader) {
         sessionToken(cookieHeader).ifPresent(token -> sessions.remove(tokenDigest(token)));
     }
 
-    /** Ends the user API key sent as {@code Authorization: Bearer}, if it is one; the server key cannot be revoked. */
+    /**
+     * Ends the user API key sent as {@code Authorization: Bearer}, if it is one; the server key cannot be revoked.
+     *
+     * @param authorization the {@code Authorization} header, or {@code null}
+     */
     public void revokeBearer(String authorization) {
         bearerToken(authorization)
                 .filter(token -> SESSION_TOKEN.matcher(token).matches())
                 .ifPresent(token -> sessions.remove(tokenDigest(token)));
     }
 
-    /** The user API key sent as a Bearer header, if it is a live one this server issued. */
+    /**
+     * The user API key sent as a Bearer header, if it is a live one this server issued.
+     *
+     * @param authorization the {@code Authorization} header, or {@code null}
+     * @return the session behind the key, or empty
+     */
     public Optional<SessionInfo> currentUserKey(String authorization) {
         return bearerToken(authorization)
                 .filter(token -> SESSION_TOKEN.matcher(token).matches())
@@ -371,12 +523,25 @@ public final class ApiAuth {
         return new SessionInfo(entry.user(), entry.expiresAt(), entry.tenantId());
     }
 
-    /** @param secure adds {@code Secure}, so the browser never sends the cookie over plain HTTP */
+    /**
+     * The {@code Set-Cookie} value that stores a session in the browser: HttpOnly, SameSite=Strict,
+     * expiring after {@link #SESSION_TTL}.
+     *
+     * @param token  the session token
+     * @param secure adds {@code Secure}, so the browser never sends the cookie over plain HTTP
+     * @return the header value
+     */
     public static String sessionCookie(String token, boolean secure) {
         return SESSION_COOKIE + "=" + token + COOKIE_ATTRIBUTES + secureAttribute(secure) + "; Max-Age="
                 + SESSION_TTL.toSeconds();
     }
 
+    /**
+     * The {@code Set-Cookie} value that deletes the session cookie, for logout.
+     *
+     * @param secure adds {@code Secure}, matching the cookie being cleared
+     * @return the header value
+     */
     public static String clearedSessionCookie(boolean secure) {
         return SESSION_COOKIE + "=" + COOKIE_ATTRIBUTES + secureAttribute(secure) + "; Max-Age=0";
     }
@@ -385,6 +550,12 @@ public final class ApiAuth {
         return secure ? "; Secure" : "";
     }
 
+    /**
+     * Answers {@code 401 UNAUTHORIZED} with a {@code WWW-Authenticate: Bearer} challenge.
+     *
+     * @param exchange the request to answer
+     * @throws IOException if writing the response fails
+     */
     public static void rejectUnauthorized(HttpExchange exchange) throws IOException {
         exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer realm=\"nexora\"");
         Responses.send(exchange, STATUS_UNAUTHORIZED, Responses.JSON, UNAUTHORIZED_BODY);
@@ -410,7 +581,6 @@ public final class ApiAuth {
             return Optional.empty();
         }
         boolean expired = !entry.expiresAt().isAfter(clock.instant());
-        // Moving a user to another tenant also ends their sessions: each one is bound to the old tenant.
         boolean userRevoked = entry.user() != null
                 && (!users.flatMap(store -> store.find(entry.user()))
                                 .map(hash -> hash.fingerprint().equals(entry.passwordFingerprint()))

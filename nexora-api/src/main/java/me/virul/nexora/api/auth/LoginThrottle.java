@@ -92,7 +92,6 @@ final class LoginThrottle {
         Instant now = clock.instant();
         prune(now);
         failuresByUser.merge(username, new Failures(1, null), (old, fresh) -> {
-            // A lock that has run out starts a new count rather than relocking on the next miss.
             int count = old.lockedUntil() != null && !now.isBefore(old.lockedUntil()) ? 1 : old.count() + 1;
             return new Failures(count, count >= MAX_FAILURES ? now.plus(LOCKOUT) : null);
         });
@@ -112,7 +111,6 @@ final class LoginThrottle {
         if (attemptsByClient.size() >= MAX_TRACKED) {
             attemptsByClient.values().removeIf(w -> !now.isBefore(w.start().plus(WINDOW)));
             if (attemptsByClient.size() >= MAX_TRACKED) {
-                // Only lets those clients retry sooner; the per-username lock still holds.
                 attemptsByClient.clear();
             }
         }

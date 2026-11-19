@@ -39,8 +39,13 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Bridges Nexora execution events to:
- * - Prometheus metrics exposition
- * - an in-memory process snapshot store suitable for lightweight UI rendering
+ * <ul>
+ *   <li>Prometheus metrics exposition</li>
+ *   <li>an in-memory process snapshot store suitable for lightweight UI rendering</li>
+ * </ul>
+ *
+ * <p>Attach one per engine with {@link #attach(NexoraEngine)} and {@link #close()} it to stop
+ * listening. The snapshot keeps only the most recent executions, so its memory is bounded.
  */
 public final class NexoraObservability implements AutoCloseable {
 
@@ -55,8 +60,16 @@ public final class NexoraObservability implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(NexoraObservability.class);
 
+    /** Receives the process snapshot after each change, for example to push it to dashboards. */
     @FunctionalInterface
     public interface SnapshotListener {
+
+        /**
+         * Called with the latest snapshot. Deliveries never overlap and never go back to an older
+         * snapshot, so a listener may block briefly, but a slow one delays the next delivery.
+         *
+         * @param snapshot the snapshot
+         */
         void onSnapshot(ProcessSnapshot snapshot);
     }
 
@@ -64,12 +77,10 @@ public final class NexoraObservability implements AutoCloseable {
     private final ProcessTracker processTracker;
     private final List<Subscription> subscriptions;
     private final List<SnapshotListener> snapshotListeners = new CopyOnWriteArrayList<>();
-    // Not synchronized: a listener may block on I/O, which would pin the virtual thread.
     private final ReentrantLock broadcastLock = new ReentrantLock();
     private final AtomicBoolean broadcastRequested = new AtomicBoolean();
 
     static final String TENANT_LABEL = "tenant";
-    // Tenant ids are label-safe already (TenantId); this marks events of executions never seen starting.
     private static final String UNKNOWN_TENANT = "unknown";
 
     private final Counter planStartedTotal;
@@ -84,7 +95,6 @@ public final class NexoraObservability implements AutoCloseable {
     private final Histogram stepDurationSeconds;
     private final Gauge activeExecutionsGauge;
     private final Gauge readyGauge;
-    // executionId -> tenant, from plan start to its one terminal event, so step metrics can carry the tenant.
     private final ConcurrentHashMap<String, String> runningTenants = new ConcurrentHashMap<>();
     private final NexoraEngine engine;
 
@@ -102,8 +112,6 @@ public final class NexoraObservability implements AutoCloseable {
         this.processTracker = new ProcessTracker(maxExecutions, maxTimelineEventsPerExecution);
         this.subscriptions = new ArrayList<>();
 
-        // Every execution metric carries the tenant. Its cardinality is the number of tenants, which
-        // operators control; step durations stay per capability only, as buckets multiply each label.
         this.planStartedTotal = Counter.build()
                 .name("nexora_plan_started_total")
                 .labelNames(TENANT_LABEL)
@@ -119,7 +127,6 @@ public final class NexoraObservability implements AutoCloseable {
                 .labelNames(TENANT_LABEL)
                 .help("Total number of execution plans that failed.")
                 .register(registry);
-        // Separate from failures: a cancel is a deliberate stop and must not trip failure-rate alerts.
         this.planCancelledTotal = Counter.build()
                 .name("nexora_plan_cancelled_total")
                 .labelNames(TENANT_LABEL)
@@ -204,19 +211,44 @@ public final class NexoraObservability implements AutoCloseable {
         }));
     }
 
+    /**
+     * Starts observing an engine, keeping the last 100 executions with up to 200 timeline events each.
+     *
+     * @param engine the engine
+     * @return the observer
+     */
     public static NexoraObservability attach(NexoraEngine engine) {
         return new NexoraObservability(engine, DEFAULT_MAX_EXECUTIONS, DEFAULT_MAX_TIMELINE_EVENTS);
     }
 
+    /**
+     * Starts observing an engine with custom snapshot bounds.
+     *
+     * @param engine                        the engine
+     * @param maxExecutions                 how many executions the snapshot keeps, most recent first
+     * @param maxTimelineEventsPerExecution how many timeline events each execution keeps, most recent
+     * @return the observer
+     */
     public static NexoraObservability attach(
             NexoraEngine engine, int maxExecutions, int maxTimelineEventsPerExecution) {
         return new NexoraObservability(engine, maxExecutions, maxTimelineEventsPerExecution);
     }
 
+    /**
+     * The content type of {@link #scrapePrometheus()}, for the response header.
+     *
+     * @return the Prometheus text format 0.0.4 content type
+     */
     public String metricsContentType() {
         return TextFormat.CONTENT_TYPE_004;
     }
 
+    /**
+     * Renders every metric in the registry, refreshing the readiness gauge first.
+     *
+     * @return the metrics in Prometheus text format
+     * @throws IllegalStateException if rendering fails
+     */
     public String scrapePrometheus() {
         readyGauge.set(engine.readiness().ready() ? 1 : 0);
         StringWriter writer = new StringWriter();
@@ -228,14 +260,30 @@ public final class NexoraObservability implements AutoCloseable {
         return writer.toString();
     }
 
+    /**
+     * The current state of the most recent executions.
+     *
+     * @return a snapshot; later events do not change it
+     */
     public ProcessSnapshot processSnapshot() {
         return processTracker.snapshot();
     }
 
+    /**
+     * The Prometheus registry the metrics are registered in, to add more or to scrape it directly.
+     *
+     * @return the registry
+     */
     public CollectorRegistry registry() {
         return registry;
     }
 
+    /**
+     * Adds a listener called after each change to the snapshot.
+     *
+     * @param listener the listener
+     * @throws NullPointerException if {@code listener} is null
+     */
     public void addSnapshotListener(SnapshotListener listener) {
         snapshotListeners.add(Objects.requireNonNull(listener));
     }
@@ -250,7 +298,6 @@ public final class NexoraObservability implements AutoCloseable {
     private void broadcastSnapshot() {
         if (snapshotListeners.isEmpty()) return;
         broadcastRequested.set(true);
-        // Re-checked after unlocking: a request left while the lock was held is never lost.
         while (broadcastRequested.get() && broadcastLock.tryLock()) {
             try {
                 if (broadcastRequested.getAndSet(false)) {
@@ -266,18 +313,23 @@ public final class NexoraObservability implements AutoCloseable {
         for (SnapshotListener listener : snapshotListeners) {
             try {
                 listener.onSnapshot(snap);
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                log.warn(
+                        "Snapshot listener failed listener={}",
+                        listener.getClass().getName(),
+                        e);
             }
         }
     }
 
+    /** Stops listening to the engine. Metrics and the last snapshot stay readable. */
     @Override
     public void close() {
         for (Subscription subscription : subscriptions) {
             try {
                 subscription.cancel();
-            } catch (Exception ignored) {
-                // best-effort cleanup
+            } catch (Exception e) {
+                log.warn("Event subscription cancel failed during close", e);
             }
         }
         subscriptions.clear();
@@ -390,7 +442,6 @@ public final class NexoraObservability implements AutoCloseable {
         try {
             return StepOutput.capture(event.output(), maxBytes);
         } catch (IllegalArgumentException e) {
-            // The engine logs this at WARN when it writes the step to a store.
             log.debug(
                     "Step output left out of the snapshot executionId={} stepId={} reason={}",
                     event.executionId(),
@@ -412,9 +463,21 @@ public final class NexoraObservability implements AutoCloseable {
         return nanos / 1_000_000_000.0;
     }
 
+    /**
+     * The state of the most recent executions at one moment.
+     *
+     * @param generatedAtMs    when the snapshot was taken, in epoch milliseconds
+     * @param activeExecutions how many of the executions are running
+     * @param executions       the executions, most recent first
+     */
     public record ProcessSnapshot(long generatedAtMs, int activeExecutions, List<ExecutionSnapshot> executions) {
 
-        /** Only {@code tenantId}'s executions, with the active count recomputed over them. */
+        /**
+         * Only {@code tenantId}'s executions, with the active count recomputed over them.
+         *
+         * @param tenantId the tenant
+         * @return the filtered snapshot
+         */
         public ProcessSnapshot forTenant(String tenantId) {
             List<ExecutionSnapshot> owned = executions.stream()
                     .filter(e -> e.tenantId().equals(tenantId))
@@ -426,6 +489,24 @@ public final class NexoraObservability implements AutoCloseable {
         }
     }
 
+    /**
+     * The state of one execution.
+     *
+     * @param executionId    the execution id
+     * @param traceId        the trace the execution runs in
+     * @param status         {@code RUNNING}, {@code COMPLETED}, {@code FAILED}, {@code TIMED_OUT} or
+     *                       {@code CANCELLED}
+     * @param startedAtMs    when it started, in epoch milliseconds
+     * @param finishedAtMs   when it finished, in epoch milliseconds; {@code 0} while running
+     * @param totalSteps     the number of steps in its plan
+     * @param runningSteps   the number of steps running
+     * @param completedSteps the number of steps that completed
+     * @param failedSteps    the number of steps that failed
+     * @param skippedSteps   the number of steps that were skipped
+     * @param steps          the state of each step
+     * @param timeline       its most recent events, oldest first
+     * @param tenantId       the tenant it belongs to
+     */
     public record ExecutionSnapshot(
             String executionId,
             String traceId,
@@ -441,6 +522,21 @@ public final class NexoraObservability implements AutoCloseable {
             List<TimelineSnapshot> timeline,
             String tenantId) {}
 
+    /**
+     * The state of one step.
+     *
+     * @param stepId          the step id
+     * @param capabilityId    the capability it invokes
+     * @param status          {@code PENDING}, {@code RUNNING}, {@code COMPLETED}, {@code FAILED} or
+     *                        {@code SKIPPED}
+     * @param startedAtMs     when it started, in epoch milliseconds; {@code 0} before it starts
+     * @param finishedAtMs    when it finished, in epoch milliseconds; {@code 0} until it finishes
+     * @param elapsedMs       how long it ran
+     * @param failureCode     why it failed or was skipped, or {@code null}
+     * @param failureMessage  the failure message, or {@code null}
+     * @param output          its output as a JSON object, capped at 4 KiB; empty when it produced none
+     * @param outputTruncated whether {@code output} is a preview of a larger output
+     */
     public record StepSnapshot(
             String stepId,
             String capabilityId,
@@ -453,6 +549,13 @@ public final class NexoraObservability implements AutoCloseable {
             Map<String, Object> output,
             boolean outputTruncated) {}
 
+    /**
+     * One event in an execution's timeline.
+     *
+     * @param occurredAtMs when it happened, in epoch milliseconds
+     * @param type         the kind of event, such as {@code step_completed}
+     * @param message      a short description
+     */
     public record TimelineSnapshot(long occurredAtMs, String type, String message) {}
 
     private static final class ProcessTracker {

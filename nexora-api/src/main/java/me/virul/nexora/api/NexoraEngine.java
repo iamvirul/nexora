@@ -73,10 +73,10 @@ import org.slf4j.LoggerFactory;
 /**
  * Public entry point for the Nexora execution platform.
  *
- * Construct via {@link #builder()} — the builder wires all internal components.
+ * <p>Construct via {@link #builder()}: the builder wires all internal components.
  * All fields are effectively final after build(); the engine is thread-safe.
  *
- * Example:
+ * <p>Example:
  * <pre>{@code
  * NexoraEngine engine = NexoraEngine.builder()
  *     .withPlugin(myPlugin)
@@ -112,11 +112,10 @@ public final class NexoraEngine implements AutoCloseable {
     private final CronScheduler cronScheduler;
     private final Tracer tracer;
     private final Executor executor;
-    private final String tenantScope; // null = serves every tenant
+    private final String tenantScope;
     private final Duration shutdownDrainTimeout;
-    // Set by the first shutdown call; later and concurrent calls wait on it instead of shutting down twice.
     private final AtomicReference<CompletableFuture<DrainResult>> shutdownResult = new AtomicReference<>();
-    private volatile Thread shutdownHook; // null = no JVM hook registered
+    private volatile Thread shutdownHook;
 
     private NexoraEngine(
             ExecutionEngine engine,
@@ -144,6 +143,8 @@ public final class NexoraEngine implements AutoCloseable {
     /**
      * The only tenant this engine runs work for, set with {@link Builder#withTenantId(String)}.
      * Empty for an engine that serves every tenant, taking each intent's own tenant.
+     *
+     * @return the tenant id, or empty for an engine that serves every tenant
      */
     public Optional<String> tenantScope() {
         return Optional.ofNullable(tenantScope);
@@ -187,7 +188,16 @@ public final class NexoraEngine implements AutoCloseable {
         }
     }
 
-    /** @throws EngineShuttingDownException if {@link #shutdown(Duration)} has begun */
+    /**
+     * Plans and runs {@code intent} in a new root trace.
+     *
+     * @param intent the intent; on a tenant-bound engine, an intent without a tenant runs for the
+     *               engine's tenant
+     * @return completes with the result when the execution finishes
+     * @throws NullPointerException        if {@code intent} is null
+     * @throws IllegalArgumentException    if the intent is for a tenant this engine does not serve
+     * @throws EngineShuttingDownException if {@link #shutdown(Duration)} has begun
+     */
     public CompletableFuture<ExecutionResult> execute(Intent intent) {
         return engine.execute(scoped(intent));
     }
@@ -195,6 +205,12 @@ public final class NexoraEngine implements AutoCloseable {
     /**
      * Executes {@code intent} continuing a trace propagated in from an inbound request
      * (e.g. a {@code traceparent} header) instead of starting a fresh root trace.
+     *
+     * @param intent       the intent
+     * @param traceContext the inbound span the execution continues
+     * @return completes with the result when the execution finishes
+     * @throws IllegalArgumentException    if the intent is for a tenant this engine does not serve
+     * @throws EngineShuttingDownException if {@link #shutdown(Duration)} has begun
      */
     public CompletableFuture<ExecutionResult> execute(Intent intent, TraceContext traceContext) {
         return engine.execute(scoped(intent), traceContext);
@@ -205,23 +221,49 @@ public final class NexoraEngine implements AutoCloseable {
      * Use this instead of {@link #execute(Intent)} when the id is needed before the execution
      * finishes, for example to report it to a client or to {@link #cancel(String)} it.
      *
+     * @param intent the intent
+     * @return the execution id and the future of its result
+     * @throws IllegalArgumentException    if the intent is for a tenant this engine does not serve
      * @throws EngineShuttingDownException if {@link #shutdown(Duration)} has begun
      */
     public ExecutionHandle submit(Intent intent) {
         return engine.submit(scoped(intent), TraceContext.root());
     }
 
-    /** {@link #submit(Intent)} continuing a trace propagated in from an inbound request. */
+    /**
+     * {@link #submit(Intent)} continuing a trace propagated in from an inbound request.
+     *
+     * @param intent       the intent
+     * @param traceContext the inbound span the execution continues
+     * @return the execution id and the future of its result
+     * @throws IllegalArgumentException    if the intent is for a tenant this engine does not serve
+     * @throws EngineShuttingDownException if {@link #shutdown(Duration)} has begun
+     */
     public ExecutionHandle submit(Intent intent, TraceContext traceContext) {
         return engine.submit(scoped(intent), traceContext);
     }
 
+    /**
+     * Convenience: {@link #execute(Intent)} for a new intent with no per-intent deadline.
+     *
+     * @param goal    the goal
+     * @param context the intent context, or {@code null} for none
+     * @return completes with the result when the execution finishes
+     * @throws EngineShuttingDownException if {@link #shutdown(Duration)} has begun
+     */
     public CompletableFuture<ExecutionResult> execute(String goal, Map<String, Object> context) {
         return execute(new Intent(goal, context));
     }
 
     /**
      * Convenience: execute with an inline per-call deadline, overriding any engine-wide default.
+     *
+     * @param goal     the goal
+     * @param context  the intent context, or {@code null} for none
+     * @param deadline the wall-clock limit for the whole execution, or {@code null} for the default
+     * @return completes with the result when the execution finishes
+     * @throws IllegalArgumentException    if {@code deadline} is not positive
+     * @throws EngineShuttingDownException if {@link #shutdown(Duration)} has begun
      */
     public CompletableFuture<ExecutionResult> execute(String goal, Map<String, Object> context, Duration deadline) {
         return execute(new Intent(goal, context, deadline));
@@ -248,7 +290,9 @@ public final class NexoraEngine implements AutoCloseable {
      * can be replayed. The original's per-intent deadline and webhook are not persisted, so the
      * replay runs with the engine defaults.
      *
+     * @param executionId the execution to replay
      * @return the handle of the new execution, returned as soon as it starts
+     * @throws IllegalArgumentException        if {@code executionId} is null or blank
      * @throws ExecutionNotFoundException       if no execution has this id
      * @throws ExecutionNotReplayableException  if it succeeded or is still running or compensating
      * @throws IllegalStateException            if the engine has no persistence store
@@ -262,12 +306,21 @@ public final class NexoraEngine implements AutoCloseable {
      * {@link #replay(String)} limited to one tenant: an execution of any other tenant is reported as
      * not found. The replay runs for the original's tenant. A {@code null} tenant replays any
      * execution this engine serves.
+     *
+     * @param tenantId    the tenant the execution must belong to, or {@code null} for any
+     * @param executionId the execution to replay
+     * @return the handle of the new execution
+     * @throws IllegalArgumentException        if {@code executionId} is blank or {@code tenantId} is
+     *                                         not a valid tenant id
+     * @throws ExecutionNotFoundException      if no execution of that tenant has this id
+     * @throws ExecutionNotReplayableException if it succeeded or is still running or compensating
+     * @throws IllegalStateException           if the engine has no persistence store
+     * @throws EngineShuttingDownException     if shutdown has begun
      */
     public ExecutionHandle replay(String tenantId, String executionId) {
         if (executionId == null || executionId.isBlank()) {
             throw new IllegalArgumentException("executionId must not be blank");
         }
-        // Before the store lookup: once shutdown has released the store, a lookup would fail instead.
         if (!engine.isAcceptingExecutions()) {
             throw new EngineShuttingDownException();
         }
@@ -276,12 +329,10 @@ public final class NexoraEngine implements AutoCloseable {
             throw new IllegalStateException("Replay requires a persistence store");
         }
         TenantFilter filter = filterFor(tenantId).orElseThrow(() -> new ExecutionNotFoundException(executionId));
-        // Looked up before the running check, so another tenant's live execution reads as not found.
         ExecutionRecord original = (filter.tenantId() == null
                         ? store.findById(executionId)
                         : store.findById(filter.tenantId(), executionId))
                 .orElseThrow(() -> new ExecutionNotFoundException(executionId));
-        // Still in terminal handling here, possibly about to compensate: its stored state is not final yet.
         if (engine.isRunning(executionId)) {
             throw new ExecutionNotReplayableException(executionId, ExecutionState.RUNNING);
         }
@@ -311,12 +362,16 @@ public final class NexoraEngine implements AutoCloseable {
      * execution record no longer exists, falls back to the goal and context the dead letter kept,
      * still tagged with {@value #REPLAY_OF_CONTEXT_KEY}. Marking the dead letter is up to the caller.
      *
+     * @param deadLetter the dead letter to replay
+     * @return the handle of the new execution
+     * @throws NullPointerException            if {@code deadLetter} is null
+     * @throws ExecutionNotFoundException      if the dead letter belongs to a tenant this engine does
+     *                                         not serve
      * @throws ExecutionNotReplayableException if the original execution is still running or compensating
+     * @throws EngineShuttingDownException     if shutdown has begun
      */
     public ExecutionHandle replayDeadLetter(DeadLetterRecord deadLetter) {
         Objects.requireNonNull(deadLetter, "deadLetter must not be null");
-        // Checked before the fallback below: that path rebuilds the intent from the dead letter, and
-        // scoped() would hand a foreign default-tenant goal to this engine's own tenant.
         if (filterFor(deadLetter.tenantId()).isEmpty()) {
             throw new ExecutionNotFoundException(deadLetter.executionId());
         }
@@ -357,6 +412,10 @@ public final class NexoraEngine implements AutoCloseable {
      *
      * <p>Runs on the calling thread. Halting a running execution is an in-memory flag flip; only ids
      * this engine is not running fall back to a single store lookup.
+     *
+     * @param executionId the execution to cancel
+     * @return a completed future, see above; it fails with {@link IllegalArgumentException} for a
+     *         blank id
      */
     public CompletableFuture<Boolean> cancel(String executionId) {
         return cancel(null, executionId);
@@ -365,6 +424,11 @@ public final class NexoraEngine implements AutoCloseable {
     /**
      * {@link #cancel(String)} limited to one tenant: an execution of any other tenant fails with
      * {@link ExecutionNotFoundException}, exactly like an unknown id.
+     *
+     * @param tenantId    the tenant the execution must belong to, or {@code null} for any
+     * @param executionId the execution to cancel
+     * @return a completed future, as for {@link #cancel(String)}; it fails with
+     *         {@link IllegalArgumentException} for a blank id or an invalid tenant id
      */
     public CompletableFuture<Boolean> cancel(String tenantId, String executionId) {
         if (executionId == null || executionId.isBlank()) {
@@ -379,8 +443,6 @@ public final class NexoraEngine implements AutoCloseable {
         if (filter.isEmpty()) {
             return CompletableFuture.failedFuture(new ExecutionNotFoundException(executionId));
         }
-        // Never queue this on the step executor: when every worker is busy running steps (e.g. a
-        // single-thread executor), the cancel would wait behind the very step it has to interrupt.
         try {
             return switch (engine.cancel(filter.get().tenantId(), executionId)) {
                 case CANCELLED -> CompletableFuture.completedFuture(true);
@@ -394,6 +456,15 @@ public final class NexoraEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Subscribes to the events of every execution. The handler runs asynchronously on the engine's
+     * executor, so events can reach it out of order; use {@link #subscribeSync} when order matters.
+     *
+     * @param <E>       the event type
+     * @param eventType the event class; only events of exactly this class are delivered
+     * @param handler   called for each event
+     * @return the subscription, to cancel it
+     */
     public <E extends ExecutionEvent> Subscription subscribe(Class<E> eventType, EventHandler<E> handler) {
         return eventBus.subscribe(eventType, handler);
     }
@@ -403,11 +474,23 @@ public final class NexoraEngine implements AutoCloseable {
      * {@code publish} returns. Events of one execution then reach it in the order they happened,
      * which {@link #subscribe} does not promise. The handler holds up the execution while it runs,
      * so it must be quick and must not block.
+     *
+     * @param <E>       the event type
+     * @param eventType the event class; only events of exactly this class are delivered
+     * @param handler   called for each event, on the publishing thread
+     * @return the subscription, to cancel it
      */
     public <E extends ExecutionEvent> Subscription subscribeSync(Class<E> eventType, EventHandler<E> handler) {
         return eventBus.subscribeSync(eventType, handler);
     }
 
+    /**
+     * Loads a plugin JAR and activates it.
+     *
+     * @param pluginJar the plugin JAR
+     * @param pluginId  the id the plugin declares in its descriptor
+     * @throws me.virul.nexora.spi.PluginInitializationException if the plugin cannot be loaded or started
+     */
     public void loadPlugin(Path pluginJar, String pluginId) {
         pluginManager.loadPlugin(pluginJar);
         pluginManager.activatePlugin(pluginId);
@@ -426,6 +509,10 @@ public final class NexoraEngine implements AutoCloseable {
      * <p>Requires an {@link ExecutionStore}: without one, executions interrupted around a reload
      * leave no record to inspect or {@link #replay(String) replay}.
      *
+     * @param pluginId the active plugin to replace
+     * @param newJar   the JAR of the new version
+     * @return the old and new versions
+     * @throws IllegalArgumentException if {@code pluginId} is null or blank
      * @throws IllegalStateException if no execution store is configured, or the plugin is not an
      *                               active JAR plugin
      * @see PluginManager#reloadPlugin(String, Path)
@@ -443,11 +530,23 @@ public final class NexoraEngine implements AutoCloseable {
         return pluginManager.reloadPlugin(pluginId, newJar);
     }
 
+    /**
+     * The registered capabilities; on a tenant-bound engine, only those its tenant may use.
+     *
+     * @return the descriptors
+     */
     public List<me.virul.nexora.spi.CapabilityDescriptor> listCapabilities() {
         return tenantScope == null ? capabilityRegistry.listAll() : capabilityRegistry.listFor(tenantScope);
     }
 
-    /** The capabilities {@code tenantId} may use; empty for a tenant this engine does not serve. */
+    /**
+     * The capabilities {@code tenantId} may use; empty for a tenant this engine does not serve.
+     *
+     * @param tenantId the tenant
+     * @return the descriptors
+     * @throws NullPointerException     if {@code tenantId} is null
+     * @throws IllegalArgumentException if it is not a valid tenant id
+     */
     public List<me.virul.nexora.spi.CapabilityDescriptor> listCapabilities(String tenantId) {
         return filterFor(Objects.requireNonNull(tenantId, "tenantId must not be null"))
                 .map(filter -> capabilityRegistry.listFor(filter.tenantId()))
@@ -457,19 +556,38 @@ public final class NexoraEngine implements AutoCloseable {
     /**
      * The JAR the active version of {@code pluginId} was loaded from. Empty for a plugin that is not
      * loaded or was registered in code with {@link Builder#withPlugin(NexoraPlugin)}.
+     *
+     * @param pluginId the plugin
+     * @return the JAR path, or empty
      */
     public Optional<Path> pluginJar(String pluginId) {
         return pluginManager.jar(pluginId);
     }
 
+    /**
+     * The plugins that are currently active.
+     *
+     * @return their ids
+     */
     public List<String> activePluginIds() {
         return pluginManager.activePluginIds();
     }
 
+    /**
+     * The circuit breaker state and recent metrics of a capability's contract.
+     *
+     * @param capabilityId the capability
+     * @return a snapshot; see {@link HealthSnapshot#from} for a copy that carries no executor types
+     */
     public CapabilityContractMonitor.HealthSnapshot capabilityHealth(String capabilityId) {
         return contractMonitor.snapshot(capabilityId);
     }
 
+    /**
+     * The execution store set with {@link Builder#withExecutionStore(ExecutionStore)}.
+     *
+     * @return the store, or {@code null} when persistence is disabled
+     */
     public me.virul.nexora.persistence.ExecutionStore getStore() {
         return engine.getStore();
     }
@@ -477,6 +595,7 @@ public final class NexoraEngine implements AutoCloseable {
     /**
      * Cap on each recorded step output, in UTF-8 JSON bytes; 0 means outputs are not recorded.
      *
+     * @return the cap in bytes
      * @see Builder#withStepOutputMaxBytes(int)
      */
     public int stepOutputMaxBytes() {
@@ -487,13 +606,15 @@ public final class NexoraEngine implements AutoCloseable {
      * Reports readiness of the engine's own dependencies: persistence, its schema migrations,
      * plugins, and the shared executor. The executor check also reports DOWN once shutdown has begun,
      * so a load balancer stops routing work the engine would reject. A {@code null} persistence store (persistence disabled)
-     * reports both persistence checks UP — there is nothing to check, not a degraded dependency.
+     * reports both persistence checks UP: there is nothing to check, not a degraded dependency.
      * When persistence is DOWN the schema is not checked and migrations report DOWN too, so a probe
      * waits for a database connection at most once.
      *
      * <p>Capability circuit breaker state is deliberately not part of readiness: an OPEN
      * circuit means a downstream is failing, and pulling every instance out of rotation
      * for that would turn a partial outage into a full one.
+     *
+     * @return the status of each check
      */
     public ReadinessReport readiness() {
         Map<String, HealthStatus> checks = new LinkedHashMap<>();
@@ -501,8 +622,6 @@ public final class NexoraEngine implements AutoCloseable {
         ExecutionStore store = engine.getStore();
         boolean persistenceUp = store == null || store.isHealthy();
         checks.put(ReadinessReport.CHECK_PERSISTENCE, HealthStatus.of(persistenceUp));
-        // The schema check needs another connection: against an unreachable or saturated pool it would
-        // wait out its probe timeout a second time, for an answer that cannot be UP anyway.
         checks.put(
                 ReadinessReport.CHECK_MIGRATIONS,
                 HealthStatus.of(persistenceUp && (store == null || store.isSchemaCurrent())));
@@ -518,8 +637,11 @@ public final class NexoraEngine implements AutoCloseable {
         return new ReadinessReport(checks);
     }
 
+    /** The status of one readiness check. */
     public enum HealthStatus {
+        /** The dependency is ready. */
         UP,
+        /** The dependency is not ready. */
         DOWN;
 
         static HealthStatus of(boolean healthy) {
@@ -527,22 +649,45 @@ public final class NexoraEngine implements AutoCloseable {
         }
     }
 
-    /** Per-dependency readiness, in a stable check order. Ready only when every check is UP. */
+    /**
+     * Per-dependency readiness, in a stable check order. Ready only when every check is UP.
+     *
+     * @param checks the status of each check by name, such as {@link #CHECK_PERSISTENCE}; immutable
+     */
     public record ReadinessReport(Map<String, HealthStatus> checks) {
+        /** The execution store answers. */
         public static final String CHECK_PERSISTENCE = "persistence";
+        /** The database schema is at the version this release migrates to. */
         public static final String CHECK_MIGRATIONS = "migrations";
+        /** Every loaded plugin is active. */
         public static final String CHECK_PLUGINS = "plugins";
+        /** The engine accepts executions and its executor is not shut down. */
         public static final String CHECK_EXECUTOR = "executor";
 
+        /**
+         * Copies the checks, keeping their order.
+         *
+         * @throws NullPointerException if {@code checks} is null
+         */
         public ReadinessReport {
             Objects.requireNonNull(checks, "checks must not be null");
             checks = Collections.unmodifiableMap(new LinkedHashMap<>(checks));
         }
 
+        /**
+         * Whether every check is UP.
+         *
+         * @return {@code true} when ready
+         */
         public boolean ready() {
             return checks.values().stream().allMatch(HealthStatus.UP::equals);
         }
 
+        /**
+         * The overall status.
+         *
+         * @return {@link HealthStatus#UP} when {@link #ready()}, otherwise {@link HealthStatus#DOWN}
+         */
         public HealthStatus status() {
             return HealthStatus.of(ready());
         }
@@ -557,41 +702,73 @@ public final class NexoraEngine implements AutoCloseable {
      * @param missedFirePolicy behaviour when windows are missed after a restart
      * @return a {@link ScheduledExecution} handle; call {@link ScheduledExecution#cancel()} to stop
      * @throws IllegalStateException if no persistence store is configured
+     * @throws IllegalArgumentException if the cron expression is invalid, or the intent is for a tenant
+     *                                  this engine does not serve
      */
     public ScheduledExecution schedule(String cronExpression, Intent intent, MissedFirePolicy missedFirePolicy) {
         requireScheduler();
         return cronScheduler.schedule(cronExpression, scoped(intent), missedFirePolicy);
     }
 
-    /** Convenience: schedule with the default {@link MissedFirePolicy#FIRE_ONCE} policy. */
+    /**
+     * Convenience: schedule with the default {@link MissedFirePolicy#FIRE_ONCE} policy.
+     *
+     * @param cronExpression 5-field UNIX cron (minute hour day-of-month month day-of-week)
+     * @param intent         intent to fire on each cron tick
+     * @return a {@link ScheduledExecution} handle
+     * @throws IllegalStateException    if no persistence store is configured
+     * @throws IllegalArgumentException if the cron expression is invalid
+     */
     public ScheduledExecution schedule(String cronExpression, Intent intent) {
         return schedule(cronExpression, intent, MissedFirePolicy.FIRE_ONCE);
     }
 
-    /** Returns all schedules (active and inactive), most recently created first. */
+    /**
+     * Returns all schedules (active and inactive), most recently created first.
+     *
+     * @return the schedules
+     * @throws IllegalStateException if no persistence store is configured
+     */
     public List<ScheduleRecord> listSchedules() {
         requireScheduler();
         return cronScheduler.listAll();
     }
 
-    /** Returns active schedules only, ordered by next fire time. */
+    /**
+     * Returns active schedules only, ordered by next fire time.
+     *
+     * @return the active schedules
+     * @throws IllegalStateException if no persistence store is configured
+     */
     public List<ScheduleRecord> listActiveSchedules() {
         requireScheduler();
         return cronScheduler.listActive();
     }
 
-    /** Cancels a schedule by id. Idempotent. */
+    /**
+     * Cancels a schedule by id. Idempotent. A tenant-bound engine only cancels its own tenant's
+     * schedules.
+     *
+     * @param scheduleId the schedule
+     * @throws IllegalStateException if no persistence store is configured
+     */
     public void cancelSchedule(String scheduleId) {
         requireScheduler();
         if (tenantScope != null) {
-            // A tenant-bound engine never touches another tenant's schedule, even through the unscoped call.
             cancelSchedule(null, scheduleId);
             return;
         }
         cronScheduler.cancel(scheduleId);
     }
 
-    /** {@link #listSchedules()} limited to one tenant. */
+    /**
+     * {@link #listSchedules()} limited to one tenant.
+     *
+     * @param tenantId the tenant, or {@code null} for every tenant this engine serves
+     * @return the schedules; empty for a tenant this engine does not serve
+     * @throws IllegalStateException    if no persistence store is configured
+     * @throws IllegalArgumentException if {@code tenantId} is not a valid tenant id
+     */
     public List<ScheduleRecord> listSchedules(String tenantId) {
         requireScheduler();
         return filterFor(tenantId)
@@ -604,7 +781,11 @@ public final class NexoraEngine implements AutoCloseable {
     /**
      * Cancels the schedule only if it belongs to {@code tenantId}.
      *
+     * @param tenantId   the tenant, or {@code null} for every tenant this engine serves
+     * @param scheduleId the schedule
      * @return false when no schedule with this id belongs to that tenant; nothing is changed
+     * @throws IllegalStateException    if no persistence store is configured
+     * @throws IllegalArgumentException if {@code tenantId} is not a valid tenant id
      */
     public boolean cancelSchedule(String tenantId, String scheduleId) {
         requireScheduler();
@@ -620,7 +801,11 @@ public final class NexoraEngine implements AutoCloseable {
         return owned;
     }
 
-    /** False once shutdown has begun; from then on every new execution is rejected. */
+    /**
+     * False once shutdown has begun; from then on every new execution is rejected.
+     *
+     * @return whether new executions are accepted
+     */
     public boolean isAcceptingExecutions() {
         return engine.isAcceptingExecutions();
     }
@@ -666,8 +851,6 @@ public final class NexoraEngine implements AutoCloseable {
             mine.completeExceptionally(e);
             throw e;
         } finally {
-            // Only now: while draining, a SIGTERM must still find the hook, which joins this shutdown.
-            // Without it the JVM would exit as soon as the other hooks finish, abandoning the drain.
             removeShutdownHook();
         }
         return mine.join();
@@ -675,7 +858,6 @@ public final class NexoraEngine implements AutoCloseable {
 
     private DrainResult drainAndRelease(Duration drainTimeout) {
         log.info("Engine shutdown started drainTimeout={}", drainTimeout);
-        // The scheduler goes first so no cron firing races the drain into a rejection.
         if (cronScheduler != null) {
             cronScheduler.close();
         }
@@ -687,7 +869,6 @@ public final class NexoraEngine implements AutoCloseable {
                 drain.unfinished(),
                 drain.elapsed(),
                 Instant.now()));
-        // Plugins are released only now: in-flight steps and compensations still call their capabilities.
         releasePlugins();
         if (engine.getStore() != null) {
             try {
@@ -765,7 +946,6 @@ public final class NexoraEngine implements AutoCloseable {
         try {
             Runtime.getRuntime().removeShutdownHook(hook);
         } catch (IllegalStateException e) {
-            // The JVM is already shutting down and will run the hook, which then joins this shutdown.
             log.debug("JVM shutdown in progress; shutdown hook left registered");
         }
         shutdownHook = null;
@@ -792,21 +972,46 @@ public final class NexoraEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * The contract health of one capability, as reported by {@link #capabilityHealth(String)}.
+     *
+     * @param capabilityId the capability
+     * @param state        the circuit breaker state
+     * @param sampleCount  the number of calls in the sliding window
+     * @param errorRate    the share of failed calls in the window, from {@code 0.0} to {@code 1.0}
+     * @param p99Latency   the p99 latency over the window
+     */
     public record HealthSnapshot(
             String capabilityId,
             CapabilityContractMonitor.CircuitState state,
             int sampleCount,
             double errorRate,
             Duration p99Latency) {
+
+        /**
+         * Copies a contract monitor snapshot.
+         *
+         * @param s the snapshot
+         * @return the copy
+         */
         public static HealthSnapshot from(CapabilityContractMonitor.HealthSnapshot s) {
             return new HealthSnapshot(s.capabilityId(), s.state(), s.sampleCount(), s.errorRate(), s.p99Latency());
         }
     }
 
+    /**
+     * Starts building an engine.
+     *
+     * @return a new builder
+     */
     public static Builder builder() {
         return new Builder();
     }
 
+    /**
+     * Configures and builds a {@link NexoraEngine}. Every setting is optional. Not thread-safe; build one
+     * engine per builder.
+     */
     public static final class Builder {
 
         private Executor executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -827,16 +1032,42 @@ public final class NexoraEngine implements AutoCloseable {
         private final List<StepDefinition> stepDefinitions = new ArrayList<>();
         private final List<Planner> extraPlanners = new ArrayList<>();
 
+        /** Creates a builder with the defaults described on each setting. */
+        public Builder() {}
+
+        /**
+         * The executor that runs steps, event handlers and timeouts. Defaults to a virtual thread per
+         * task. The engine does not shut down an executor passed here.
+         *
+         * @param e the executor
+         * @return this builder
+         * @throws NullPointerException if {@code e} is null
+         */
         public Builder withExecutor(Executor e) {
             this.executor = Objects.requireNonNull(e);
             return this;
         }
 
+        /**
+         * The tracer that records a span per capability call. Defaults to a no-op tracer. A tracer that
+         * is {@link AutoCloseable} is closed on shutdown.
+         *
+         * @param t the tracer
+         * @return this builder
+         * @throws NullPointerException if {@code t} is null
+         */
         public Builder withTracer(Tracer t) {
             this.tracer = Objects.requireNonNull(t);
             return this;
         }
 
+        /**
+         * The retry policy of steps that name none. Defaults to {@link RetryPolicy#noRetry()}.
+         *
+         * @param policy the policy
+         * @return this builder
+         * @throws NullPointerException if {@code policy} is null
+         */
         public Builder withDefaultRetryPolicy(RetryPolicy policy) {
             this.defaultRetryPolicy = Objects.requireNonNull(policy);
             return this;
@@ -845,6 +1076,8 @@ public final class NexoraEngine implements AutoCloseable {
         /**
          * Per-step timeout for steps that set none; {@code null} (the default) means no timeout.
          *
+         * @param timeout the timeout of each attempt, or {@code null}
+         * @return this builder
          * @throws IllegalArgumentException if {@code timeout} is under 1ms: the timeout is applied in
          *     whole milliseconds, so a shorter one would fail every step at once
          */
@@ -860,6 +1093,10 @@ public final class NexoraEngine implements AutoCloseable {
          * Sets an engine-wide fallback deadline for all plan executions.
          * A per-intent deadline (set via {@link Intent#Intent(String, java.util.Map, Duration)})
          * always overrides this value.
+         *
+         * @param deadline the wall-clock limit for an execution
+         * @return this builder
+         * @throws IllegalArgumentException if {@code deadline} is null or not positive
          */
         public Builder withDefaultPlanDeadline(Duration deadline) {
             if (deadline == null || deadline.compareTo(Duration.ZERO) <= 0) {
@@ -869,16 +1106,41 @@ public final class NexoraEngine implements AutoCloseable {
             return this;
         }
 
+        /**
+         * Persists executions, dead letters and schedules. Without a store, executions are not
+         * recorded, and {@link NexoraEngine#replay(String) replay}, cron schedules and plugin hot
+         * reload are unavailable.
+         *
+         * @param store the store; closed on shutdown
+         * @return this builder
+         * @throws NullPointerException if {@code store} is null
+         */
         public Builder withExecutionStore(ExecutionStore store) {
             this.executionStore = Objects.requireNonNull(store);
             return this;
         }
 
+        /**
+         * Whether a failed, timed-out or cancelled execution compensates its completed steps, in reverse
+         * dependency order,
+         * with each step's {@link me.virul.nexora.core.plan.Step#compensateCapabilityId()}. Off by default.
+         *
+         * @param enabled {@code true} to compensate
+         * @return this builder
+         */
         public Builder withSagaEnabled(boolean enabled) {
             this.sagaEnabled = enabled;
             return this;
         }
 
+        /**
+         * The key webhook payloads are signed with: each delivery carries a {@code nexora-signature}
+         * header holding the HMAC-SHA256 of its body. Unset, payloads are signed with an empty key, so
+         * receivers cannot verify them; set one whenever intents use webhooks.
+         *
+         * @param webhookSecret the signing key, or {@code null}
+         * @return this builder
+         */
         public Builder withWebhookSecret(String webhookSecret) {
             this.webhookSecret = webhookSecret;
             return this;
@@ -890,6 +1152,8 @@ public final class NexoraEngine implements AutoCloseable {
          * preview and logged at WARN; the step still completes and later steps still see all of it.
          * {@code 0} keeps no outputs, for workflows whose outputs must not be written anywhere.
          *
+         * @param maxBytes the cap in bytes
+         * @return this builder
          * @throws IllegalArgumentException unless {@code maxBytes} is 0 or at least {@link StepOutput#MIN_MAX_BYTES}
          */
         public Builder withStepOutputMaxBytes(int maxBytes) {
@@ -906,6 +1170,8 @@ public final class NexoraEngine implements AutoCloseable {
          * <p>Bound and unbound engines can share a store. An unbound engine also loads this tenant's
          * schedules, but each firing is claimed in the store first, so it still runs exactly once.
          *
+         * @param tenantId the tenant
+         * @return this builder
          * @throws IllegalArgumentException if {@code tenantId} is not a valid tenant id
          */
         public Builder withTenantId(String tenantId) {
@@ -918,6 +1184,8 @@ public final class NexoraEngine implements AutoCloseable {
          * hook wait for in-flight executions before cancelling them. Defaults to
          * {@link #DEFAULT_SHUTDOWN_DRAIN_TIMEOUT}; zero cancels them at once.
          *
+         * @param drainTimeout how long to wait
+         * @return this builder
          * @throws IllegalArgumentException if {@code drainTimeout} is negative
          */
         public Builder withShutdownDrainTimeout(Duration drainTimeout) {
@@ -928,12 +1196,22 @@ public final class NexoraEngine implements AutoCloseable {
         /**
          * Whether to register a JVM shutdown hook that calls {@link NexoraEngine#shutdown()}. On by
          * default; turn it off when a container such as Spring already closes the engine on exit.
+         *
+         * @param enabled {@code true} to register the hook
+         * @return this builder
          */
         public Builder withShutdownHook(boolean enabled) {
             this.shutdownHookEnabled = enabled;
             return this;
         }
 
+        /**
+         * Registers a plugin instance, activated during {@link #build()} in the order added.
+         *
+         * @param plugin the plugin
+         * @return this builder
+         * @throws NullPointerException if {@code plugin} is null
+         */
         public Builder withPlugin(NexoraPlugin plugin) {
             plugins.add(Objects.requireNonNull(plugin));
             return this;
@@ -943,23 +1221,48 @@ public final class NexoraEngine implements AutoCloseable {
          * Loads and activates a plugin JAR during {@link #build()}. Jar plugins activate after all
          * {@link #withPlugin(NexoraPlugin) inline plugins}, in the order added, so a jar plugin's
          * required plugins must be inline or added earlier. Activation failure fails {@code build()}.
+         *
+         * @param jar the plugin JAR
+         * @return this builder
+         * @throws NullPointerException if {@code jar} is null
          */
         public Builder withPluginJar(Path jar) {
             pluginJars.add(Objects.requireNonNull(jar));
             return this;
         }
 
+        /**
+         * Adds a step to the built-in rule planner: it becomes part of the plan of every intent whose
+         * goal it matches.
+         *
+         * @param def the step definition
+         * @return this builder
+         * @throws NullPointerException if {@code def} is null
+         */
         public Builder withStepDefinition(StepDefinition def) {
             stepDefinitions.add(Objects.requireNonNull(def));
             return this;
         }
 
-        /** Register a custom planner. Plugin planners are registered automatically via withPlugin(). */
+        /**
+         * Register a custom planner. Plugin planners are registered automatically via withPlugin().
+         * Custom and plugin planners are tried by priority before the built-in rule planner.
+         *
+         * @param planner the planner
+         * @return this builder
+         * @throws NullPointerException if {@code planner} is null
+         */
         public Builder withPlanner(Planner planner) {
             extraPlanners.add(Objects.requireNonNull(planner));
             return this;
         }
 
+        /**
+         * Wires the engine and activates its plugins.
+         *
+         * @return the engine, accepting executions
+         * @throws me.virul.nexora.spi.PluginInitializationException if a plugin cannot be loaded or started
+         */
         public NexoraEngine build() {
             CapabilityRegistry capabilityRegistry = new DefaultCapabilityRegistry();
             InProcessEventBus eventBus = new InProcessEventBus(executor);
@@ -974,15 +1277,11 @@ public final class NexoraEngine implements AutoCloseable {
                 pluginManager.activatePlugin(pluginManager.loadPlugin(jar));
             }
 
-            // Retry
             RetryPolicyRegistry retryPolicyRegistry = new DefaultRetryPolicyRegistry();
             retryPolicyRegistry.setDefault(defaultRetryPolicy);
 
-            // Contract monitor
             CapabilityContractMonitor contractMonitor = new CapabilityContractMonitor(eventBus, capabilityRegistry);
 
-            // Interceptor pipeline — Retry must wrap Tracing so each retry attempt
-            // gets its own span with the correct attempt_number attribute.
             if (tracer == NoopTracer.INSTANCE) {
                 String otlpEndpoint = System.getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
                 if (otlpEndpoint != null && !otlpEndpoint.isBlank()) {
@@ -997,24 +1296,19 @@ public final class NexoraEngine implements AutoCloseable {
             InterceptorPipeline pipeline =
                     new InterceptorPipeline(interceptors, new CapabilityInvoker(capabilityRegistry, contractMonitor));
 
-            // DAG scheduler
             DagStepScheduler scheduler =
                     new DagStepScheduler(pipeline, retryPolicyRegistry, eventBus, executor, capabilityRegistry);
 
-            // Planner — composite of plugin planners + rule planner as fallback
             PlanRegistry planRegistry = new PlanRegistry();
             stepDefinitions.forEach(planRegistry::register);
             PlannerEngine plannerEngine = new PlannerEngine(planRegistry);
             RulePlanner rulePlanner = new RulePlanner(plannerEngine);
 
-            // Plugin planners are read live so plugins reloaded at runtime plan new intents at once.
             CompositePlanner compositePlanner =
                     new CompositePlanner(extraPlanners, pluginManager::registeredPlanners, rulePlanner);
 
-            // Saga orchestrator (optional)
             SagaOrchestrator sagaOrchestrator = sagaEnabled ? new SagaOrchestrator(pipeline, eventBus, executor) : null;
 
-            // Engine
             ExecutionEngine engine = new ExecutionEngine(
                     compositePlanner,
                     capabilityRegistry,
@@ -1027,7 +1321,6 @@ public final class NexoraEngine implements AutoCloseable {
                     webhookSecret,
                     stepOutputMaxBytes);
 
-            // Cron scheduler (optional — requires a store)
             CronScheduler cronScheduler =
                     executionStore != null ? new CronScheduler(engine, executionStore, eventBus, tenantId) : null;
 
