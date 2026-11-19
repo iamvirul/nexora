@@ -11,6 +11,8 @@ import me.virul.nexora.core.context.ExecutionContext;
 public interface StepCondition {
 
     /**
+     * Decides whether the step runs.
+     *
      * @param ctx the live execution context containing runtime state
      * @return true if the step should execute, false to skip it
      */
