@@ -51,7 +51,6 @@ jobs:
         with:
           java-version: "21"
           distribution: temurin
-          cache: maven
 
       - name: Build JavaDoc site
         run: website/scripts/build-javadoc.sh HEAD "${RUNNER_TEMP}/javadoc"
