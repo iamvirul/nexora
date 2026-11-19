@@ -290,6 +290,54 @@ class CapabilityContractMonitorTest {
         assertEquals(200, monitor.snapshot("cap").sampleCount());
     }
 
+    @Test
+    void aDelayedCallNeverOverwritesANewerCallInTheSameSlot() {
+        CapabilityContractMonitor.CallWindow window = new CapabilityContractMonitor.CallWindow(20);
+        long delayed = window.reserve();
+        for (int i = 0; i < 19; i++) {
+            window.record(Duration.ofMillis(1).toNanos(), true);
+        }
+        window.record(Duration.ofMillis(500).toNanos(), false);
+
+        window.publish(delayed, Duration.ofMillis(1).toNanos(), true);
+
+        assertEquals(1.0 / 20.0, window.errorRate(), 0.0001);
+        assertEquals(Duration.ofMillis(500), window.p99Latency());
+    }
+
+    @Test
+    void breakerNeverClosesMoreOftenThanItOpensUnderConcurrentCycles() throws Exception {
+        List<ExecutionEvent> events = new CopyOnWriteArrayList<>();
+        CapabilityContractMonitor monitor = new CapabilityContractMonitor(capturingBus(events));
+        CapabilityContract contract = CapabilityContract.builder()
+                .maxErrorRate(0.5)
+                .fallback("fallback")
+                .openDuration(Duration.ZERO)
+                .probeInterval(Duration.ofNanos(1))
+                .build();
+
+        concurrently(8, () -> {
+            for (int i = 0; i < 20_000; i++) {
+                if (monitor.isHealthy("cap", contract) && i % 2 == 0) {
+                    monitor.recordSuccess("cap", Duration.ofMillis(1));
+                } else {
+                    monitor.recordFailure("cap", Duration.ofMillis(1));
+                }
+            }
+            return true;
+        });
+
+        long opened = events.stream()
+                .filter(CapabilityCircuitOpenedEvent.class::isInstance)
+                .count();
+        long closed = events.stream()
+                .filter(CapabilityCircuitClosedEvent.class::isInstance)
+                .count();
+        assertTrue(closed > 0, "the cycle never closed the circuit");
+        assertTrue(closed <= opened, "closed " + closed + " times but opened only " + opened);
+        assertEquals(opened + closed, events.size());
+    }
+
     private static <T> List<T> concurrently(int threads, java.util.concurrent.Callable<T> task) throws Exception {
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         try {

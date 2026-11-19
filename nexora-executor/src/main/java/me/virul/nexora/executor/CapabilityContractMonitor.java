@@ -9,8 +9,8 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import me.virul.nexora.core.capability.CapabilityContract;
 import me.virul.nexora.event.CapabilityCircuitClosedEvent;
 import me.virul.nexora.event.CapabilityCircuitOpenedEvent;
@@ -160,49 +160,68 @@ public final class CapabilityContractMonitor {
         private static final HealthCheckResult UNHEALTHY = new HealthCheckResult(false, null);
 
         private final int capacity;
-        private final AtomicReference<State> state = new AtomicReference<>(State.closed());
-        private final AtomicReference<Window> window;
+        private final AtomicReference<Generation> generation;
 
         CircuitBreaker(int capacity) {
             this.capacity = capacity;
-            this.window = new AtomicReference<>(new Window(capacity));
+            this.generation = new AtomicReference<>(Generation.closed(new CallWindow(capacity)));
         }
 
         record HealthCheckResult(boolean healthy, ExecutionEvent eventToPublish) {}
 
-        private record State(CircuitState circuit, long openedAtNanos, long lastProbeNanos) {
-            static State closed() {
-                return new State(CircuitState.CLOSED, 0L, 0L);
+        /**
+         * The breaker state together with the window it applies to, swapped as one value, so no reader
+         * can see a circuit that was just closed with the failed window it closed over.
+         */
+        private record Generation(CircuitState circuit, long openedAtNanos, long lastProbeNanos, CallWindow window) {
+            static Generation closed(CallWindow window) {
+                return new Generation(CircuitState.CLOSED, 0L, 0L, window);
+            }
+
+            Generation opened(long now) {
+                return new Generation(CircuitState.OPEN, now, 0L, window);
+            }
+
+            Generation probing(long now) {
+                return new Generation(CircuitState.HALF_OPEN, openedAtNanos, now, window);
             }
         }
 
         ExecutionEvent recordSuccess(String capabilityId, long latencyNanos) {
-            ExecutionEvent event = null;
-            State current = state.get();
-            if (current.circuit() == CircuitState.HALF_OPEN && state.compareAndSet(current, State.closed())) {
-                window.set(new Window(capacity));
-                event = new CapabilityCircuitClosedEvent(capabilityId, Instant.now());
-                log.info("Circuit breaker for capability {} transitioned to CLOSED", capabilityId);
+            while (true) {
+                Generation current = generation.get();
+                if (current.circuit() != CircuitState.HALF_OPEN) {
+                    current.window().record(latencyNanos, true);
+                    return null;
+                }
+                Generation closed = Generation.closed(new CallWindow(capacity));
+                if (generation.compareAndSet(current, closed)) {
+                    closed.window().record(latencyNanos, true);
+                    log.info("Circuit breaker for capability {} transitioned to CLOSED", capabilityId);
+                    return new CapabilityCircuitClosedEvent(capabilityId, Instant.now());
+                }
             }
-            window.get().record(latencyNanos, true);
-            return event;
         }
 
         ExecutionEvent recordFailure(String capabilityId, long latencyNanos) {
-            ExecutionEvent event = null;
-            State current = state.get();
-            if (current.circuit() == CircuitState.HALF_OPEN
-                    && state.compareAndSet(current, new State(CircuitState.OPEN, System.nanoTime(), 0L))) {
-                event = new CapabilityCircuitOpenedEvent(capabilityId, Instant.now());
-                log.warn("Circuit breaker for capability {} transitioned to OPEN (probe failed)", capabilityId);
+            while (true) {
+                Generation current = generation.get();
+                if (current.circuit() != CircuitState.HALF_OPEN) {
+                    current.window().record(latencyNanos, false);
+                    return null;
+                }
+                Generation reopened = current.opened(System.nanoTime());
+                if (generation.compareAndSet(current, reopened)) {
+                    reopened.window().record(latencyNanos, false);
+                    log.warn("Circuit breaker for capability {} transitioned to OPEN (probe failed)", capabilityId);
+                    return new CapabilityCircuitOpenedEvent(capabilityId, Instant.now());
+                }
             }
-            window.get().record(latencyNanos, false);
-            return event;
         }
 
         HealthCheckResult isHealthy(String capabilityId, CapabilityContract contract) {
             long now = System.nanoTime();
-            State current = state.get();
+            Generation current = generation.get();
             return switch (current.circuit()) {
                 case OPEN -> probeAfterOpen(capabilityId, contract, current, now);
                 case HALF_OPEN -> probeAgain(contract, current, now);
@@ -211,26 +230,26 @@ public final class CapabilityContractMonitor {
         }
 
         private HealthCheckResult probeAfterOpen(
-                String capabilityId, CapabilityContract contract, State current, long now) {
+                String capabilityId, CapabilityContract contract, Generation current, long now) {
             if (now - current.openedAtNanos() > contract.openDuration().toNanos()
-                    && state.compareAndSet(current, new State(CircuitState.HALF_OPEN, current.openedAtNanos(), now))) {
+                    && generation.compareAndSet(current, current.probing(now))) {
                 log.info("Circuit breaker for capability {} transitioned to HALF_OPEN (sending probe)", capabilityId);
                 return HEALTHY;
             }
             return UNHEALTHY;
         }
 
-        private HealthCheckResult probeAgain(CapabilityContract contract, State current, long now) {
+        private HealthCheckResult probeAgain(CapabilityContract contract, Generation current, long now) {
             if (now - current.lastProbeNanos() > contract.probeInterval().toNanos()
-                    && state.compareAndSet(current, new State(CircuitState.HALF_OPEN, current.openedAtNanos(), now))) {
+                    && generation.compareAndSet(current, current.probing(now))) {
                 return HEALTHY;
             }
             return UNHEALTHY;
         }
 
         private HealthCheckResult checkWindow(
-                String capabilityId, CapabilityContract contract, State current, long now) {
-            Window calls = window.get();
+                String capabilityId, CapabilityContract contract, Generation current, long now) {
+            CallWindow calls = current.window();
             if (calls.count() < MIN_SAMPLES) return HEALTHY;
 
             if (contract.hasErrorRateSla()) {
@@ -259,8 +278,8 @@ public final class CapabilityContractMonitor {
             return HEALTHY;
         }
 
-        private ExecutionEvent open(String capabilityId, State current, long now) {
-            if (!state.compareAndSet(current, new State(CircuitState.OPEN, now, 0L))) {
+        private ExecutionEvent open(String capabilityId, Generation current, long now) {
+            if (!generation.compareAndSet(current, current.opened(now))) {
                 return null;
             }
             log.warn("Circuit breaker for capability {} transitioned to OPEN", capabilityId);
@@ -268,40 +287,59 @@ public final class CapabilityContractMonitor {
         }
 
         HealthSnapshot snapshot(String capabilityId) {
-            Window calls = window.get();
+            Generation current = generation.get();
+            CallWindow calls = current.window();
             return new HealthSnapshot(
-                    capabilityId, state.get().circuit(), calls.count(), calls.errorRate(), calls.p99Latency());
+                    capabilityId, current.circuit(), calls.count(), calls.errorRate(), calls.p99Latency());
         }
     }
 
     /**
-     * The last {@code capacity} calls of one capability. Each slot packs a latency and an outcome
-     * into one long, {@code 0} meaning empty, and the failure count follows every slot overwrite, so
-     * recording never locks and the error rate needs no scan.
+     * The last {@code capacity} calls of one capability, recorded without locks. A call first reserves
+     * a sequence number, which picks its slot, then publishes its sample there; a sample never replaces
+     * one with a higher sequence number, so a slow call cannot erase a newer one. The failure count
+     * follows every accepted replacement, so the error rate needs no scan.
      */
-    private static final class Window {
-        private static final long EMPTY = 0L;
+    static final class CallWindow {
         private static final double PERCENTILE = 0.99;
         private static final int MAX_SELECTED = 32;
 
-        private final AtomicLongArray slots;
-        private final AtomicLong writes = new AtomicLong();
+        private final AtomicReferenceArray<Sample> slots;
+        private final AtomicLong reservations = new AtomicLong();
         private final AtomicInteger failures = new AtomicInteger();
 
-        Window(int capacity) {
-            this.slots = new AtomicLongArray(capacity);
+        private record Sample(long sequence, long latencyNanos, boolean failed) {}
+
+        CallWindow(int capacity) {
+            this.slots = new AtomicReferenceArray<>(capacity);
         }
 
         void record(long latencyNanos, boolean success) {
-            long encoded = ((Math.max(0L, latencyNanos) << 1) | (success ? 0L : 1L)) + 1L;
-            int slot = (int) (writes.getAndIncrement() % slots.length());
-            long previous = slots.getAndSet(slot, encoded);
-            int change = failed(encoded) - failed(previous);
-            if (change != 0) failures.addAndGet(change);
+            publish(reserve(), latencyNanos, success);
+        }
+
+        long reserve() {
+            return reservations.getAndIncrement();
+        }
+
+        void publish(long sequence, long latencyNanos, boolean success) {
+            int slot = (int) (sequence % slots.length());
+            Sample sample = new Sample(sequence, Math.max(0L, latencyNanos), !success);
+            while (true) {
+                Sample previous = slots.get(slot);
+                if (previous != null && previous.sequence() > sequence) {
+                    return;
+                }
+                if (slots.compareAndSet(slot, previous, sample)) {
+                    int change = failedCount(sample) - failedCount(previous);
+                    if (change != 0) failures.addAndGet(change);
+                    return;
+                }
+            }
         }
 
         int count() {
-            return (int) Math.min(writes.get(), slots.length());
+            return (int) Math.min(reservations.get(), slots.length());
         }
 
         double errorRate() {
@@ -311,42 +349,37 @@ public final class CapabilityContractMonitor {
         }
 
         Duration p99Latency() {
-            int count = 0;
-            for (int i = 0; i < slots.length(); i++) {
-                if (slots.get(i) != EMPTY) count++;
-            }
-            if (count == 0) return Duration.ZERO;
-            int rank = count - (Math.max(1, (int) Math.ceil(count * PERCENTILE)) - 1);
-            return Duration.ofNanos(rank <= MAX_SELECTED ? largest(rank) : sortedPick(rank));
-        }
-
-        private long largest(int rank) {
-            long[] top = new long[rank];
+            long[] latencies = new long[slots.length()];
             int filled = 0;
             for (int i = 0; i < slots.length(); i++) {
-                long slot = slots.get(i);
-                if (slot == EMPTY) continue;
-                long latency = latency(slot);
-                if (filled < rank) {
-                    top[filled++] = latency;
-                    insertDescending(top, filled - 1);
+                Sample sample = slots.get(i);
+                if (sample != null) latencies[filled++] = sample.latencyNanos();
+            }
+            if (filled == 0) return Duration.ZERO;
+            int rank = filled - (Math.max(1, (int) Math.ceil(filled * PERCENTILE)) - 1);
+            return Duration.ofNanos(
+                    rank <= MAX_SELECTED ? largest(latencies, filled, rank) : sortedPick(latencies, filled, rank));
+        }
+
+        private static long largest(long[] latencies, int filled, int rank) {
+            long[] top = new long[rank];
+            int kept = 0;
+            for (int i = 0; i < filled; i++) {
+                long latency = latencies[i];
+                if (kept < rank) {
+                    top[kept++] = latency;
+                    insertDescending(top, kept - 1);
                 } else if (latency > top[rank - 1]) {
                     top[rank - 1] = latency;
                     insertDescending(top, rank - 1);
                 }
             }
-            return top[Math.max(0, filled - 1)];
+            return top[kept - 1];
         }
 
-        private long sortedPick(int rank) {
-            long[] latencies = new long[slots.length()];
-            int filled = 0;
-            for (int i = 0; i < slots.length(); i++) {
-                long slot = slots.get(i);
-                if (slot != EMPTY) latencies[filled++] = latency(slot);
-            }
+        private static long sortedPick(long[] latencies, int filled, int rank) {
             Arrays.sort(latencies, 0, filled);
-            return latencies[Math.max(0, filled - rank)];
+            return latencies[filled - rank];
         }
 
         private static void insertDescending(long[] values, int index) {
@@ -357,12 +390,8 @@ public final class CapabilityContractMonitor {
             }
         }
 
-        private static long latency(long slot) {
-            return (slot - 1L) >>> 1;
-        }
-
-        private static int failed(long slot) {
-            return slot == EMPTY ? 0 : (int) ((slot - 1L) & 1L);
+        private static int failedCount(Sample sample) {
+            return sample != null && sample.failed() ? 1 : 0;
         }
     }
 
