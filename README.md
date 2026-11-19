@@ -858,19 +858,19 @@ Baseline on an Apple M3 (8 cores), JDK 21.0.9, one fork, 3 warmup and 5 measured
 
 | Path | Benchmark | Result |
 |---|---|---|
-| Single step execution | `SingleStepExecutionBenchmark` | 7.7 µs per execution, 128,000 executions/s |
-| DAG, 4 parallel steps | `DagExecutionBenchmark` (`stepCount=4`) | 12.9 µs per execution, 76,000 executions/s |
-| DAG, 8 parallel steps | `DagExecutionBenchmark` (`stepCount=8`) | 17.6 µs per execution, 56,000 executions/s |
+| Single step execution | `SingleStepExecutionBenchmark` | 8.5 µs per execution, 130,000 executions/s |
+| DAG, 4 parallel steps | `DagExecutionBenchmark` (`stepCount=4`) | 12.8 µs per execution, 78,000 executions/s |
+| DAG, 8 parallel steps | `DagExecutionBenchmark` (`stepCount=8`) | 17.3 µs per execution, 57,000 executions/s |
 | Two-step plan, no amendment | `PlanAmendmentBenchmark` (`NONE`) | 10.8 µs |
-| ... with a modify-input amendment | `PlanAmendmentBenchmark` (`MODIFY_INPUT`) | 10.6 µs |
-| ... with a skip amendment | `PlanAmendmentBenchmark` (`SKIP_STEP`) | 9.4 µs (the skipped step does not run) |
-| ... with an add-step amendment | `PlanAmendmentBenchmark` (`ADD_STEP`) | 13.1 µs (one more step runs) |
-| Contract monitor, no thresholds | `ContractMonitorBenchmark.invoke` (`NONE`) | 75 ns per call |
-| Contract monitor, thresholds and fallback | `ContractMonitorBenchmark.invoke` (`WITH_FALLBACK`) | 218 ns per call |
-| ... 4 threads on one capability | `ContractMonitorBenchmark.invokeContended` | 831 ns and 2.1 µs per call |
-| Plugin JAR load, activate and deactivate | `PluginLoadBenchmark` | 181 µs |
+| ... with a modify-input amendment | `PlanAmendmentBenchmark` (`MODIFY_INPUT`) | 10.9 µs |
+| ... with a skip amendment | `PlanAmendmentBenchmark` (`SKIP_STEP`) | 9.6 µs (the skipped step does not run) |
+| ... with an add-step amendment | `PlanAmendmentBenchmark` (`ADD_STEP`) | 13.8 µs (one more step runs) |
+| Contract monitor, no thresholds | `ContractMonitorBenchmark.invoke` (`NONE`) | 26 ns per call |
+| Contract monitor, thresholds and fallback | `ContractMonitorBenchmark.invoke` (`WITH_FALLBACK`) | 93 ns per call |
+| ... 4 threads on one capability | `ContractMonitorBenchmark.invokeContended` | 243 ns and 357 ns per call |
+| Plugin JAR load, activate and deactivate | `PluginLoadBenchmark` | 209 µs |
 
-Applying an amendment costs well under a microsecond; the differences above are mostly the step it adds or skips. The contract monitor keeps one sliding window per capability behind a lock, so concurrent calls to the same capability wait for each other: plan for it on a capability with very high call rates. Numbers vary by machine, so compare them only against a run on the same hardware. See CONTRIBUTING.md for how to run the benchmarks.
+Applying an amendment costs well under a microsecond; the differences above are mostly the step it adds or skips. Recording a call takes no lock, but every thread calling one capability writes the same sliding window, so on several cores each call also pays for moving that window between them; calls to different capabilities do not share it. Numbers vary by machine, so compare them only against a run on the same hardware. See CONTRIBUTING.md for how to run the benchmarks.
 
 ## Module layout
 
