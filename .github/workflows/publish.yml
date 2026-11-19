@@ -194,6 +194,30 @@ jobs:
               }
             });
 
+  trigger-benchmarks:
+    name: Trigger benchmarks
+    needs: publish
+    if: needs.publish.outputs.new-tag == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Invoke benchmarks workflow
+        uses: actions/github-script@v9
+        env:
+          RELEASED_TAG: ${{ needs.publish.outputs.tag }}
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'benchmarks.yml',
+              ref: 'main',
+              inputs: {
+                tag: process.env.RELEASED_TAG
+              }
+            });
+
   trigger-docs:
     name: Trigger docs site deploy
     needs: publish
