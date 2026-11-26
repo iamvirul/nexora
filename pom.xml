@@ -160,7 +160,7 @@
         <flatten-maven-plugin.version>1.9.0</flatten-maven-plugin.version>
 
         <!-- Imported only by nexora-spring-boot-starter. -->
-        <spring-boot.version>4.1.2</spring-boot.version>
+        <spring-boot.version>4.2.0</spring-boot.version>
     </properties>
 
     <build>
